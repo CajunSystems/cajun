@@ -19,6 +19,9 @@ public class GreetingActor extends Actor<GreetingMessage> {
             case ByeMessage ignored -> {
                 byeCount++;
             }
+            case GetHelloCount ghc -> {
+                ghc.replyTo().tell(new HelloCount(helloCount));
+            }
         }
     }
 
