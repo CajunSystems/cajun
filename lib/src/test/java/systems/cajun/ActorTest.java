@@ -1,14 +1,22 @@
 package systems.cajun;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ActorTest {
 
+    private ActorSystem actorSystem;
+
+    @BeforeEach
+    void setUp() {
+        actorSystem = new ActorSystem();
+    }
+
     @Test
     void shouldBeAbleToCreateAGreetingActor() {
-        var actor = new GreetingActor();
+        var actor = new GreetingActor(actorSystem, "Greeting-Actor-1");
         actor.receive(new HelloMessage());
         actor.receive(new ByeMessage());
         actor.receive(new HelloMessage());
@@ -19,7 +27,7 @@ class ActorTest {
 
     @Test
     void shouldBeAbleToProcessMessagesFromMailbox() throws InterruptedException {
-        var actor = new GreetingActor();
+        var actor = new GreetingActor(actorSystem, "Greeting-Actor-2");
         actor.start();
 
         actor.tell(new HelloMessage());
