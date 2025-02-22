@@ -34,7 +34,6 @@ class ActorSystemTest {
         pid1.tell(new HelloMessage());
         pid1.tell(new HelloMessage());
         pid1.tell(new HelloMessage());
-        Thread.sleep(1000);
         pid1.tell(new GetHelloCount(receiverActor));
     }
 }
