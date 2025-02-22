@@ -25,7 +25,6 @@ public abstract class Actor<Message> {
                     return null;
                 });
                 scope.join();
-                setScope(scope);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -63,10 +62,5 @@ public abstract class Actor<Message> {
             return;
         }
         isRunning = false;
-        try {
-            scope.close();
-        } catch (Exception e) {
-            System.out.println(STR."Error stopping actor: \{e.getMessage()}");
-        }
     }
 }
