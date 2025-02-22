@@ -23,11 +23,7 @@ public class ActorSystem {
             throw new RuntimeException(e);
         }
     }
-
-    protected <Message> Actor<Message> getActor(String actorId) {
-        return (Actor<Message>) actors.get(actorId);
-    }
-
+    @SuppressWarnings("unchecked")
     <Message> void routeMessage(String actorId, Message message) {
         Actor<Message> actor = (Actor<Message>) actors.get(actorId);
         if (actor != null) {

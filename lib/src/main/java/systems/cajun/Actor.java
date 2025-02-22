@@ -8,7 +8,6 @@ public abstract class Actor<Message> {
 
     private final BlockingQueue<Message> mailbox;
     private volatile boolean isRunning;
-    private StructuredTaskScope<Object> scope;
 
     public Actor() {
         this.mailbox = new LinkedBlockingQueue<>();
@@ -35,21 +34,15 @@ public abstract class Actor<Message> {
         mailbox.offer(message);
     }
 
-    public void setScope(StructuredTaskScope<Object> scope) {
-        this.scope = scope;
-    }
-
     protected void processMailbox() {
         while (isRunning) {
             try {
                 Message message = mailbox.take();
-                Thread.startVirtualThread(() -> {
-                    try {
-                        receive(message);
-                    } catch (Exception e) {
-                        System.out.println(STR."Error processing message: \{e.getMessage()}");
-                    }
-                });
+                try {
+                    receive(message);
+                } catch (Exception e) {
+                    System.out.println(STR."Error processing message: \{e.getMessage()}");
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
