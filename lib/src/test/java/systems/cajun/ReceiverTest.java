@@ -34,16 +34,16 @@ class ReceiverTest {
         var counterActor = new FunctionalActor<Integer, CounterProtocol>();
         var counter = actorSystem.register(counterActor.receiveMessage((i, m) -> {
             switch (m) {
-                case CounterProtocol.CountUp cu -> {
+                case CounterProtocol.CountUp ignored -> {
                     return i + 1;
                 }
                 case CounterProtocol.GetCount gc -> {
-                    gc.replyTo().tell(i);
+                    gc.replyTo().tell(new HelloCount(i));
                 }
             }
             return i;
         }, 0), "Counter-Actor");
-        var receiverActor = actorSystem.register(CountReceiver.class, "count-receiver");
+        var receiverActor = actorSystem.register(CountReceiver.class, "count-receiver-1");
         counter.tell(new CounterProtocol.CountUp());
         counter.tell(new CounterProtocol.CountUp());
         counter.tell(new CounterProtocol.CountUp());

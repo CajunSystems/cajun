@@ -4,6 +4,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import systems.cajun.helper.*;
 
+import java.util.concurrent.TimeUnit;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ActorSystemTest {
@@ -65,5 +67,27 @@ class ActorSystemTest {
         var pid1 = actorSystem.register(GreetingActor.class, "my-greet");
         var replyTo = actorSystem.register(FinalByeHandler.class, "byeHandler");
         pid1.tell(new FinalBye(replyTo));
+    }
+
+    @Test
+    void shouldBeAbleToBeDelayInSendingAMessage() {
+        var counterActor = new FunctionalActor<Integer, CounterProtocol>();
+        var counter = actorSystem.register(counterActor.receiveMessage((i, m) -> {
+            switch (m) {
+                case CounterProtocol.CountUp cu -> {
+                    return i + 1;
+                }
+                case CounterProtocol.GetCount gc -> {
+                    gc.replyTo().tell(new HelloCount(i));
+                }
+            }
+            return i;
+        }, 0), "Counter-Actor");
+        var receiverActor = actorSystem.register(ReceiverTest.CountReceiver.class, "count-receiver-with-delay");
+        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.GetCount(receiverActor), 5000, TimeUnit.MILLISECONDS);
     }
 }
