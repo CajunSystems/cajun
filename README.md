@@ -9,6 +9,8 @@ An actor is a concurrent unit of computation which guarantees serial processing 
 synchronization and coordination. This guarantee of actors mainly comes from the way actors communicate with each other,
 each actor send asynchronous messages to other actors and each actor only reads messages from its mailbox.
 
+<img src="docs/actor_arch.png" alt="Actor architecture" style="height:auto;">
+
 ## Prerequisites
 - Java 21+ (with --enable-preview flag)
 
