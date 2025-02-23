@@ -2,5 +2,5 @@ package systems.cajun;
 
 public interface Receiver<Message> {
 
-    Receiver<Message> receive(Message message);
+    Receiver<Message> accept(Message message);
 }

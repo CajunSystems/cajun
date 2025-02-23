@@ -1,9 +1,7 @@
 package systems.cajun;
 
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.*;
 
 public abstract class Actor<Message> {
 
@@ -12,18 +10,18 @@ public abstract class Actor<Message> {
     private final String actorId;
     private final ActorSystem system;
     private final Pid pid;
+    private final ExecutorService executor;
+
 
     public Actor(ActorSystem system) {
-        this.system = system;
-        this.actorId = UUID.randomUUID().toString();
-        this.mailbox = new LinkedBlockingQueue<>();
-        this.pid = new Pid(actorId, system);
+        this(system, UUID.randomUUID().toString());
     }
 
     public Actor(ActorSystem system, String actorId) {
         this.system = system;
         this.actorId = actorId;
         this.mailbox = new LinkedBlockingQueue<>();
+        this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.pid = new Pid(actorId, system);
     }
 
@@ -31,7 +29,7 @@ public abstract class Actor<Message> {
 
     public void start() {
         isRunning = true;
-        Thread.startVirtualThread(() -> {
+        executor.submit(() -> {
             try (var scope = new StructuredTaskScope<>()) {
                 scope.fork(() -> {
                     processMailbox();
@@ -63,7 +61,7 @@ public abstract class Actor<Message> {
                 try {
                     receive(message);
                 } catch (Exception e) {
-                    System.out.println(STR."Error processing message: \{e.getMessage()}");
+                    System.out.println(STR."[\{actorId}] Error processing message: \{e.getMessage()}");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -81,7 +79,16 @@ public abstract class Actor<Message> {
             return;
         }
         isRunning = false;
-        // Intimate system just in case it was actor who triggered stop
-        system.shutdown(actorId);
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        } finally {
+            system.shutdown(actorId);
+        }
     }
 }
