@@ -78,6 +78,7 @@ class CountReceiver extends Actor<HelloCount> {
 }
 
 public static void main(String[] args) {
+    var actorSystem = new ActorSystem();
     var pid1 = actorSystem.register(GreetingActor.class, "greeting-actor-1");
     var receiverActor = actorSystem.register(CountReceiver.class, "count-receiver");
     pid1.tell(new HelloMessage());
@@ -91,6 +92,8 @@ public static void main(String[] args) {
    - [x] Create Actor and Actor System
    - [x] Support message to self for actor
    - [x] Support hooks for start and shutdown of actor
+   - [x] Stateful functional style actor
+   - [ ] Stateless functional style actor
    - [ ] Timed messages
 2. Actor metadata management with etcd
 3. Actor supervision hierarchy and fault tolerance
