@@ -1,5 +1,6 @@
 package systems.cajun;
 
+
 import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,6 +22,18 @@ public class ActorSystem {
                  NoSuchMethodException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public <T extends Actor<?>, Message> Pid register(Receiver<Message> receiver, String actorId) {
+        Actor<Message> actor = new Actor<Message>(this) {
+            @Override
+            protected void receive(Message o) {
+                receiver.receive(o);
+            }
+        };
+        actors.put(actorId, actor);
+        actor.start();
+        return new Pid(actorId, this);
     }
 
     public <T extends Actor<?>> Pid register(Class<T> actorClass) {

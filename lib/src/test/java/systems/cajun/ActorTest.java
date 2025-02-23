@@ -2,6 +2,9 @@ package systems.cajun;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import systems.cajun.helper.ByeMessage;
+import systems.cajun.helper.GreetingActor;
+import systems.cajun.helper.HelloMessage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
