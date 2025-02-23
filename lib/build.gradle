@@ -8,6 +8,7 @@
 plugins {
     // Apply the java-library plugin for API and implementation separation.
     id 'java-library'
+    id 'application'
 }
 
 repositories {
@@ -40,6 +41,14 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
+}
+
+application {
+    mainClass = project.hasProperty('mainClass') ? project.getProperty('mainClass') : null
+}
+
+tasks.withType(JavaExec) {
+    jvmArgs += '--enable-preview'
 }
 
 tasks.named('test') {

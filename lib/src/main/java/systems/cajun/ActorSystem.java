@@ -1,14 +1,20 @@
 package systems.cajun;
 
+
 import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class ActorSystem {
 
     private final ConcurrentHashMap<String, Actor<?>> actors;
+    private final ScheduledExecutorService delayScheduler;
 
     public ActorSystem() {
         this.actors = new ConcurrentHashMap<>();
+        this.delayScheduler = Executors.newSingleThreadScheduledExecutor();
     }
 
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId) {
@@ -21,6 +27,20 @@ public class ActorSystem {
                  NoSuchMethodException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public <Message> Pid register(Receiver<Message> receiver, String actorId) {
+        Actor<Message> actor = new Actor<>(this) {
+            private Receiver<Message> currectReceiver = receiver;
+
+            @Override
+            protected void receive(Message o) {
+                currectReceiver = currectReceiver.accept(o);
+            }
+        };
+        actors.put(actorId, actor);
+        actor.start();
+        return new Pid(actorId, this);
     }
 
     public <T extends Actor<?>> Pid register(Class<T> actorClass) {
@@ -55,5 +75,16 @@ public class ActorSystem {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit) {
+        Actor<Message> actor = (Actor<Message>) actors.get(actorId);
+        if (actor != null) {
+            delayScheduler.schedule(() -> {
+                actor.tell(message);
+            }, delay, timeUnit);
+        } else {
+            System.out.println(STR."Actor not found: \{actorId}");
+        }
+    }
 
 }

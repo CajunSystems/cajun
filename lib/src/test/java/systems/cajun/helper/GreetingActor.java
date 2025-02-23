@@ -1,4 +1,6 @@
-package systems.cajun;
+package systems.cajun.helper;
+
+import systems.cajun.*;
 
 public class GreetingActor extends Actor<GreetingMessage> {
 
