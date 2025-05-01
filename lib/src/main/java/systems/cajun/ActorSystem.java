@@ -14,6 +14,37 @@ public class ActorSystem {
     private final ScheduledExecutorService delayScheduler;
 
     /**
+     * Creates a chain of actors and connects them in sequence.
+     * 
+     * @param <T> The type of actors in the chain
+     * @param actorClass The class of actors to create
+     * @param baseId The base ID for the actors (will be appended with "-1", "-2", etc.)
+     * @param count The number of actors to create
+     * @return The PID of the first actor in the chain
+     */
+    public <T extends Actor<?>> Pid createActorChain(Class<T> actorClass, String baseId, int count) {
+        if (count <= 0) {
+            throw new IllegalArgumentException("Actor chain count must be positive");
+        }
+
+        // Create actors in reverse order (last to first)
+        Pid[] actorPids = new Pid[count];
+        for (int i = count; i >= 1; i--) {
+            String actorId = baseId + "-" + i;
+            actorPids[i-1] = register(actorClass, actorId);
+        }
+
+        // Connect the actors
+        for (int i = 0; i < count - 1; i++) {
+            Actor<?> actor = getActor(actorPids[i]);
+            actor.withNext(actorPids[i+1]);
+        }
+
+        // Return the first actor in the chain
+        return actorPids[0];
+    }
+
+    /**
      * Returns an unmodifiable view of all actors in the system.
      * 
      * @return A map of actor IDs to actors
