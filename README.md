@@ -145,6 +145,49 @@ for gradle tasks)
 ./gradlew -PmainClass=examples.TimedCounter run
 ```
 
+## Message Processing and Performance Tuning
+
+### Batched Message Processing
+
+Cajun supports batched processing of messages to improve throughput:
+
+- By default, each actor processes messages in batches of 10 messages at a time
+- Batch processing can significantly improve throughput by reducing context switching overhead
+- You can configure the batch size for any actor using the `withBatchSize()` method
+
+```java
+// Create an actor with custom batch size
+var myActor = actorSystem.register(MyActor.class, "my-actor");
+((MyActor)actorSystem.getActor(myActor)).withBatchSize(50);  // Process 50 messages at a time
+```
+
+#### Tuning Considerations:
+
+- **Larger batch sizes**: Improve throughput but may increase latency for individual messages
+- **Smaller batch sizes**: Provide more responsive processing but with lower overall throughput
+- **Workload characteristics**: CPU-bound tasks benefit from larger batches, while I/O-bound tasks may work better with smaller batches
+- **Memory usage**: Larger batches consume more memory as messages are held in memory during processing
+
+### Running Performance Tests
+
+The project includes performance tests that can help you evaluate different configurations:
+
+```shell
+# Run all performance tests
+./gradlew test -PincludeTags="performance"
+
+# Run a specific performance test
+./gradlew test --tests "systems.cajun.ActorPerformanceTest.testActorChainThroughput"
+```
+
+The performance tests measure:
+
+1. **Actor Chain Throughput**: Tests message passing through a chain of actors
+2. **Many-to-One Throughput**: Tests many sender actors sending to a single receiver
+3. **Actor Lifecycle Performance**: Tests creation and stopping of large numbers of actors
+
+These tests can help you determine optimal configurations for your specific use case.
+
 ## Error Handling and Supervision Strategy
 
 Cajun provides robust error handling capabilities for actors with a supervision strategy system inspired by Erlang/OTP and Akka.
