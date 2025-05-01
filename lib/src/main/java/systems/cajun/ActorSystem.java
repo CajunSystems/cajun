@@ -2,6 +2,7 @@ package systems.cajun;
 
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -12,9 +13,72 @@ public class ActorSystem {
     private final ConcurrentHashMap<String, Actor<?>> actors;
     private final ScheduledExecutorService delayScheduler;
 
+    /**
+     * Returns an unmodifiable view of all actors in the system.
+     * 
+     * @return A map of actor IDs to actors
+     */
+    public Map<String, Actor<?>> getActors() {
+        return Map.copyOf(actors);
+    }
+
+    /**
+     * Returns the actor with the specified ID, or null if no such actor exists.
+     * 
+     * @param pid The PID of the actor to get
+     * @return The actor with the specified ID, or null if no such actor exists
+     */
+    public Actor<?> getActor(Pid pid) {
+        return actors.get(pid.actorId());
+    }
+
     public ActorSystem() {
         this.actors = new ConcurrentHashMap<>();
         this.delayScheduler = Executors.newSingleThreadScheduledExecutor();
+    }
+
+    /**
+     * Registers a child actor with the specified parent.
+     * 
+     * @param <T> The type of the child actor
+     * @param actorClass The class of the child actor
+     * @param actorId The ID for the child actor
+     * @param parent The parent actor
+     * @return The PID of the created child actor
+     */
+    public <T extends Actor<?>> Pid registerChild(Class<T> actorClass, String actorId, Actor<?> parent) {
+        try {
+            T actor = actorClass.getDeclaredConstructor(ActorSystem.class, String.class).newInstance(this, actorId);
+            actors.put(actorId, actor);
+            parent.addChild(actor);
+            actor.start();
+            return new Pid(actorId, this);
+        } catch (InvocationTargetException | InstantiationException | IllegalAccessException |
+                 NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Registers a child actor with the specified parent and an auto-generated ID.
+     * 
+     * @param <T> The type of the child actor
+     * @param actorClass The class of the child actor
+     * @param parent The parent actor
+     * @return The PID of the created child actor
+     */
+    public <T extends Actor<?>> Pid registerChild(Class<T> actorClass, Actor<?> parent) {
+        try {
+            T actor = actorClass.getDeclaredConstructor(ActorSystem.class).newInstance(this);
+            String actorId = actor.getActorId();
+            actors.put(actorId, actor);
+            parent.addChild(actor);
+            actor.start();
+            return new Pid(actorId, this);
+        } catch (InvocationTargetException | InstantiationException | IllegalAccessException |
+                 NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId) {
@@ -31,11 +95,11 @@ public class ActorSystem {
 
     public <Message> Pid register(Receiver<Message> receiver, String actorId) {
         Actor<Message> actor = new Actor<>(this) {
-            private Receiver<Message> currectReceiver = receiver;
+            private Receiver<Message> currentReceiver = receiver;
 
             @Override
             protected void receive(Message o) {
-                currectReceiver = currectReceiver.accept(o);
+                currentReceiver = currentReceiver.accept(o);
             }
         };
         actors.put(actorId, actor);
