@@ -24,6 +24,9 @@ public abstract class Actor<Message> {
     private Actor<?> parent;
     private final Map<String, Actor<?>> children = new ConcurrentHashMap<>();
 
+    // Reference to the next actor in a workflow chain
+    private Pid nextActor;
+
 
     public Actor(ActorSystem system) {
         this(system, UUID.randomUUID().toString());
@@ -104,6 +107,31 @@ public abstract class Actor<Message> {
 
     public void tell(Message message) {
         mailbox.offer(message);
+    }
+
+    /**
+     * Sets the next actor in a workflow chain.
+     * 
+     * @param nextActor The PID of the next actor
+     * @return This actor instance for method chaining
+     */
+    public Actor<Message> withNext(Pid nextActor) {
+        this.nextActor = nextActor;
+        return this;
+    }
+
+    /**
+     * Forwards a message to the next actor in the workflow chain.
+     * If no next actor is set, this method does nothing.
+     * 
+     * @param message The message to forward
+     */
+    protected void forward(Message message) {
+        if (nextActor != null) {
+            nextActor.tell(message);
+        } else {
+            logger.warn("Actor {} attempted to forward message but no next actor is set", actorId);
+        }
     }
 
     protected void processMailbox() {
