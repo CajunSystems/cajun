@@ -2,6 +2,7 @@ package systems.cajun;
 
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -158,6 +159,25 @@ public class ActorSystem {
             }
             this.actors.remove(actorId);
         }
+    }
+
+    /**
+     * Shuts down all actors in the system.
+     * This method stops all actors and clears the actor registry.
+     */
+    public void shutdown() {
+        // Create a copy of the actors map to avoid concurrent modification issues
+        Map<String, Actor<?>> actorsCopy = new HashMap<>(actors);
+
+        // Stop all actors
+        for (Actor<?> actor : actorsCopy.values()) {
+            if (actor.isRunning()) {
+                actor.stop();
+            }
+        }
+
+        // Clear the actors map
+        actors.clear();
     }
 
     @SuppressWarnings("unchecked")

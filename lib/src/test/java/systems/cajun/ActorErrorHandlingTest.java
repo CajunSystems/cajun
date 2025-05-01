@@ -27,13 +27,11 @@ class ActorErrorHandlingTest {
 
     @AfterEach
     void tearDown() {
-        // Stop the current actor if it exists
-        if (currentActor != null && currentActor.isRunning()) {
-            currentActor.stop();
+        // Use the ActorSystem's shutdown method to stop all actors
+        if (system != null) {
+            system.shutdown();
         }
 
-        // The ActorSystem doesn't have a global shutdown method, so we'll just
-        // create a new one for each test to ensure isolation
         system = null;
     }
 

@@ -1,5 +1,6 @@
 package systems.cajun;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import systems.cajun.helper.*;
@@ -15,6 +16,13 @@ class ActorSystemTest {
     @BeforeEach
     void setUp() {
         actorSystem = new ActorSystem();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (actorSystem != null) {
+            actorSystem.shutdown();
+        }
     }
 
     static class FinalByeHandler extends Actor<String> {

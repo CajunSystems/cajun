@@ -25,7 +25,9 @@ class HierarchicalSupervisionTest {
 
     @AfterEach
     void tearDown() {
-        // The ActorSystem doesn't have a global shutdown method
+        if (system != null) {
+            system.shutdown();
+        }
         system = null;
     }
 
