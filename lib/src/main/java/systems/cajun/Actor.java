@@ -3,7 +3,9 @@ package systems.cajun;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -13,6 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public abstract class Actor<Message> {
 
     private static final Logger logger = LoggerFactory.getLogger(Actor.class);
+    private static final int DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10;
+    private static final int DEFAULT_BATCH_SIZE = 10; // Default number of messages to process in a batch
 
     private final BlockingQueue<Message> mailbox;
     private volatile boolean isRunning;
@@ -23,6 +27,9 @@ public abstract class Actor<Message> {
     private SupervisionStrategy supervisionStrategy = SupervisionStrategy.RESUME;
     private Actor<?> parent;
     private final Map<String, Actor<?>> children = new ConcurrentHashMap<>();
+    private int shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
+    private int batchSize = DEFAULT_BATCH_SIZE;
+    private volatile Thread mailboxThread;
 
     // Reference to the next actor in a workflow chain
     private Pid nextActor;
@@ -36,7 +43,10 @@ public abstract class Actor<Message> {
         this.system = system;
         this.actorId = actorId;
         this.mailbox = new LinkedBlockingQueue<>();
-        this.executor = Executors.newVirtualThreadPerTaskExecutor();
+        // Use a shared executor from the actor system if available, otherwise create a dedicated one
+        this.executor = system.getSharedExecutor() != null ? 
+                       system.getSharedExecutor() : 
+                       Executors.newVirtualThreadPerTaskExecutor();
         this.pid = new Pid(actorId, system);
         logger.debug("Actor {} created", actorId);
     }
@@ -72,26 +82,48 @@ public abstract class Actor<Message> {
         return false;
     }
 
+    /**
+     * Sets the batch size for message processing.
+     * A larger batch size can improve throughput but may increase latency.
+     * 
+     * @param batchSize The number of messages to process in a batch
+     * @return This actor instance for method chaining
+     */
+    public Actor<Message> withBatchSize(int batchSize) {
+        if (batchSize < 1) {
+            throw new IllegalArgumentException("Batch size must be at least 1");
+        }
+        this.batchSize = batchSize;
+        return this;
+    }
+
     public void start() {
+        if (isRunning) {
+            logger.debug("Actor {} is already running", actorId);
+            return;
+        }
+        
         isRunning = true;
         logger.info("Starting actor {}", actorId);
+        
         try {
             preStart();
-            executor.submit(() -> {
-                try (var scope = new StructuredTaskScope<>()) {
-                    scope.fork(() -> {
+            
+            // Use a virtual thread directly for the mailbox processing
+            // This avoids the overhead of StructuredTaskScope when not needed
+            mailboxThread = Thread.ofVirtual()
+                .name("actor-" + actorId)
+                .start(() -> {
+                    try {
                         processMailbox();
-                        return null;
-                    });
-                    scope.join();
-                } catch (InterruptedException e) {
-                    logger.warn("Actor {} interrupted during execution", actorId, e);
-                    Thread.currentThread().interrupt();
-                } catch (Exception e) {
-                    logger.error("Unexpected error in actor {}", actorId, e);
-                }
-            });
+                    } catch (Exception e) {
+                        if (!(e instanceof InterruptedException)) {
+                            logger.error("Unexpected error in actor {}", actorId, e);
+                        }
+                    }
+                });
         } catch (Exception e) {
+            isRunning = false;
             logger.error("Error during actor {} startup", actorId, e);
             throw e;
         }
@@ -135,16 +167,37 @@ public abstract class Actor<Message> {
     }
 
     protected void processMailbox() {
+        List<Message> batch = new ArrayList<>(batchSize);
+        
         while (isRunning) {
             try {
-                Message message = mailbox.take();
-                try {
-                    receive(message);
-                } catch (Exception e) {
-                    logger.error("Actor {} error processing message: {}", actorId, message, e);
-                    handleException(message, e);
+                // Get at least one message (blocking)
+                Message firstMessage = mailbox.take();
+                batch.add(firstMessage);
+                
+                // Try to drain more messages up to batch size (non-blocking)
+                if (batchSize > 1) {
+                    mailbox.drainTo(batch, batchSize - 1);
                 }
+                
+                // Process the batch
+                for (Message message : batch) {
+                    if (!isRunning) break; // Check if we should stop processing
+                    
+                    try {
+                        receive(message);
+                    } catch (Exception e) {
+                        logger.error("Actor {} error processing message: {}", actorId, message, e);
+                        handleException(message, e);
+                    }
+                }
+                
+                // Clear the batch for reuse
+                batch.clear();
+                
             } catch (InterruptedException e) {
+                // This is expected during shutdown, so use debug level
+                logger.debug("Actor {} mailbox processing interrupted", actorId);
                 Thread.currentThread().interrupt();
                 break;
             }
@@ -155,30 +208,69 @@ public abstract class Actor<Message> {
         return isRunning;
     }
 
+    /**
+     * Sets the shutdown timeout for this actor.
+     * 
+     * @param timeoutSeconds The timeout in seconds to wait for actor termination
+     * @return This actor instance for method chaining
+     */
+    public Actor<Message> withShutdownTimeout(int timeoutSeconds) {
+        this.shutdownTimeoutSeconds = timeoutSeconds;
+        return this;
+    }
+
     public void stop() {
         if (!isRunning) {
             return;
         }
-        logger.info("Stopping actor {}", actorId);
+        logger.debug("Stopping actor {}", actorId);
         isRunning = false;
 
         // Stop all children first
         for (Actor<?> child : new ConcurrentHashMap<>(children).values()) {
-            logger.info("Stopping child actor {} of parent {}", child.getActorId(), actorId);
+            logger.debug("Stopping child actor {} of parent {}", child.getActorId(), actorId);
             child.stop();
         }
 
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
-                logger.warn("Actor {} did not terminate in time, forcing shutdown", actorId);
-                executor.shutdownNow();
+        // Drain the mailbox to prevent processing during shutdown
+        mailbox.clear();
+        
+        // Interrupt the mailbox thread if it exists
+        if (mailboxThread != null) {
+            mailboxThread.interrupt();
+            try {
+                // Give the mailbox thread a short time to terminate
+                mailboxThread.join(TimeUnit.SECONDS.toMillis(1));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
+            mailboxThread = null;
+        }
+
+        // Only shut down the executor if it's not shared from the actor system
+        if (system.getSharedExecutor() != executor) {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(shutdownTimeoutSeconds, TimeUnit.SECONDS)) {
+                    logger.warn("Actor {} executor did not terminate in time, forcing shutdown", actorId);
+                    executor.shutdownNow();
+                    // Give it one more chance with a short timeout
+                    if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        logger.error("Actor {} executor could not be terminated even after forced shutdown", actorId);
+                    }
+                }
+            } catch (InterruptedException e) {
+                // This is expected during mass shutdowns, so lower the log level
+                logger.debug("Actor {} shutdown interrupted", actorId, e);
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        try {
             postStop();
-        } catch (InterruptedException e) {
-            logger.warn("Actor {} shutdown interrupted", actorId, e);
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            logger.error("Error during actor {} postStop", actorId, e);
         } finally {
             // Clear children map
             children.clear();

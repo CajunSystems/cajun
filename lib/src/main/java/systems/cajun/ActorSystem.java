@@ -5,6 +5,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -13,6 +14,10 @@ public class ActorSystem {
 
     private final ConcurrentHashMap<String, Actor<?>> actors;
     private final ScheduledExecutorService delayScheduler;
+    private final ExecutorService sharedExecutor;
+    
+    // Configuration for the actor system
+    private boolean useSharedExecutor = true;
 
     /**
      * Creates a chain of actors and connects them in sequence.
@@ -64,9 +69,29 @@ public class ActorSystem {
         return actors.get(pid.actorId());
     }
 
+    /**
+     * Creates a new actor system with default settings.
+     */
     public ActorSystem() {
+        this(true);
+    }
+    
+    /**
+     * Creates a new actor system with the specified settings.
+     * 
+     * @param useSharedExecutor Whether to use a shared executor for all actors
+     */
+    public ActorSystem(boolean useSharedExecutor) {
         this.actors = new ConcurrentHashMap<>();
         this.delayScheduler = Executors.newSingleThreadScheduledExecutor();
+        this.useSharedExecutor = useSharedExecutor;
+        
+        // Create a shared executor for all actors if enabled
+        if (useSharedExecutor) {
+            this.sharedExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        } else {
+            this.sharedExecutor = null;
+        }
     }
 
     /**
@@ -162,6 +187,15 @@ public class ActorSystem {
     }
 
     /**
+     * Gets the shared executor for this actor system.
+     * 
+     * @return The shared executor, or null if shared executors are disabled
+     */
+    public ExecutorService getSharedExecutor() {
+        return sharedExecutor;
+    }
+    
+    /**
      * Shuts down all actors in the system.
      * This method stops all actors and clears the actor registry.
      */
@@ -178,6 +212,30 @@ public class ActorSystem {
 
         // Clear the actors map
         actors.clear();
+        
+        // Shutdown the delay scheduler
+        delayScheduler.shutdown();
+        try {
+            if (!delayScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                delayScheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            delayScheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        
+        // Shutdown the shared executor if it exists
+        if (sharedExecutor != null) {
+            sharedExecutor.shutdown();
+            try {
+                if (!sharedExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    sharedExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                sharedExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -186,7 +244,7 @@ public class ActorSystem {
         if (actor != null) {
             actor.tell(message);
         } else {
-            System.out.println(STR."Actor not found: \{actorId}");
+            System.out.println("Actor not found: " + actorId);
         }
     }
 
@@ -198,7 +256,7 @@ public class ActorSystem {
                 actor.tell(message);
             }, delay, timeUnit);
         } else {
-            System.out.println(STR."Actor not found: \{actorId}");
+            System.out.println("Actor not found: " + actorId);
         }
     }
 

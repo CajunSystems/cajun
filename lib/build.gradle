@@ -58,5 +58,28 @@ tasks.withType(JavaExec) {
 tasks.named('test') {
     // Use JUnit Platform for unit tests.
     jvmArgs(['--enable-preview'])
-    useJUnitPlatform()
+    useJUnitPlatform {
+        // By default, exclude performance tests
+        excludeTags 'performance'
+    }
+}
+
+// Create a separate task for performance tests
+tasks.register('performanceTest', Test) {
+    description = 'Runs performance tests.'
+    group = 'verification'
+    
+    jvmArgs(['--enable-preview'])
+    useJUnitPlatform {
+        includeTags 'performance'
+    }
+    
+    // Increase timeouts for performance tests
+    systemProperty 'junit.jupiter.execution.timeout.default', '5m'
+    
+    // Optional: configure test logging
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
 }
