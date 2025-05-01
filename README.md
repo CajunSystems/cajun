@@ -111,6 +111,117 @@ public static void main(String[] args) {
 }
 ```
 
+3. StatefulActor - Persistent State Management
+
+The `StatefulActor` extends the base Actor class by adding state management capabilities with persistence. It allows actors to maintain state that survives actor restarts and system shutdowns.
+
+```java
+public class CounterActor extends StatefulActor<Integer, CounterMessage> {
+    
+    // Create with in-memory persistence
+    public CounterActor(ActorSystem system, Integer initialState) {
+        super(system, initialState);
+    }
+    
+    // Create with custom persistence store
+    public CounterActor(ActorSystem system, Integer initialState, StateStore<String, Integer> stateStore) {
+        super(system, initialState, stateStore);
+    }
+    
+    @Override
+    protected Integer processMessage(Integer state, CounterMessage message) {
+        if (message instanceof CounterMessage.Increment increment) {
+            return state + increment.amount();
+        } else if (message instanceof CounterMessage.Reset) {
+            return 0;
+        } else if (message instanceof CounterMessage.GetCount getCount) {
+            getCount.callback().accept(state);
+        }
+        return state;
+    }
+}
+```
+
+#### Key Features of StatefulActor
+
+- **Persistent State**: State is automatically persisted using configurable storage backends
+- **State Recovery**: Automatically recovers state when an actor restarts
+- **Type Safety**: Generic type parameters for both state and message types
+- **Pluggable Storage**: Supports different state storage implementations:
+  - In-memory storage (default)
+  - File-based storage
+  - Custom storage implementations
+
+#### Using StatefulActor
+
+1. **Creating a StatefulActor**
+
+```java
+// Create with default in-memory persistence
+CounterActor counterActor = new CounterActor(system, "counter", 0);
+counterActor.start();
+
+// Create with file-based persistence
+StateStore<String, Integer> stateStore = StateStoreFactory.createFileStore("/path/to/state/dir");
+CounterActor persistentActor = new CounterActor(system, "persistent-counter", 0, stateStore);
+persistentActor.start();
+```
+
+2. **Functional Style StatefulActor**
+
+You can also create stateful actors using a functional style:
+
+```java
+// Create a stateful actor with functional style
+Pid counterPid = FunctionalStatefulActor.createStatefulActor(
+    system,                  // Actor system
+    "counter",               // Actor ID
+    0,                       // Initial state
+    (state, message) -> {    // Message handler function
+        if (message instanceof CounterMessage.Increment) {
+            return state + 1;
+        } else if (message instanceof CounterMessage.Reset) {
+            return 0;
+        }
+        return state;
+    }
+);
+```
+
+3. **Creating Chains of StatefulActors**
+
+The `FunctionalStatefulActor` utility allows creating chains of stateful actors that process messages in sequence:
+
+```java
+// Create a chain of stateful actors
+Pid firstActorPid = FunctionalStatefulActor.createChain(
+    system,                  // Actor system
+    "counter-chain",         // Base name for the chain
+    3,                       // Number of actors in the chain
+    new Integer[]{0, 0, 0},  // Initial states for each actor
+    new BiFunction[]{        // Message handlers for each actor
+        (state, msg) -> { /* Actor 1 logic */ },
+        (state, msg) -> { /* Actor 2 logic */ },
+        (state, msg) -> { /* Actor 3 logic */ }
+    }
+);
+```
+
+#### State Management Methods
+
+StatefulActor provides several methods for working with state:
+
+- `getState()`: Get the current state value
+- `updateState(State newState)`: Update the state with a new value
+- `updateState(Function<State, State> updateFunction)`: Update the state using a function
+
+#### Lifecycle Hooks
+
+StatefulActor overrides the standard Actor lifecycle hooks:
+
+- `preStart()`: Initializes the actor's state from the state store
+- `postStop()`: Ensures the final state is persisted before stopping
+
 ### Using the actor system
 
 After creating the actor we have to use the actor system to spawn them and send messages.
@@ -290,4 +401,7 @@ The `ActorException` class is used for error propagation, particularly when usin
    - [x] Hierarchical supervision
    - [ ] Custom supervision policies
 4. Persistent state and messaging for actors
+   - [x] StatefulActor with persistent state management
+   - [x] Pluggable state storage backends (in-memory, file-based)
+   - [ ] Message persistence and replay
 5. Partitioned state and sharding strategy

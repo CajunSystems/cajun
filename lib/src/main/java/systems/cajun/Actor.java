@@ -370,7 +370,7 @@ public abstract class Actor<Message> {
      * @param message The message that caused the exception
      * @param exception The exception that was thrown
      */
-    private void handleException(Message message, Throwable exception) {
+    protected void handleException(Message message, Throwable exception) {
         boolean shouldReprocess = onError(message, exception);
 
         switch (supervisionStrategy) {

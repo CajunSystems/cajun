@@ -8,6 +8,7 @@ import systems.cajun.helper.*;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ActorSystemTest {
 
@@ -78,7 +79,10 @@ class ActorSystemTest {
     }
 
     @Test
-    void shouldBeAbleToBeDelayInSendingAMessage() {
+    void shouldBeAbleToBeDelayInSendingAMessage() throws InterruptedException {
+        // Create a latch to wait for the test to complete
+        java.util.concurrent.CountDownLatch testCompletionLatch = new java.util.concurrent.CountDownLatch(1);
+
         var counterActor = new FunctionalActor<Integer, CounterProtocol>();
         var counter = actorSystem.register(counterActor.receiveMessage((i, m) -> {
             switch (m) {
@@ -91,11 +95,22 @@ class ActorSystemTest {
             }
             return i;
         }, 0), "Counter-Actor");
-        var receiverActor = actorSystem.register(ReceiverTest.CountReceiver.class, "count-receiver-with-delay");
+
+        // Create a functional actor for receiving the count
+        var receiverActor = actorSystem.register(new FunctionalActor<Void, HelloCount>().receiveMessage((state, message) -> {
+            assertEquals(4, message.count());
+            testCompletionLatch.countDown(); // Signal that we received the message
+            return null;
+        }, null), "count-receiver-with-delay");
+
         counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.GetCount(receiverActor), 5000, TimeUnit.MILLISECONDS);
+
+        // Wait for the test to complete with a timeout
+        boolean completed = testCompletionLatch.await(10, TimeUnit.SECONDS);
+        assertTrue(completed, "Test did not complete within the expected time");
     }
 }
