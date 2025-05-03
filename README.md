@@ -520,3 +520,4 @@ For more details, see the [Cluster Mode documentation](lib/src/main/java/systems
    - [x] Remote messaging between actor systems
    - [x] Actor reassignment on node failure
    - [x] Pluggable messaging system
+   - [x] Configurable message delivery guarantees (EXACTLY_ONCE, AT_LEAST_ONCE, AT_MOST_ONCE)

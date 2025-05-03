@@ -51,10 +51,21 @@ class ActorTest {
         actor.tell(new HelloMessage());
         actor.receive(new ByeMessage());
 
-        Thread.sleep(2000);
+        // Wait for messages to be processed with a timeout
+        int expectedHelloCount = 6;
+        int expectedByeCount = 3;
+        int maxWaitTimeMs = 500; // Reduced from 2000ms to 500ms
+        int pollIntervalMs = 10;
+        int elapsedTime = 0;
+        
+        while ((actor.getHelloCount() < expectedHelloCount || actor.getByeCount() < expectedByeCount) 
+                && elapsedTime < maxWaitTimeMs) {
+            Thread.sleep(pollIntervalMs);
+            elapsedTime += pollIntervalMs;
+        }
 
-        assertEquals(6, actor.getHelloCount());
-        assertEquals(3, actor.getByeCount());
+        assertEquals(expectedHelloCount, actor.getHelloCount());
+        assertEquals(expectedByeCount, actor.getByeCount());
         // No need to manually stop the actor, it will be stopped by the ActorSystem.shutdown() in tearDown
     }
 

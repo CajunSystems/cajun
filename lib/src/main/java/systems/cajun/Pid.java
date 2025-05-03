@@ -1,6 +1,8 @@
 package systems.cajun;
 
 import java.util.concurrent.TimeUnit;
+import systems.cajun.cluster.DeliveryGuarantee;
+import systems.cajun.cluster.ClusterActorSystem;
 
 /**
  * Process ID (Pid) for an actor, used to send messages to the actor.
@@ -21,6 +23,24 @@ public record Pid(String actorId, ActorSystem system) {
     }
 
     /**
+     * Sends a message to the actor with a specific delivery guarantee.
+     * This is only applicable in cluster mode with a ReliableMessagingSystem.
+     * In local mode or with other messaging systems, this behaves the same as tell(message).
+     *
+     * @param message The message to send
+     * @param deliveryGuarantee The delivery guarantee to use
+     * @param <Message> The type of the message
+     */
+    public <Message> void tell(Message message, DeliveryGuarantee deliveryGuarantee) {
+        if (system instanceof ClusterActorSystem) {
+            ((ClusterActorSystem) system).routeMessage(actorId, message, deliveryGuarantee);
+        } else {
+            // Fall back to standard delivery for non-cluster systems
+            system.routeMessage(actorId, message);
+        }
+    }
+
+    /**
      * Sends a message to the actor with a delay.
      * The message will be delivered after the specified delay.
      *
@@ -31,6 +51,25 @@ public record Pid(String actorId, ActorSystem system) {
      */
     public <Message> void tell(Message message, long delay, TimeUnit timeUnit) {
         system.routeMessage(actorId, message, delay, timeUnit);
+    }
+    
+    /**
+     * Sends a message to the actor with a delay and a specific delivery guarantee.
+     * This is only applicable in cluster mode with a ReliableMessagingSystem.
+     *
+     * @param message The message to send
+     * @param delay The delay amount
+     * @param timeUnit The time unit for the delay
+     * @param deliveryGuarantee The delivery guarantee to use
+     * @param <Message> The type of the message
+     */
+    public <Message> void tell(Message message, long delay, TimeUnit timeUnit, DeliveryGuarantee deliveryGuarantee) {
+        if (system instanceof ClusterActorSystem) {
+            ((ClusterActorSystem) system).routeMessage(actorId, message, delay, timeUnit, deliveryGuarantee);
+        } else {
+            // Fall back to standard delivery for non-cluster systems
+            system.routeMessage(actorId, message, delay, timeUnit);
+        }
     }
     
     /**

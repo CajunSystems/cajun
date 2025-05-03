@@ -8,6 +8,7 @@ This package provides cluster mode capabilities for the Cajun actor system, allo
 - **Leader Election**: A leader node is elected to manage actor assignments and handle node failures.
 - **Remote Messaging**: Messages can be sent to actors regardless of which node they're running on.
 - **Fault Tolerance**: When a node fails, its actors are automatically reassigned to other nodes in the cluster.
+- **Reliable Messaging**: Support for different delivery guarantees (EXACTLY_ONCE, AT_LEAST_ONCE, AT_MOST_ONCE) when sending messages between nodes.
 
 ## Components
 
@@ -90,6 +91,34 @@ A leader node is elected using a distributed lock in the metadata store. The lea
 ### Remote Messaging
 
 When a message is sent to an actor, the system first checks if the actor is local. If not, it looks up the actor's location in the metadata store and forwards the message to the appropriate node.
+
+#### Message Delivery Guarantees
+
+The cluster mode supports three levels of message delivery guarantees:
+
+1. **EXACTLY_ONCE**: Messages are delivered exactly once to the target actor. This is the most reliable option but potentially slower as it uses acknowledgments, retries, and deduplication to ensure messages are delivered exactly once.
+
+2. **AT_LEAST_ONCE**: Messages are guaranteed to be delivered at least once to the target actor, but may be delivered multiple times. This is more reliable than AT_MOST_ONCE but may result in duplicate message processing. It uses acknowledgments and retries but no deduplication.
+
+3. **AT_MOST_ONCE**: Messages are delivered at most once to the target actor, but may not be delivered at all. This is the fastest option but provides no delivery guarantees. It uses no acknowledgments, retries, or deduplication.
+
+You can specify the delivery guarantee when sending messages:
+
+```java
+// Send with default delivery guarantee (set on the ClusterActorSystem)
+actor.tell("Hello");
+
+// Send with specific delivery guarantee
+ClusterActorSystem system = (ClusterActorSystem) actor.getSystem();
+system.routeMessage(actor.actorId(), "Hello", DeliveryGuarantee.EXACTLY_ONCE);
+```
+
+The default delivery guarantee can be configured on the ClusterActorSystem:
+
+```java
+ClusterActorSystem system = new ClusterActorSystem("node1", metadataStore, messagingSystem);
+system.setDefaultDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE);
+```
 
 ## Extending the System
 

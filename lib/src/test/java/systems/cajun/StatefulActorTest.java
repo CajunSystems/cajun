@@ -147,8 +147,28 @@ class StatefulActorTest {
         actor.tell(new TestCounterMessage.Increment(5));
         actor.tell(new TestCounterMessage.Increment(10));
         
-        // Wait for the messages to be processed
-        Thread.sleep(100);
+        // Wait for the messages to be processed using polling
+        int expectedState = 15;
+        int maxWaitTimeMs = 200; // Increased from 100ms but still faster than 1 second
+        int pollIntervalMs = 10;
+        int elapsedTime = 0;
+        AtomicInteger currentState = new AtomicInteger(0);
+        CountDownLatch pollLatch = new CountDownLatch(1);
+        
+        while (currentState.get() != expectedState && elapsedTime < maxWaitTimeMs) {
+            actor.tell(new TestCounterMessage.GetCount(count -> {
+                currentState.set(count);
+                if (count == expectedState) {
+                    pollLatch.countDown();
+                }
+            }));
+            
+            if (pollLatch.await(pollIntervalMs, TimeUnit.MILLISECONDS)) {
+                break; // State reached expected value
+            }
+            
+            elapsedTime += pollIntervalMs;
+        }
         
         // Stop the actor
         actor.stop();
@@ -183,8 +203,28 @@ class StatefulActorTest {
         actor.tell(new TestCounterMessage.Increment(5));
         actor.tell(new TestCounterMessage.Increment(10));
         
-        // Wait for the messages to be processed
-        Thread.sleep(100);
+        // Wait for the messages to be processed using polling
+        int expectedState = 15;
+        int maxWaitTimeMs = 200; // Increased from 100ms but still faster than 1 second
+        int pollIntervalMs = 10;
+        int elapsedTime = 0;
+        AtomicInteger currentState = new AtomicInteger(0);
+        CountDownLatch pollLatch = new CountDownLatch(1);
+        
+        while (currentState.get() != expectedState && elapsedTime < maxWaitTimeMs) {
+            actor.tell(new TestCounterMessage.GetCount(count -> {
+                currentState.set(count);
+                if (count == expectedState) {
+                    pollLatch.countDown();
+                }
+            }));
+            
+            if (pollLatch.await(pollIntervalMs, TimeUnit.MILLISECONDS)) {
+                break; // State reached expected value
+            }
+            
+            elapsedTime += pollIntervalMs;
+        }
         
         // Stop the actor
         actor.stop();

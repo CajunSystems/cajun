@@ -37,6 +37,7 @@ public class ClusterActorSystem extends ActorSystem {
     private final Set<String> knownNodes = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private MetadataStore.Lock leaderLock;
+    private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
     
     /**
      * Creates a new ClusterActorSystem with the specified configuration.
@@ -51,6 +52,11 @@ public class ClusterActorSystem extends ActorSystem {
         this.metadataStore = metadataStore;
         this.messagingSystem = messagingSystem;
         this.scheduler = new ScheduledThreadPoolExecutor(1);
+        
+        // Set default delivery guarantee if messaging system supports it
+        if (messagingSystem instanceof ReliableMessagingSystem) {
+            ((ReliableMessagingSystem) messagingSystem).setDefaultDeliveryGuarantee(defaultDeliveryGuarantee);
+        }
         
         // Register message handler for remote actor messages
         messagingSystem.registerMessageHandler(this::handleRemoteMessage);
@@ -211,7 +217,20 @@ public class ClusterActorSystem extends ActorSystem {
      * @param <Message> The type of the message
      */
     @SuppressWarnings({"unchecked", "RedundantSuppression"})
-    <Message> void routeMessage(String actorId, Message message) {
+    public <Message> void routeMessage(String actorId, Message message) {
+        routeMessage(actorId, message, defaultDeliveryGuarantee);
+    }
+    
+    /**
+     * Routes a message to an actor with a specific delivery guarantee.
+     *
+     * @param actorId The ID of the target actor
+     * @param message The message to send
+     * @param deliveryGuarantee The delivery guarantee to use
+     * @param <Message> The type of the message
+     */
+    @SuppressWarnings({"unchecked", "RedundantSuppression"})
+    public <Message> void routeMessage(String actorId, Message message, DeliveryGuarantee deliveryGuarantee) {
         // Check if the actor is local
         Actor<Message> actor = (Actor<Message>) getActor(new Pid(actorId, this));
         if (actor != null) {
@@ -227,11 +246,24 @@ public class ClusterActorSystem extends ActorSystem {
                         String nodeId = optionalNodeId.get();
                         if (!nodeId.equals(systemId)) {
                             // Actor is on another node, forward the message
-                            messagingSystem.sendMessage(nodeId, actorId, message)
+                            if (messagingSystem instanceof ReliableMessagingSystem) {
+                                // Use the reliable messaging system with the specified delivery guarantee
+                                ((ReliableMessagingSystem) messagingSystem).sendMessage(
+                                        nodeId, actorId, message, deliveryGuarantee)
                                     .exceptionally(ex -> {
-                                        logger.error("Failed to send message to actor {} on node {}", actorId, nodeId, ex);
+                                        logger.error("Failed to send message to actor {} on node {}", 
+                                                    actorId, nodeId, ex);
                                         return null;
                                     });
+                            } else {
+                                // Fall back to the standard messaging system
+                                messagingSystem.sendMessage(nodeId, actorId, message)
+                                    .exceptionally(ex -> {
+                                        logger.error("Failed to send message to actor {} on node {}", 
+                                                    actorId, nodeId, ex);
+                                        return null;
+                                    });
+                            }
                         } else {
                             logger.warn("Actor {} is registered to this node but not found locally", actorId);
                         }
@@ -258,10 +290,26 @@ public class ClusterActorSystem extends ActorSystem {
      * @param <Message> The type of the message
      */
     @SuppressWarnings("RedundantSuppression")
-    <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit) {
+    public <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit) {
+        routeMessage(actorId, message, delay, timeUnit, defaultDeliveryGuarantee);
+    }
+    
+    /**
+     * Routes a message to an actor with a delay and specific delivery guarantee.
+     *
+     * @param actorId The ID of the target actor
+     * @param message The message to send
+     * @param delay The delay amount
+     * @param timeUnit The time unit for the delay
+     * @param deliveryGuarantee The delivery guarantee to use
+     * @param <Message> The type of the message
+     */
+    @SuppressWarnings("RedundantSuppression")
+    public <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit, 
+                              DeliveryGuarantee deliveryGuarantee) {
         // For delayed messages, we schedule them locally and handle routing when the delay expires
         scheduler.schedule(() -> {
-            routeMessage(actorId, message);
+            routeMessage(actorId, message, deliveryGuarantee);
         }, delay, timeUnit);
     }
     
@@ -518,5 +566,31 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public MetadataStore getMetadataStore() {
         return metadataStore;
+    }
+    
+    /**
+     * Sets the default delivery guarantee for messages sent by this actor system.
+     *
+     * @param deliveryGuarantee The delivery guarantee to use by default
+     * @return This actor system instance for method chaining
+     */
+    public ClusterActorSystem withDeliveryGuarantee(DeliveryGuarantee deliveryGuarantee) {
+        this.defaultDeliveryGuarantee = deliveryGuarantee;
+        
+        // Update the messaging system if it supports delivery guarantees
+        if (messagingSystem instanceof ReliableMessagingSystem) {
+            ((ReliableMessagingSystem) messagingSystem).setDefaultDeliveryGuarantee(deliveryGuarantee);
+        }
+        
+        return this;
+    }
+    
+    /**
+     * Gets the default delivery guarantee for this actor system.
+     *
+     * @return The default delivery guarantee
+     */
+    public DeliveryGuarantee getDefaultDeliveryGuarantee() {
+        return defaultDeliveryGuarantee;
     }
 }
