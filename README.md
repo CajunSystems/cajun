@@ -386,6 +386,112 @@ Actors provide lifecycle hooks that you can override for custom behavior:
 
 The `ActorException` class is used for error propagation, particularly when using the ESCALATE supervision strategy. It captures the actor ID and original exception for better error handling.
 
+## Cluster Mode
+
+Cajun supports running in a cluster mode where actors can be distributed across multiple nodes, with automatic failover and recovery.
+
+### Setting Up Cluster Mode
+
+```java
+// Create a metadata store (using etcd)
+MetadataStore metadataStore = new EtcdMetadataStore("http://localhost:2379");
+
+// Create a messaging system (using direct TCP)
+MessagingSystem messagingSystem = new DirectMessagingSystem("system1", 8080);
+
+// Create a cluster actor system
+ClusterActorSystem system = new ClusterActorSystem("system1", metadataStore, messagingSystem);
+
+// Start the system
+system.start().get();
+
+// Create actors as usual
+Pid actor = system.register(MyActor.class, "my-actor");
+
+// Send messages as usual
+actor.tell("Hello, actor!");
+
+// Shut down the system when done
+system.stop().get();
+```
+
+### Key Features
+
+#### Distributed Actor Assignment
+
+Actors are assigned to nodes in the cluster using rendezvous hashing, which provides a consistent distribution even when nodes join or leave the cluster.
+
+```java
+// Create an actor on a specific node
+Pid actor = system.createActorOnNode(MyActor.class, "my-actor", "node2");
+```
+
+#### Leader Election
+
+A leader node is elected using a distributed lock in the metadata store. The leader is responsible for managing actor assignments and handling node failures.
+
+```java
+// Check if this node is the leader
+if (system.isLeader()) {
+    // Perform leader-specific tasks
+}
+```
+
+#### Remote Messaging
+
+Messages can be sent to actors regardless of which node they're running on. The system automatically routes messages to the correct node.
+
+```java
+// Send a message to an actor (works the same whether the actor is local or remote)
+actor.tell("Hello, actor!");
+```
+
+#### Fault Tolerance
+
+When a node fails, its actors are automatically reassigned to other nodes in the cluster.
+
+### Multiple Nodes Example
+
+```java
+// Node 1
+MetadataStore metadataStore1 = new EtcdMetadataStore("http://etcd-host:2379");
+DirectMessagingSystem messagingSystem1 = new DirectMessagingSystem("node1", 8080);
+messagingSystem1.addNode("node2", "node2-host", 8080);
+ClusterActorSystem system1 = new ClusterActorSystem("node1", metadataStore1, messagingSystem1);
+system1.start().get();
+
+// Node 2
+MetadataStore metadataStore2 = new EtcdMetadataStore("http://etcd-host:2379");
+DirectMessagingSystem messagingSystem2 = new DirectMessagingSystem("node2", 8080);
+messagingSystem2.addNode("node1", "node1-host", 8080);
+ClusterActorSystem system2 = new ClusterActorSystem("node2", metadataStore2, messagingSystem2);
+system2.start().get();
+```
+
+### Extending the System
+
+#### Custom Metadata Store
+
+You can implement your own metadata store by implementing the `MetadataStore` interface:
+
+```java
+public class CustomMetadataStore implements MetadataStore {
+    // Implement the required methods
+}
+```
+
+#### Custom Messaging System
+
+You can implement your own messaging system by implementing the `MessagingSystem` interface:
+
+```java
+public class CustomMessagingSystem implements MessagingSystem {
+    // Implement the required methods
+}
+```
+
+For more details, see the [Cluster Mode documentation](lib/src/main/java/systems/cajun/cluster/README.md).
+
 ## Feature roadmap
 
 1. Actor system and actor lifecycle
@@ -396,6 +502,9 @@ The `ActorException` class is used for error propagation, particularly when usin
    - [x] Timed messages
    - [x] Error handling with supervision strategies
 2. Actor metadata management with etcd
+   - [x] Distributed metadata store with etcd support
+   - [x] Leader election
+   - [x] Actor assignment tracking
 3. Actor supervision hierarchy and fault tolerance
    - [x] Basic supervision strategies (RESUME, RESTART, STOP, ESCALATE)
    - [x] Hierarchical supervision
@@ -405,3 +514,9 @@ The `ActorException` class is used for error propagation, particularly when usin
    - [x] Pluggable state storage backends (in-memory, file-based)
    - [ ] Message persistence and replay
 5. Partitioned state and sharding strategy
+   - [x] Rendezvous hashing for actor assignment
+6. Cluster mode
+   - [x] Distributed actor systems
+   - [x] Remote messaging between actor systems
+   - [x] Actor reassignment on node failure
+   - [x] Pluggable messaging system

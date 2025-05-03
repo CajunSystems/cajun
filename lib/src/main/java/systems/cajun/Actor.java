@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -416,7 +415,6 @@ public abstract class Actor<Message> {
      * @param child The child actor that experienced an error
      * @param exception The exception that was thrown
      */
-    @SuppressWarnings("unchecked")
     void handleChildError(Actor<?> child, Throwable exception) {
         logger.info("Actor {} handling error from child {}", actorId, child.getActorId());
 
