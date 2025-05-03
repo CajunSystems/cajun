@@ -1,18 +1,64 @@
 # Cajun
 
 <div style="text-align:center">
-    <p>A pluggable actor system written in java leveraging modern features from JDK21+</p>
+    <p>A pluggable actor system written in Java leveraging modern features from JDK21+</p>
     <img src="docs/logo.png" alt="Alt Text" style="width:50%; height:auto;">
 </div>
 
+## Table of Contents
+- [Introduction](#introduction)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Creating Actors](#creating-actors)
+  - [Using the Actor System](#using-the-actor-system)
+  - [Running Examples](#running-examples)
+- [Message Processing and Performance Tuning](#message-processing-and-performance-tuning)
+- [Error Handling and Supervision Strategy](#error-handling-and-supervision-strategy)
+- [Cluster Mode](#cluster-mode)
+- [Feature Roadmap](#feature-roadmap)
+
+## Introduction
+
+Cajun is a lightweight, high-performance actor system for Java applications that leverages modern Java features to provide a simple yet powerful concurrency model. It's designed to make concurrent programming easier and more reliable by using the actor model.
+
 An actor is a concurrent unit of computation which guarantees serial processing of messages with no need for state
 synchronization and coordination. This guarantee of actors mainly comes from the way actors communicate with each other,
-each actor send asynchronous messages to other actors and each actor only reads messages from its mailbox.
+each actor sends asynchronous messages to other actors and each actor only reads messages from its mailbox.
+
+Key benefits of using Cajun:
+- **Simplified Concurrency**: No locks, no synchronized blocks, no race conditions
+- **Scalability**: Easily scale from single-threaded to multi-threaded to distributed systems
+- **Fault Tolerance**: Built-in supervision strategies for handling failures
+- **Flexibility**: Multiple programming styles (OO, functional, stateful)
+- **Performance**: High-throughput message processing with batching support
 
 <img src="docs/actor_arch.png" alt="Actor architecture" style="height:auto;">
 
+> **Dedication**: Cajun is inspired by Erlang OTP and the actor model, and is dedicated to the late Sir Joe Armstrong from Ericsson, whose pioneering work on Erlang and the actor model has influenced a generation of concurrent programming systems. Additional inspiration comes from Akka/Pekko.
+
 ## Prerequisites
 - Java 21+ (with --enable-preview flag)
+
+## Installation
+
+Add Cajun to your project using Gradle:
+
+```gradle
+dependencies {
+    implementation 'systems.cajun:cajun-core:latest.release'
+}
+```
+
+Or with Maven:
+
+```xml
+<dependency>
+    <groupId>systems.cajun</groupId>
+    <artifactId>cajun-core</artifactId>
+    <version>latest.release</version>
+</dependency>
+```
 
 ## Usage
 
@@ -117,17 +163,17 @@ The `StatefulActor` extends the base Actor class by adding state management capa
 
 ```java
 public class CounterActor extends StatefulActor<Integer, CounterMessage> {
-    
+
     // Create with in-memory persistence
     public CounterActor(ActorSystem system, Integer initialState) {
         super(system, initialState);
     }
-    
+
     // Create with custom persistence store
     public CounterActor(ActorSystem system, Integer initialState, StateStore<String, Integer> stateStore) {
         super(system, initialState, stateStore);
     }
-    
+
     @Override
     protected Integer processMessage(Integer state, CounterMessage message) {
         if (message instanceof CounterMessage.Increment increment) {
@@ -316,7 +362,7 @@ The following supervision strategies are available:
 
 To set a supervision strategy for an actor:
 
-```
+```java
 // Create an actor system
 ActorSystem system = new ActorSystem();
 
@@ -336,7 +382,7 @@ Cajun supports hierarchical supervision, allowing actors to be organized in a pa
 
 You can create child actors from within a parent actor:
 
-```
+```java
 // Inside a parent actor class method
 public void createChildren() {
     // Create a child actor with a specific ID
@@ -349,7 +395,7 @@ public void createChildren() {
 
 You can also register a child actor through the ActorSystem:
 
-```
+```java
 // Create an actor system
 ActorSystem actorSystem = new ActorSystem();
 
@@ -490,7 +536,7 @@ public class CustomMessagingSystem implements MessagingSystem {
 }
 ```
 
-For more details, see the [Cluster Mode documentation](lib/src/main/java/systems/cajun/cluster/README.md).
+For more details, see the [Cluster Mode Improvements documentation](docs/cluster_mode_improvements.md).
 
 ## Feature roadmap
 
