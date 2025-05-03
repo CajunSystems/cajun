@@ -434,6 +434,8 @@ The `ActorException` class is used for error propagation, particularly when usin
 
 ## Cluster Mode
 
+<img src="docs/actor_cluster_mode.png" alt="Actor cluster mode" style="height:auto;">
+
 Cajun supports running in a cluster mode where actors can be distributed across multiple nodes, with automatic failover and recovery.
 
 ### Setting Up Cluster Mode
@@ -513,6 +515,7 @@ messagingSystem2.addNode("node1", "node1-host", 8080);
 ClusterActorSystem system2 = new ClusterActorSystem("node2", metadataStore2, messagingSystem2);
 system2.start().get();
 ```
+For more details refer to [Cluster Mode](docs/cluster_mode.md).
 
 ### Extending the System
 
