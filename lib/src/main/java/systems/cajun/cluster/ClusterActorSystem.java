@@ -23,13 +23,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and a messaging system for communication between actor systems.
  */
 public class ClusterActorSystem extends ActorSystem {
-    
+
     private static final Logger logger = LoggerFactory.getLogger(ClusterActorSystem.class);
     private static final String ACTOR_ASSIGNMENT_PREFIX = "cajun/actor/";
     private static final String NODE_PREFIX = "cajun/node/";
     private static final String LEADER_KEY = "cajun/leader";
     private static final long HEARTBEAT_INTERVAL_SECONDS = 5;
-    
+
     private final String systemId;
     private final MetadataStore metadataStore;
     private final MessagingSystem messagingSystem;
@@ -38,7 +38,7 @@ public class ClusterActorSystem extends ActorSystem {
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private MetadataStore.Lock leaderLock;
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
-    
+
     /**
      * Creates a new ClusterActorSystem with the specified configuration.
      *
@@ -52,16 +52,16 @@ public class ClusterActorSystem extends ActorSystem {
         this.metadataStore = metadataStore;
         this.messagingSystem = messagingSystem;
         this.scheduler = new ScheduledThreadPoolExecutor(1);
-        
+
         // Set default delivery guarantee if messaging system supports it
         if (messagingSystem instanceof ReliableMessagingSystem) {
             ((ReliableMessagingSystem) messagingSystem).setDefaultDeliveryGuarantee(defaultDeliveryGuarantee);
         }
-        
+
         // Register message handler for remote actor messages
         messagingSystem.registerMessageHandler(this::handleRemoteMessage);
     }
-    
+
     /**
      * Creates a new ClusterActorSystem with a generated system ID.
      *
@@ -71,7 +71,7 @@ public class ClusterActorSystem extends ActorSystem {
     public ClusterActorSystem(MetadataStore metadataStore, MessagingSystem messagingSystem) {
         this(UUID.randomUUID().toString(), metadataStore, messagingSystem);
     }
-    
+
     /**
      * Starts the cluster actor system.
      * This connects to the metadata store, starts the messaging system,
@@ -91,7 +91,7 @@ public class ClusterActorSystem extends ActorSystem {
                             HEARTBEAT_INTERVAL_SECONDS,
                             TimeUnit.SECONDS
                     );
-                    
+
                     // Start leader election
                     scheduler.scheduleAtFixedRate(
                             this::tryBecomeLeader,
@@ -99,7 +99,7 @@ public class ClusterActorSystem extends ActorSystem {
                             HEARTBEAT_INTERVAL_SECONDS * 3,
                             TimeUnit.SECONDS
                     );
-                    
+
                     // Watch for node changes
                     metadataStore.watch(NODE_PREFIX, new MetadataStore.KeyWatcher() {
                         @Override
@@ -108,13 +108,13 @@ public class ClusterActorSystem extends ActorSystem {
                             knownNodes.add(nodeId);
                             logger.info("Node joined: {}", nodeId);
                         }
-                        
+
                         @Override
                         public void onDelete(String key) {
                             String nodeId = key.substring(NODE_PREFIX.length());
                             knownNodes.remove(nodeId);
                             logger.info("Node left: {}", nodeId);
-                            
+
                             // If we're the leader, reassign actors from the departed node
                             if (isLeader.get()) {
                                 reassignActorsFromNode(nodeId);
@@ -123,7 +123,7 @@ public class ClusterActorSystem extends ActorSystem {
                     });
                 });
     }
-    
+
     /**
      * Stops the cluster actor system.
      * This unregisters the node, stops the messaging system, and disconnects from the metadata store.
@@ -138,14 +138,14 @@ public class ClusterActorSystem extends ActorSystem {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        
+
         // Release leader lock if we have it
         if (leaderLock != null) {
             leaderLock.release();
             leaderLock = null;
             isLeader.set(false);
         }
-        
+
         // Unregister node
         return metadataStore.delete(NODE_PREFIX + systemId)
                 .thenCompose(v -> messagingSystem.stop())
@@ -155,33 +155,33 @@ public class ClusterActorSystem extends ActorSystem {
                     super.shutdown();
                 });
     }
-    
+
     @Override
     public void shutdown() {
         // Use the cluster-aware stop method
         stop();
     }
-    
+
     @Override
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId) {
         // First register the actor locally
         Pid pid = super.register(actorClass, actorId);
-        
+
         // Then register the actor in the metadata store
         metadataStore.put(ACTOR_ASSIGNMENT_PREFIX + actorId, systemId)
                 .exceptionally(ex -> {
                     logger.error("Failed to register actor {} in metadata store", actorId, ex);
                     return null;
                 });
-        
+
         return pid;
     }
-    
+
     @Override
     public <T extends Actor<?>> Pid register(Class<T> actorClass) {
         // Use the parent implementation which will generate an actor ID
         Pid pid = super.register(actorClass);
-        
+
         // Then register the actor in the metadata store
         String actorId = pid.actorId();
         metadataStore.put(ACTOR_ASSIGNMENT_PREFIX + actorId, systemId)
@@ -189,10 +189,10 @@ public class ClusterActorSystem extends ActorSystem {
                     logger.error("Failed to register actor {} in metadata store", actorId, ex);
                     return null;
                 });
-        
+
         return pid;
     }
-    
+
     @Override
     public void shutdown(String actorId) {
         // First remove the actor from the metadata store
@@ -201,11 +201,11 @@ public class ClusterActorSystem extends ActorSystem {
                     logger.error("Failed to unregister actor {} from metadata store", actorId, ex);
                     return null;
                 });
-        
+
         // Then shut down the actor locally
         super.shutdown(actorId);
     }
-    
+
     /**
      * Routes a message to an actor, either locally or remotely.
      * This method is called by Pid.tell().
@@ -220,13 +220,13 @@ public class ClusterActorSystem extends ActorSystem {
     public <Message> void routeMessage(String actorId, Message message) {
         routeMessage(actorId, message, defaultDeliveryGuarantee);
     }
-    
+
     /**
      * Routes a message to an actor with a specific delivery guarantee.
      *
      * @param actorId The ID of the target actor
      * @param message The message to send
-     * @param deliveryGuarantee The delivery guarantee to use
+     * @param deliveryGuarantee The delivery guarantees to use
      * @param <Message> The type of the message
      */
     @SuppressWarnings({"unchecked", "RedundantSuppression"})
@@ -238,7 +238,7 @@ public class ClusterActorSystem extends ActorSystem {
             actor.tell(message);
             return;
         }
-        
+
         // Actor is not local, look up its location in the metadata store
         metadataStore.get(ACTOR_ASSIGNMENT_PREFIX + actorId)
                 .thenAccept(optionalNodeId -> {
@@ -265,7 +265,15 @@ public class ClusterActorSystem extends ActorSystem {
                                     });
                             }
                         } else {
-                            logger.warn("Actor {} is registered to this node but not found locally", actorId);
+                            // Actor is registered to this node but not found locally
+                            // Try to get the actor again (it might have been created since our first check)
+                            Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
+                            if (localActor != null) {
+                                // Actor is now available locally, deliver the message directly
+                                localActor.tell(message);
+                            } else {
+                                logger.warn("Actor {} is registered to this node but not found locally", actorId);
+                            }
                         }
                     } else {
                         logger.warn("Actor {} not found in the cluster", actorId);
@@ -276,7 +284,7 @@ public class ClusterActorSystem extends ActorSystem {
                     return null;
                 });
     }
-    
+
     /**
      * Routes a message to an actor with a delay, either locally or remotely.
      * This method is called by Pid.tell() with delay.
@@ -293,7 +301,7 @@ public class ClusterActorSystem extends ActorSystem {
     public <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit) {
         routeMessage(actorId, message, delay, timeUnit, defaultDeliveryGuarantee);
     }
-    
+
     /**
      * Routes a message to an actor with a delay and specific delivery guarantee.
      *
@@ -312,7 +320,7 @@ public class ClusterActorSystem extends ActorSystem {
             routeMessage(actorId, message, deliveryGuarantee);
         }, delay, timeUnit);
     }
-    
+
     /**
      * Handles a message received from a remote actor system.
      *
@@ -329,7 +337,7 @@ public class ClusterActorSystem extends ActorSystem {
             logger.warn("Received message for unknown actor: {}", actorId);
         }
     }
-    
+
     /**
      * Registers this node in the metadata store.
      *
@@ -346,7 +354,7 @@ public class ClusterActorSystem extends ActorSystem {
                     logger.info("Registered node {} in cluster with {} known nodes", systemId, knownNodes.size());
                 });
     }
-    
+
     /**
      * Sends a heartbeat to keep the node registration active.
      */
@@ -357,7 +365,7 @@ public class ClusterActorSystem extends ActorSystem {
                     return null;
                 });
     }
-    
+
     /**
      * Attempts to become the leader of the cluster.
      */
@@ -373,7 +381,7 @@ public class ClusterActorSystem extends ActorSystem {
                     });
             return;
         }
-        
+
         // Try to acquire the leader lock
         metadataStore.acquireLock(LEADER_KEY, HEARTBEAT_INTERVAL_SECONDS * 3)
                 .thenAccept(optionalLock -> {
@@ -381,7 +389,7 @@ public class ClusterActorSystem extends ActorSystem {
                         leaderLock = optionalLock.get();
                         isLeader.set(true);
                         logger.info("Became leader of the cluster");
-                        
+
                         // As the new leader, check for unassigned actors
                         checkForUnassignedActors();
                     }
@@ -391,7 +399,7 @@ public class ClusterActorSystem extends ActorSystem {
                     return null;
                 });
     }
-    
+
     /**
      * Checks for unassigned actors and assigns them to nodes.
      */
@@ -399,17 +407,17 @@ public class ClusterActorSystem extends ActorSystem {
         if (!isLeader.get()) {
             return;
         }
-        
+
         metadataStore.listKeys(ACTOR_ASSIGNMENT_PREFIX)
                 .thenCompose(actorKeys -> {
                     Set<String> actorIds = new HashSet<>();
                     for (String key : actorKeys) {
                         actorIds.add(key.substring(ACTOR_ASSIGNMENT_PREFIX.length()));
                     }
-                    
+
                     // For each actor, check if its assigned node is still alive
                     CompletableFuture<Void> allChecks = CompletableFuture.completedFuture(null);
-                    
+
                     for (String actorId : actorIds) {
                         allChecks = allChecks.thenCompose(v -> 
                             metadataStore.get(ACTOR_ASSIGNMENT_PREFIX + actorId)
@@ -422,7 +430,7 @@ public class ClusterActorSystem extends ActorSystem {
                                 })
                         );
                     }
-                    
+
                     return allChecks;
                 })
                 .exceptionally(ex -> {
@@ -430,7 +438,7 @@ public class ClusterActorSystem extends ActorSystem {
                     return null;
                 });
     }
-    
+
     /**
      * Reassigns actors from a departed node.
      *
@@ -440,14 +448,14 @@ public class ClusterActorSystem extends ActorSystem {
         if (!isLeader.get()) {
             return;
         }
-        
+
         metadataStore.listKeys(ACTOR_ASSIGNMENT_PREFIX)
                 .thenCompose(actorKeys -> {
                     CompletableFuture<Void> allReassignments = CompletableFuture.completedFuture(null);
-                    
+
                     for (String key : actorKeys) {
                         String actorId = key.substring(ACTOR_ASSIGNMENT_PREFIX.length());
-                        
+
                         allReassignments = allReassignments.thenCompose(v -> 
                             metadataStore.get(key)
                                 .thenCompose(optionalNodeId -> {
@@ -459,7 +467,7 @@ public class ClusterActorSystem extends ActorSystem {
                                 })
                         );
                     }
-                    
+
                     return allReassignments;
                 })
                 .exceptionally(ex -> {
@@ -467,7 +475,7 @@ public class ClusterActorSystem extends ActorSystem {
                     return null;
                 });
     }
-    
+
     /**
      * Assigns an actor to a node using rendezvous hashing.
      *
@@ -479,20 +487,20 @@ public class ClusterActorSystem extends ActorSystem {
             logger.warn("No nodes available to assign actor {}", actorId);
             return CompletableFuture.completedFuture(null);
         }
-        
+
         Optional<String> selectedNode = RendezvousHashing.assignKey(actorId, knownNodes);
-        
+
         if (selectedNode.isPresent()) {
             String nodeId = selectedNode.get();
             logger.info("Assigning actor {} to node {}", actorId, nodeId);
-            
+
             return metadataStore.put(ACTOR_ASSIGNMENT_PREFIX + actorId, nodeId);
         } else {
             logger.warn("Failed to assign actor {} to a node", actorId);
             return CompletableFuture.completedFuture(null);
         }
     }
-    
+
     /**
      * Creates an actor on a specific node in the cluster.
      *
@@ -506,23 +514,23 @@ public class ClusterActorSystem extends ActorSystem {
         if (!knownNodes.contains(nodeId)) {
             throw new IllegalArgumentException("Unknown node ID: " + nodeId);
         }
-        
+
         // Register the actor assignment in the metadata store
         metadataStore.put(ACTOR_ASSIGNMENT_PREFIX + actorId, nodeId)
                 .exceptionally(ex -> {
                     logger.error("Failed to register actor {} on node {} in metadata store", actorId, nodeId, ex);
                     return null;
                 });
-        
+
         // If the actor should be created on this node, create it locally
         if (nodeId.equals(systemId)) {
             return super.register(actorClass, actorId);
         }
-        
+
         // Otherwise, return a PID that will route messages to the remote node
         return new Pid(actorId, this);
     }
-    
+
     /**
      * Gets the ID of this actor system.
      *
@@ -531,7 +539,7 @@ public class ClusterActorSystem extends ActorSystem {
     public String getSystemId() {
         return systemId;
     }
-    
+
     /**
      * Gets a set of known node IDs in the cluster.
      *
@@ -540,7 +548,7 @@ public class ClusterActorSystem extends ActorSystem {
     public Set<String> getKnownNodes() {
         return new HashSet<>(knownNodes);
     }
-    
+
     /**
      * Checks if this node is currently the leader of the cluster.
      *
@@ -549,7 +557,7 @@ public class ClusterActorSystem extends ActorSystem {
     public boolean isLeader() {
         return isLeader.get();
     }
-    
+
     /**
      * Gets the messaging system used by this actor system.
      *
@@ -558,7 +566,7 @@ public class ClusterActorSystem extends ActorSystem {
     public MessagingSystem getMessagingSystem() {
         return messagingSystem;
     }
-    
+
     /**
      * Gets the metadata store used by this actor system.
      *
@@ -567,7 +575,7 @@ public class ClusterActorSystem extends ActorSystem {
     public MetadataStore getMetadataStore() {
         return metadataStore;
     }
-    
+
     /**
      * Sets the default delivery guarantee for messages sent by this actor system.
      *
@@ -576,15 +584,15 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public ClusterActorSystem withDeliveryGuarantee(DeliveryGuarantee deliveryGuarantee) {
         this.defaultDeliveryGuarantee = deliveryGuarantee;
-        
+
         // Update the messaging system if it supports delivery guarantees
         if (messagingSystem instanceof ReliableMessagingSystem) {
             ((ReliableMessagingSystem) messagingSystem).setDefaultDeliveryGuarantee(deliveryGuarantee);
         }
-        
+
         return this;
     }
-    
+
     /**
      * Gets the default delivery guarantee for this actor system.
      *
