@@ -26,9 +26,12 @@ public abstract class Actor<Message> {
     private SupervisionStrategy supervisionStrategy = SupervisionStrategy.RESUME;
     private Actor<?> parent;
     private final Map<String, Actor<?>> children = new ConcurrentHashMap<>();
-    private int shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
-    private int batchSize = DEFAULT_BATCH_SIZE;
+    private int shutdownTimeoutSeconds;
+    private int batchSize;
     private volatile Thread mailboxThread;
+
+    // Reusable batch buffer for message processing
+    private final List<Message> batchBuffer = new ArrayList<>(DEFAULT_BATCH_SIZE);
 
     // Reference to the next actor in a workflow chain
     private Pid nextActor;
@@ -42,12 +45,29 @@ public abstract class Actor<Message> {
         this.system = system;
         this.actorId = actorId;
         this.mailbox = new LinkedBlockingQueue<>();
-        // Use a shared executor from the actor system if available, otherwise create a dedicated one
-        this.executor = system.getSharedExecutor() != null ? 
-                       system.getSharedExecutor() : 
-                       Executors.newVirtualThreadPerTaskExecutor();
+
+        // Use configuration from the actor system
+        if (system.getThreadPoolFactory() != null) {
+            this.shutdownTimeoutSeconds = system.getThreadPoolFactory().getActorShutdownTimeoutSeconds();
+            this.batchSize = system.getThreadPoolFactory().getActorBatchSize();
+
+            // Use a shared executor from the actor system if available, otherwise create a dedicated one
+            if (system.getSharedExecutor() != null) {
+                this.executor = system.getSharedExecutor();
+            } else {
+                this.executor = system.getThreadPoolFactory().createExecutorService("actor-" + actorId);
+            }
+        } else {
+            // Fallback to defaults if no config is available
+            this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
+            this.batchSize = DEFAULT_BATCH_SIZE;
+            this.executor = system.getSharedExecutor() != null ? 
+                           system.getSharedExecutor() : 
+                           Executors.newVirtualThreadPerTaskExecutor();
+        }
+
         this.pid = new Pid(actorId, system);
-        logger.debug("Actor {} created", actorId);
+        logger.debug("Actor {} created with batch size {}", actorId, batchSize);
     }
 
     protected abstract void receive(Message message);
@@ -101,13 +121,13 @@ public abstract class Actor<Message> {
             logger.debug("Actor {} is already running", actorId);
             return;
         }
-        
+
         isRunning = true;
         logger.info("Starting actor {}", actorId);
-        
+
         try {
             preStart();
-            
+
             // Use a virtual thread directly for the mailbox processing
             // This avoids the overhead of StructuredTaskScope when not needed
             mailboxThread = Thread.ofVirtual()
@@ -166,23 +186,24 @@ public abstract class Actor<Message> {
     }
 
     protected void processMailbox() {
-        List<Message> batch = new ArrayList<>(batchSize);
-        
         while (isRunning) {
             try {
+                // Clear the batch buffer for reuse
+                batchBuffer.clear();
+
                 // Get at least one message (blocking)
                 Message firstMessage = mailbox.take();
-                batch.add(firstMessage);
-                
+                batchBuffer.add(firstMessage);
+
                 // Try to drain more messages up to batch size (non-blocking)
                 if (batchSize > 1) {
-                    mailbox.drainTo(batch, batchSize - 1);
+                    mailbox.drainTo(batchBuffer, batchSize - 1);
                 }
-                
+
                 // Process the batch
-                for (Message message : batch) {
+                for (Message message : batchBuffer) {
                     if (!isRunning) break; // Check if we should stop processing
-                    
+
                     try {
                         receive(message);
                     } catch (Exception e) {
@@ -190,10 +211,7 @@ public abstract class Actor<Message> {
                         handleException(message, e);
                     }
                 }
-                
-                // Clear the batch for reuse
-                batch.clear();
-                
+
             } catch (InterruptedException e) {
                 // This is expected during shutdown, so use debug level
                 logger.debug("Actor {} mailbox processing interrupted", actorId);
@@ -233,7 +251,7 @@ public abstract class Actor<Message> {
 
         // Drain the mailbox to prevent processing during shutdown
         mailbox.clear();
-        
+
         // Interrupt the mailbox thread if it exists
         if (mailboxThread != null) {
             mailboxThread.interrupt();
@@ -265,7 +283,7 @@ public abstract class Actor<Message> {
                 Thread.currentThread().interrupt();
             }
         }
-        
+
         try {
             postStop();
         } catch (Exception e) {

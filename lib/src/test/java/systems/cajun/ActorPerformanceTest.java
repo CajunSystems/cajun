@@ -6,9 +6,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.Actor;
-import systems.cajun.ActorSystem;
-import systems.cajun.Pid;
 
 import java.util.ArrayList;
 import java.util.List;

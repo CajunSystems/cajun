@@ -2,6 +2,7 @@ package systems.cajun.cluster;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import systems.cajun.config.ThreadPoolFactory;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -25,12 +26,13 @@ public class ReliableMessagingSystem implements MessagingSystem {
     private final String systemId;
     private final int port;
     private final Map<String, NodeAddress> nodeAddresses = new ConcurrentHashMap<>();
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService executor;
     private ServerSocket serverSocket;
     private volatile boolean running = false;
     private MessageHandler messageHandler;
     private final MessageTracker messageTracker;
     private DeliveryGuarantee defaultDeliveryGuarantee;
+    private final ThreadPoolFactory threadPoolConfig;
     
     /**
      * Creates a new ReliableMessagingSystem with EXACTLY_ONCE as the default delivery guarantee.
@@ -50,10 +52,24 @@ public class ReliableMessagingSystem implements MessagingSystem {
      * @param defaultDeliveryGuarantee The default delivery guarantee to use
      */
     public ReliableMessagingSystem(String systemId, int port, DeliveryGuarantee defaultDeliveryGuarantee) {
+        this(systemId, port, defaultDeliveryGuarantee, new ThreadPoolFactory());
+    }
+    
+    /**
+     * Creates a new ReliableMessagingSystem with the specified default delivery guarantee and thread pool configuration.
+     *
+     * @param systemId The ID of this actor system
+     * @param port The port to listen on for incoming messages
+     * @param defaultDeliveryGuarantee The default delivery guarantee to use
+     * @param threadPoolConfig The thread pool configuration to use
+     */
+    public ReliableMessagingSystem(String systemId, int port, DeliveryGuarantee defaultDeliveryGuarantee, ThreadPoolFactory threadPoolConfig) {
         this.systemId = systemId;
         this.port = port;
         this.defaultDeliveryGuarantee = defaultDeliveryGuarantee;
         this.messageTracker = new MessageTracker();
+        this.threadPoolConfig = threadPoolConfig;
+        this.executor = threadPoolConfig.createExecutorService("messaging-system-" + systemId);
     }
     
     /**
@@ -92,6 +108,15 @@ public class ReliableMessagingSystem implements MessagingSystem {
      */
     public DeliveryGuarantee getDefaultDeliveryGuarantee() {
         return defaultDeliveryGuarantee;
+    }
+    
+    /**
+     * Gets the thread pool factory for this messaging system.
+     *
+     * @return The thread pool factory
+     */
+    public ThreadPoolFactory getThreadPoolFactory() {
+        return threadPoolConfig;
     }
     
     @Override
@@ -136,7 +161,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
                 logger.error("Failed to send message to {}:{}", address.host, address.port, e);
                 throw new RuntimeException("Failed to send message", e);
             }
-        });
+        }, executor);
     }
     
     /**
@@ -215,7 +240,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
     public CompletableFuture<Void> registerMessageHandler(MessageHandler handler) {
         return CompletableFuture.runAsync(() -> {
             this.messageHandler = handler;
-        });
+        }, executor);
     }
     
     @Override
@@ -235,7 +260,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
                 logger.error("Failed to start messaging system", e);
                 throw new RuntimeException("Failed to start messaging system", e);
             }
-        });
+        }, executor);
     }
     
     @Override
@@ -258,7 +283,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
             messageTracker.shutdown();
             executor.shutdown();
             logger.info("ReliableMessagingSystem stopped");
-        });
+        }, executor);
     }
     
     private void acceptConnections() {

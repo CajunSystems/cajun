@@ -1,6 +1,5 @@
 package systems.cajun;
 
-
 import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.Map;
@@ -8,17 +7,23 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import systems.cajun.config.ThreadPoolFactory;
+
 public class ActorSystem {
+
+    private static final Logger logger = LoggerFactory.getLogger(ActorSystem.class);
 
     private final ConcurrentHashMap<String, Actor<?>> actors;
     private final ScheduledExecutorService delayScheduler;
     private final ExecutorService sharedExecutor;
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> pendingDelayedMessages;
+    private final ThreadPoolFactory threadPoolConfig;
     
-    // Configuration for the actor system
-    private boolean useSharedExecutor = true;
-
     /**
      * Creates a chain of actors and connects them in sequence.
      * 
@@ -73,7 +78,7 @@ public class ActorSystem {
      * Creates a new actor system with default settings.
      */
     public ActorSystem() {
-        this(true);
+        this(new ThreadPoolFactory());
     }
     
     /**
@@ -82,16 +87,31 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor));
+    }
+    
+    /**
+     * Creates a new actor system with the specified thread pool configuration.
+     * 
+     * @param threadPoolConfig The thread pool configuration to use
+     */
+    public ActorSystem(ThreadPoolFactory threadPoolConfig) {
         this.actors = new ConcurrentHashMap<>();
-        this.delayScheduler = Executors.newSingleThreadScheduledExecutor();
-        this.useSharedExecutor = useSharedExecutor;
+        this.threadPoolConfig = threadPoolConfig;
+        
+        // Create the delay scheduler based on configuration
+        this.delayScheduler = threadPoolConfig.createScheduledExecutorService("actor-system");
+        this.pendingDelayedMessages = new ConcurrentHashMap<>();
         
         // Create a shared executor for all actors if enabled
-        if (useSharedExecutor) {
-            this.sharedExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        if (threadPoolConfig.isUseSharedExecutor()) {
+            this.sharedExecutor = threadPoolConfig.createExecutorService("shared-actor");
         } else {
             this.sharedExecutor = null;
         }
+        
+        logger.debug("ActorSystem created with {} scheduler threads, thread pool type: {}", 
+                threadPoolConfig.getSchedulerThreads(), threadPoolConfig.getExecutorType());
     }
 
     /**
@@ -196,6 +216,15 @@ public class ActorSystem {
     }
     
     /**
+     * Gets the thread pool factory for this actor system.
+     * 
+     * @return The thread pool factory
+     */
+    public ThreadPoolFactory getThreadPoolFactory() {
+        return threadPoolConfig;
+    }
+    
+    /**
      * Shuts down all actors in the system.
      * This method stops all actors and clears the actor registry.
      */
@@ -213,13 +242,24 @@ public class ActorSystem {
         // Clear the actors map
         actors.clear();
         
+        // Cancel any pending delayed messages
+        logger.debug("Cancelling {} pending delayed messages", pendingDelayedMessages.size());
+        for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
+            future.cancel(false);
+        }
+        pendingDelayedMessages.clear();
+        
         // Shutdown the delay scheduler
+        logger.debug("Shutting down delay scheduler");
         delayScheduler.shutdown();
         try {
-            if (!delayScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+            int timeoutSeconds = threadPoolConfig.getSchedulerShutdownTimeoutSeconds();
+            if (!delayScheduler.awaitTermination(timeoutSeconds, TimeUnit.SECONDS)) {
+                logger.warn("Delay scheduler did not terminate in time, forcing shutdown");
                 delayScheduler.shutdownNow();
             }
         } catch (InterruptedException e) {
+            logger.warn("Interrupted while waiting for delay scheduler to terminate");
             delayScheduler.shutdownNow();
             Thread.currentThread().interrupt();
         }
@@ -228,7 +268,8 @@ public class ActorSystem {
         if (sharedExecutor != null) {
             sharedExecutor.shutdown();
             try {
-                if (!sharedExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                int timeoutSeconds = threadPoolConfig.getActorShutdownTimeoutSeconds();
+                if (!sharedExecutor.awaitTermination(timeoutSeconds, TimeUnit.SECONDS)) {
                     sharedExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {
@@ -252,11 +293,23 @@ public class ActorSystem {
     <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit) {
         Actor<Message> actor = (Actor<Message>) actors.get(actorId);
         if (actor != null) {
-            delayScheduler.schedule(() -> {
-                actor.tell(message);
+            String messageId = actorId + "-" + System.nanoTime();
+            logger.debug("Scheduling delayed message to actor {}: {} with delay {} {}", 
+                    actorId, message.getClass().getSimpleName(), delay, timeUnit);
+            
+            ScheduledFuture<?> future = delayScheduler.schedule(() -> {
+                try {
+                    logger.debug("Delivering delayed message to actor {}: {}", actorId, message.getClass().getSimpleName());
+                    actor.tell(message);
+                    pendingDelayedMessages.remove(messageId);
+                } catch (Exception e) {
+                    logger.error("Error delivering delayed message to actor {}", actorId, e);
+                }
             }, delay, timeUnit);
+            
+            pendingDelayedMessages.put(messageId, future);
         } else {
-            System.out.println("Actor not found: " + actorId);
+            logger.warn("Actor not found for delayed message: {}", actorId);
         }
     }
 

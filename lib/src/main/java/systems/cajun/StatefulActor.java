@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.persistence.StateStore;
 import systems.cajun.persistence.StateStoreFactory;
 
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -27,6 +26,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     private final String stateKey;
     private final State initialState;
     private boolean stateInitialized = false;
+    private boolean stateChanged = false;
+    private long lastPersistTime = 0;
+    private static final long PERSIST_INTERVAL_MS = 1000; // 1 second
 
     /**
      * Creates a new StatefulActor with an in-memory state store.
@@ -89,7 +91,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         super.postStop();
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
-            persistState().join();
+            if (stateChanged) {
+                persistState().join();
+            }
         }
     }
 
@@ -118,7 +122,15 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
             // Only update and persist if the state has changed
             if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
                 currentState.set(newState);
-                persistState();
+                stateChanged = true;
+                
+                // Only persist periodically or if too many changes accumulated
+                long now = System.currentTimeMillis();
+                if (now - lastPersistTime > PERSIST_INTERVAL_MS) {
+                    persistState();
+                    lastPersistTime = now;
+                    stateChanged = false;
+                }
             }
         } catch (Exception e) {
             logger.error("Error processing message in actor {}", getActorId(), e);

@@ -82,12 +82,16 @@ class ActorSystemTest {
     void shouldBeAbleToBeDelayInSendingAMessage() throws InterruptedException {
         // Create a latch to wait for the test to complete
         java.util.concurrent.CountDownLatch testCompletionLatch = new java.util.concurrent.CountDownLatch(1);
+        // Create a latch to track when all count up operations have been processed
+        java.util.concurrent.CountDownLatch countUpLatch = new java.util.concurrent.CountDownLatch(4);
 
         var counterActor = new FunctionalActor<Integer, CounterProtocol>();
         var counter = actorSystem.register(counterActor.receiveMessage((i, m) -> {
             switch (m) {
                 case CounterProtocol.CountUp cu -> {
-                    return i + 1;
+                    int newCount = i + 1;
+                    countUpLatch.countDown(); // Signal that we processed a count up
+                    return newCount;
                 }
                 case CounterProtocol.GetCount gc -> {
                     gc.replyTo().tell(new HelloCount(i));
@@ -98,19 +102,26 @@ class ActorSystemTest {
 
         // Create a functional actor for receiving the count
         var receiverActor = actorSystem.register(new FunctionalActor<Void, HelloCount>().receiveMessage((state, message) -> {
-            assertEquals(4, message.count());
+            assertEquals(4, message.count(), "Expected count to be 4, but was " + message.count());
             testCompletionLatch.countDown(); // Signal that we received the message
             return null;
         }, null), "count-receiver-with-delay");
 
-        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
-        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
-        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
-        counter.tell(new CounterProtocol.CountUp(), 1000, TimeUnit.MILLISECONDS);
-        counter.tell(new CounterProtocol.GetCount(receiverActor), 5000, TimeUnit.MILLISECONDS);
+        // Use shorter delays to make the test run faster but still test the functionality
+        counter.tell(new CounterProtocol.CountUp(), 100, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.CountUp(), 200, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.CountUp(), 300, TimeUnit.MILLISECONDS);
+        counter.tell(new CounterProtocol.CountUp(), 400, TimeUnit.MILLISECONDS);
+        
+        // Wait for all count up operations to be processed before sending GetCount
+        boolean allCountsProcessed = countUpLatch.await(5, TimeUnit.SECONDS);
+        assertTrue(allCountsProcessed, "Not all count up operations were processed within the expected time");
+        
+        // Now that we know all counts are processed, send the GetCount message
+        counter.tell(new CounterProtocol.GetCount(receiverActor), 100, TimeUnit.MILLISECONDS);
 
         // Wait for the test to complete with a timeout
-        boolean completed = testCompletionLatch.await(10, TimeUnit.SECONDS);
+        boolean completed = testCompletionLatch.await(5, TimeUnit.SECONDS);
         assertTrue(completed, "Test did not complete within the expected time");
     }
 }
