@@ -92,6 +92,15 @@ A leader node is elected using a distributed lock in the metadata store. The lea
 
 When a message is sent to an actor, the system first checks if the actor is local. If not, it looks up the actor's location in the metadata store and forwards the message to the appropriate node.
 
+### Local vs. Remote Communication
+
+When sending messages between actors, the ClusterActorSystem optimizes communication based on actor location:
+
+- **Same-Node Communication**: If the target actor is on the same node as the sender, the message is delivered directly to the actor without using the messaging system. This provides better performance for local communication.
+- **Cross-Node Communication**: If the target actor is on a different node, the message is routed through the messaging system, which handles the network communication between nodes.
+
+This optimization happens automatically and is transparent to the application code. The same `tell()` method is used regardless of whether the target actor is local or remote.
+
 #### Message Delivery Guarantees
 
 The cluster mode supports three levels of message delivery guarantees:

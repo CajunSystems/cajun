@@ -63,8 +63,8 @@ public record FunctionalStatefulActor<State, Message>() {
 
             // Get the current actor and set up forwarding
             Actor<?> actor = system.getActor(actorPids[i]);
-            if (actor != null) {
-                actor.withNext(nextPid);
+            if (actor != null && actor instanceof ChainedActor) {
+                ((ChainedActor<?>) actor).withNext(nextPid);
             }
         }
 

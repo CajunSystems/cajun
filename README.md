@@ -62,12 +62,9 @@ Or with Maven:
 
 ## Usage
 
-### Creating actors
+### Creating Actors
 
-There are two styles of creating actors, one is the Object-oriented style and Functional style
-
-**Caution: When dealing with state of actors, be sure not to allow mutable objects to escape to external actors, 
-this could cause unwanted state mutations, this is mainly due to the nature of referential objects in Java.**
+There are multiple styles of creating actors in Cajun:
 
 1. Object-oriented style
 
@@ -123,7 +120,60 @@ public class GreetingActor extends Actor<GreetingMessage> {
 }
 ```
 
-2. Functional style actor
+2. Workflow Chaining with ChainedActor
+
+For creating workflow-style actors that process messages in a chain, use the `ChainedActor<M>` class. This provides methods for connecting actors in a sequence and forwarding messages to the next actor in the chain.
+
+```java
+public class ProcessorActor extends ChainedActor<WorkflowMessage> {
+    
+    public ProcessorActor(ActorSystem system, String actorId) {
+        super(system, actorId);
+    }
+    
+    @Override
+    protected void receive(WorkflowMessage message) {
+        // Process the message
+        WorkflowMessage processedMessage = processMessage(message);
+        
+        // Forward to the next actor in the chain
+        forward(processedMessage);
+    }
+    
+    private WorkflowMessage processMessage(WorkflowMessage message) {
+        // Your processing logic here
+        return message;
+    }
+}
+```
+
+To set up a chain of actors:
+
+```java
+// Create a chain of processor actors
+Pid firstProcessorPid = system.createActorChain(ProcessorActor.class, "processor", 3);
+
+// Create source and sink actors
+Pid sourcePid = system.register(SourceActor.class, "source");
+Pid sinkPid = system.register(SinkActor.class, "sink");
+
+// Connect source to the first processor
+ChainedActor<?> sourceActor = (ChainedActor<?>) system.getActor(sourcePid);
+sourceActor.withNext(firstProcessorPid);
+
+// Connect the last processor to the sink
+ChainedActor<?> lastProcessor = (ChainedActor<?>) system.getActor(new Pid("processor-3", system));
+lastProcessor.withNext(sinkPid);
+```
+
+The `ActorSystem` provides a convenient method to create chains of actors:
+
+```java
+// Creates 5 processor actors and connects them in sequence
+Pid firstActorPid = system.createActorChain(ProcessorActor.class, "processor", 5);
+```
+
+3. Functional style actor
 
 When creating a `FunctionalActor` we need to know the State and Message that the actor is going to be using,
 then we define call `receiveMessage` on the `FunctionalActor` to program the state changes and message handling logic.
@@ -154,37 +204,6 @@ public static void main(String[] args) {
     counter.tell(new CounterProtocol.CountUp());
     counter.tell(new CounterProtocol.CountUp());
     counter.tell(new CounterProtocol.GetCount(receiverActor));
-}
-```
-
-3. StatefulActor - Persistent State Management
-
-The `StatefulActor` extends the base Actor class by adding state management capabilities with persistence. It allows actors to maintain state that survives actor restarts and system shutdowns.
-
-```java
-public class CounterActor extends StatefulActor<Integer, CounterMessage> {
-
-    // Create with in-memory persistence
-    public CounterActor(ActorSystem system, Integer initialState) {
-        super(system, initialState);
-    }
-
-    // Create with custom persistence store
-    public CounterActor(ActorSystem system, Integer initialState, StateStore<String, Integer> stateStore) {
-        super(system, initialState, stateStore);
-    }
-
-    @Override
-    protected Integer processMessage(Integer state, CounterMessage message) {
-        if (message instanceof CounterMessage.Increment increment) {
-            return state + increment.amount();
-        } else if (message instanceof CounterMessage.Reset) {
-            return 0;
-        } else if (message instanceof CounterMessage.GetCount getCount) {
-            getCount.callback().accept(state);
-        }
-        return state;
-    }
 }
 ```
 
@@ -334,7 +353,7 @@ The project includes performance tests that can help you evaluate different conf
 ./gradlew test -PincludeTags="performance"
 
 # Run a specific performance test
-./gradlew test --tests "systems.cajun.ActorPerformanceTest.testActorChainThroughput"
+./gradlew test --tests "systems.cajun.performance.ActorPerformanceTest.testActorChainThroughput"
 ```
 
 The performance tests measure:

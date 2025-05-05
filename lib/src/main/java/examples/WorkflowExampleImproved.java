@@ -2,6 +2,7 @@ package examples;
 
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
+import systems.cajun.ChainedActor;
 import systems.cajun.Pid;
 
 import java.util.ArrayList;
@@ -48,7 +49,7 @@ public class WorkflowExampleImproved {
     /**
      * Source Actor that initiates the workflow
      */
-    public static class SourceActor extends Actor<WorkflowMessage> {
+    public static class SourceActor extends ChainedActor<WorkflowMessage> {
         public SourceActor(ActorSystem system, String actorId) {
             super(system, actorId);
             withSupervisionStrategy(SupervisionStrategy.RESTART);
@@ -79,7 +80,7 @@ public class WorkflowExampleImproved {
     /**
      * Processor Actor that performs a step in the workflow
      */
-    public static class ProcessorActor extends Actor<WorkflowMessage> {
+    public static class ProcessorActor extends ChainedActor<WorkflowMessage> {
         private final int processorNumber;
         
         public ProcessorActor(ActorSystem system, String actorId) {
@@ -139,7 +140,7 @@ public class WorkflowExampleImproved {
     /**
      * Sink Actor that receives the final result
      */
-    public static class SinkActor extends Actor<WorkflowMessage> {
+    public static class SinkActor extends ChainedActor<WorkflowMessage> {
         
         public SinkActor(ActorSystem system, String actorId) {
             super(system, actorId);
@@ -183,11 +184,11 @@ public class WorkflowExampleImproved {
         
         // Create source actor and connect to the first processor
         Pid sourcePid = system.register(SourceActor.class, "source");
-        Actor<?> sourceActor = system.getActor(sourcePid);
+        ChainedActor<?> sourceActor = (ChainedActor<?>) system.getActor(sourcePid);
         sourceActor.withNext(firstProcessorPid);
         
         // Connect the last processor to the sink
-        Actor<?> lastProcessor = system.getActor(new Pid("processor-" + processorCount, system));
+        ChainedActor<?> lastProcessor = (ChainedActor<?>) system.getActor(new Pid("processor-" + processorCount, system));
         lastProcessor.withNext(sinkPid);
     }
     
@@ -201,39 +202,46 @@ public class WorkflowExampleImproved {
     }
     
     public static void main(String[] args) {
-        ActorSystem actorSystem = new ActorSystem();
+        ActorSystem system = new ActorSystem();
         
-        // Number of workflow executions to run
-        int workflowCount = 2;
+        // Number of processors in the workflow
+        int processorCount = 3;
+        
+        // Number of workflows to run
+        int workflowCount = 5;
+        
+        // Initialize the completion latch
         completionLatch = new CountDownLatch(workflowCount);
         
-        // Create a workflow with 3 processors
-        setupWorkflow(actorSystem, 3);
+        // Setup the workflow actors
+        setupWorkflow(system, processorCount);
         
-        // Start two workflow instances
-        startWorkflow(actorSystem, "Data-A");
-        startWorkflow(actorSystem, "Data-B");
+        // Start all actors
+        system.getActors().values().forEach(a -> a.start());
+
+        // Start multiple workflows
+        for (int i = 0; i < workflowCount; i++) {
+            startWorkflow(system, "Data-" + i);
+        }
         
         try {
-            // Wait for both workflows to complete
-            boolean completed = completionLatch.await(10, TimeUnit.SECONDS);
-            if (!completed) {
-                System.out.println("Warning: Workflow did not complete within the timeout period");
+            // Wait for all workflows to complete
+            if (!completionLatch.await(10, TimeUnit.SECONDS)) {
+                System.out.println("Timeout waiting for workflows to complete");
             }
             
+            // Print results
             System.out.println("\nWorkflow Results:");
             for (String result : results) {
-                System.out.println("- " + result);
-            }
-            
-            // Shutdown all actors
-            for (Actor<?> actor : actorSystem.getActors().values()) {
-                actor.stop();
+                System.out.println(result);
             }
             
         } catch (InterruptedException e) {
-            System.err.println("Workflow execution interrupted: " + e.getMessage());
             Thread.currentThread().interrupt();
+            System.out.println("Interrupted while waiting for workflows");
+        } finally {
+            // Shutdown the actor system
+            system.shutdown();
         }
     }
 }

@@ -1,4 +1,4 @@
-package systems.cajun;
+package systems.cajun.performance;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -6,6 +6,10 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import systems.cajun.Actor;
+import systems.cajun.ActorSystem;
+import systems.cajun.ChainedActor;
+import systems.cajun.Pid;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,7 +65,9 @@ public class ActorPerformanceTest {
         for (int i = CHAIN_LENGTH - 1; i >= 0; i--) {
             Pid actor = actorSystem.register(PassThroughActor.class, "actor-" + i);
             Actor<?> actorRef = actorSystem.getActor(actor);
-            actorRef.withNext(previousActor);
+            if (actorRef instanceof ChainedActor) {
+                ((ChainedActor<?>) actorRef).withNext(previousActor);
+            }
             previousActor = actor;
             
             if (i == 0) {
@@ -251,7 +257,7 @@ class StartSendingCommand {
 /**
  * A simple actor that just passes messages to the next actor in the chain.
  */
-class PassThroughActor extends Actor<PerformanceMessage> {
+class PassThroughActor extends ChainedActor<PerformanceMessage> {
     
     public PassThroughActor(ActorSystem system, String actorId) {
         super(system, actorId);

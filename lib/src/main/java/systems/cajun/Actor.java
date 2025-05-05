@@ -33,10 +33,6 @@ public abstract class Actor<Message> {
     // Reusable batch buffer for message processing
     private final List<Message> batchBuffer = new ArrayList<>(DEFAULT_BATCH_SIZE);
 
-    // Reference to the next actor in a workflow chain
-    private Pid nextActor;
-
-
     public Actor(ActorSystem system) {
         this(system, UUID.randomUUID().toString());
     }
@@ -158,67 +154,6 @@ public abstract class Actor<Message> {
 
     public void tell(Message message) {
         mailbox.offer(message);
-    }
-
-    /**
-     * Sets the next actor in a workflow chain.
-     * 
-     * @param nextActor The PID of the next actor
-     * @return This actor instance for method chaining
-     */
-    public Actor<Message> withNext(Pid nextActor) {
-        this.nextActor = nextActor;
-        return this;
-    }
-
-    /**
-     * Forwards a message to the next actor in the workflow chain.
-     * If no next actor is set, this method does nothing.
-     * 
-     * @param message The message to forward
-     */
-    protected void forward(Message message) {
-        if (nextActor != null) {
-            nextActor.tell(message);
-        } else {
-            logger.warn("Actor {} attempted to forward message but no next actor is set", actorId);
-        }
-    }
-
-    protected void processMailbox() {
-        while (isRunning) {
-            try {
-                // Clear the batch buffer for reuse
-                batchBuffer.clear();
-
-                // Get at least one message (blocking)
-                Message firstMessage = mailbox.take();
-                batchBuffer.add(firstMessage);
-
-                // Try to drain more messages up to batch size (non-blocking)
-                if (batchSize > 1) {
-                    mailbox.drainTo(batchBuffer, batchSize - 1);
-                }
-
-                // Process the batch
-                for (Message message : batchBuffer) {
-                    if (!isRunning) break; // Check if we should stop processing
-
-                    try {
-                        receive(message);
-                    } catch (Exception e) {
-                        logger.error("Actor {} error processing message: {}", actorId, message, e);
-                        handleException(message, e);
-                    }
-                }
-
-            } catch (InterruptedException e) {
-                // This is expected during shutdown, so use debug level
-                logger.debug("Actor {} mailbox processing interrupted", actorId);
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
     }
 
     public boolean isRunning() {
@@ -484,6 +419,42 @@ public abstract class Actor<Message> {
                     // No parent, throw the exception to the system
                     throw new ActorException("Error in child actor", exception, child.getActorId());
                 }
+            }
+        }
+    }
+
+    protected void processMailbox() {
+        while (isRunning) {
+            try {
+                // Clear the batch buffer for reuse
+                batchBuffer.clear();
+
+                // Get at least one message (blocking)
+                Message firstMessage = mailbox.take();
+                batchBuffer.add(firstMessage);
+
+                // Try to drain more messages up to batch size (non-blocking)
+                if (batchSize > 1) {
+                    mailbox.drainTo(batchBuffer, batchSize - 1);
+                }
+
+                // Process the batch
+                for (Message message : batchBuffer) {
+                    if (!isRunning) break; // Check if we should stop processing
+
+                    try {
+                        receive(message);
+                    } catch (Exception e) {
+                        logger.error("Actor {} error processing message: {}", actorId, message, e);
+                        handleException(message, e);
+                    }
+                }
+
+            } catch (InterruptedException e) {
+                // This is expected during shutdown, so use debug level
+                logger.debug("Actor {} mailbox processing interrupted", actorId);
+                Thread.currentThread().interrupt();
+                break;
             }
         }
     }

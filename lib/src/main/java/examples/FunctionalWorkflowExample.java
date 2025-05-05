@@ -2,6 +2,7 @@ package examples;
 
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
+import systems.cajun.ChainedActor;
 import systems.cajun.FunctionalActor;
 import systems.cajun.Pid;
 
@@ -133,8 +134,8 @@ public class FunctionalWorkflowExample {
 
         // Connect the last processor to the sink
         Actor<?> lastProcessor = system.getActor(new Pid("processor-" + processorCount, system));
-        if (lastProcessor != null) {
-            lastProcessor.withNext(sinkPid);
+        if (lastProcessor != null && lastProcessor instanceof ChainedActor) {
+            ((ChainedActor<?>) lastProcessor).withNext(sinkPid);
         }
 
         // Create source actor

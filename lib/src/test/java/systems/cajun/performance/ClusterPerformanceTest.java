@@ -1,4 +1,4 @@
-package systems.cajun;
+package systems.cajun.performance;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import systems.cajun.Actor;
+import systems.cajun.ActorSystem;
+import systems.cajun.Pid;
 import systems.cajun.cluster.*;
 
 import java.util.*;
@@ -24,7 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 2. Require etcd to be running (for cluster coordination)
  * 
  * To run these tests specifically, use:
- * ./gradlew performanceTest --tests "systems.cajun.ClusterPerformanceTest"
+ * ./gradlew performanceTest --tests "systems.cajun.performance.ClusterPerformanceTest"
  */
 @Tag("performance")
 @Tag("requires-etcd")
