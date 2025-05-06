@@ -60,8 +60,8 @@ public class StatefulActorPersistenceTest {
      */
     @Test
     public void testFileBasedPersistenceAndRecovery() throws Exception {
-        // Use a unique actor ID for each test run
-        String uniqueActorId = "counter-" + System.currentTimeMillis();
+        // Use a unique actor ID for each test run with additional timestamp to ensure uniqueness
+        String uniqueActorId = "counter-" + System.currentTimeMillis() + "-" + System.nanoTime();
         System.out.println("Using unique actor ID: " + uniqueActorId);
         
         // Create subdirectories within the temp directory for this specific test
@@ -69,49 +69,103 @@ public class StatefulActorPersistenceTest {
         Path snapshotPath = tempDir.resolve(uniqueActorId + "-snapshots");
         Files.createDirectories(journalPath);
         Files.createDirectories(snapshotPath);
+        System.out.println("Created journal directory: " + journalPath.toAbsolutePath());
+        System.out.println("Created snapshot directory: " + snapshotPath.toAbsolutePath());
+        
+        // Ensure directories are empty and exist
+        if (Files.exists(journalPath)) {
+            Files.list(journalPath).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    System.err.println("Failed to delete file: " + p);
+                }
+            });
+        }
+        if (Files.exists(snapshotPath)) {
+            Files.list(snapshotPath).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    System.err.println("Failed to delete file: " + p);
+                }
+            });
+        }
         
         // Create a new message journal and snapshot store using the temp directory
         MessageJournal<String> testMessageJournal = new FileMessageJournal<>(journalPath);
         SnapshotStore<CounterState> testSnapshotStore = new FileSnapshotStore<>(snapshotPath);
         
-        // Step 1: Create and initialize actor with initial state 0
-        CounterActor actor = new CounterActor(actorSystem, uniqueActorId, 
-                                              new CounterState(0),
-                                              testMessageJournal, testSnapshotStore);
-        actor.start();
-        actor.forceInitializeState().join();
-        
-        // Verify initial state
-        assertEquals(0, actor.getCurrentValue(), "Initial state should be 0");
-        
-        // Step 2: Send a single increment message and verify state
-        actor.resetIncrementLatch();
-        actor.tell("increment");
-        assertTrue(actor.waitForIncrement(1000), "Timed out waiting for increment");
-        assertEquals(1, actor.getCurrentValue(), "State should be 1 after increment");
-        
-        // Step 3: Force a snapshot to ensure state is persisted
-        actor.forceSnapshot().join();
-        System.out.println("Snapshot taken with state: " + actor.getCurrentValue());
-        
-        // Step 4: Shutdown the actor
-        actorSystem.shutdown(actor.getActorId());
-        Thread.sleep(500); // Wait for shutdown to complete
-        
-        // Step 5: Create a new actor with the same ID but null initial state to force recovery
-        CounterActor recoveredActor = new CounterActor(actorSystem, uniqueActorId, 
-                                                     null, // null initial state forces recovery
-                                                     testMessageJournal, testSnapshotStore);
-        recoveredActor.start();
-        
-        // Step 6: Force initialization and wait for it to complete
-        recoveredActor.forceInitializeState().join();
-        assertTrue(recoveredActor.waitForInit(1000), "Timed out waiting for state initialization");
-        
-        // Step 7: Verify the state was recovered correctly
-        int recoveredValue = recoveredActor.getCurrentValue();
-        System.out.println("Recovered value: " + recoveredValue);
-        assertEquals(1, recoveredValue, "State should be recovered as 1");
+        try {
+            // Step 1: Create and initialize actor with initial state 0
+            System.out.println("Step 1: Creating actor with initial state 0");
+            CounterActor actor = new CounterActor(actorSystem, uniqueActorId, 
+                                                new CounterState(0),
+                                                testMessageJournal, testSnapshotStore);
+            actor.start();
+            
+            // Use explicit synchronization to ensure state is initialized
+            CompletableFuture<Void> initFuture = actor.forceInitializeState();
+            initFuture.join(); // Wait for initialization to complete
+            assertTrue(actor.waitForInit(2000), "Timed out waiting for initial state initialization");
+            
+            // Verify initial state
+            int initialValue = actor.getCurrentValue();
+            System.out.println("Initial state value: " + initialValue);
+            assertEquals(0, initialValue, "Initial state should be 0");
+            
+            // Step 2: Send a single increment message and verify state
+            System.out.println("Step 2: Sending increment message");
+            actor.resetIncrementLatch();
+            actor.tell("increment");
+            boolean incrementProcessed = actor.waitForIncrement(2000);
+            assertTrue(incrementProcessed, "Timed out waiting for increment");
+            
+            int afterIncrementValue = actor.getCurrentValue();
+            System.out.println("State after increment: " + afterIncrementValue);
+            assertEquals(1, afterIncrementValue, "State should be 1 after increment");
+            
+            // Step 3: Force a snapshot to ensure state is persisted
+            System.out.println("Step 3: Taking snapshot");
+            CompletableFuture<Void> snapshotFuture = actor.forceSnapshot();
+            snapshotFuture.join(); // Wait for snapshot to complete
+            
+            // Verify files were created
+            boolean journalFilesExist = Files.list(journalPath).count() > 0;
+            boolean snapshotFilesExist = Files.list(snapshotPath).count() > 0;
+            System.out.println("Journal files exist: " + journalFilesExist);
+            System.out.println("Snapshot files exist: " + snapshotFilesExist);
+            assertTrue(snapshotFilesExist, "Snapshot files should exist");
+            
+            // Step 4: Shutdown the actor
+            System.out.println("Step 4: Shutting down actor");
+            actorSystem.shutdown(actor.getActorId());
+            Thread.sleep(1000); // Wait for shutdown to complete
+            
+            // Step 5: Create a new actor with the same ID but null initial state to force recovery
+            System.out.println("Step 5: Creating new actor for recovery");
+            CounterActor recoveredActor = new CounterActor(actorSystem, uniqueActorId, 
+                                                        null, // null initial state forces recovery
+                                                        testMessageJournal, testSnapshotStore);
+            recoveredActor.start();
+            
+            // Step 6: Force initialization and wait for it to complete
+            System.out.println("Step 6: Initializing recovered actor");
+            CompletableFuture<Void> recoveryFuture = recoveredActor.forceInitializeState();
+            recoveryFuture.join(); // Wait for initialization to complete
+            boolean initSuccess = recoveredActor.waitForInit(2000);
+            assertTrue(initSuccess, "Timed out waiting for state initialization during recovery");
+            
+            // Step 7: Verify the state was recovered correctly
+            System.out.println("Step 7: Verifying recovered state");
+            int recoveredValue = recoveredActor.getCurrentValue();
+            System.out.println("Recovered value: " + recoveredValue);
+            assertEquals(1, recoveredValue, "State should be recovered as 1");
+        } catch (Exception e) {
+            System.err.println("Test failed with exception: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
+        }
     }
     
     /**
@@ -182,11 +236,17 @@ public class StatefulActorPersistenceTest {
         
         public CompletableFuture<Void> forceInitializeState() {
             try {
-                initializeState().join();
+                // Ensure state is initialized and wait for completion
+                CompletableFuture<Void> future = initializeState();
+                future.join();
+                // Signal that initialization is complete via the latch
+                initLatch.countDown();
+                return future;
             } catch (Exception e) {
+                System.err.println("Error in forceInitializeState: " + e.getMessage());
                 e.printStackTrace();
+                return CompletableFuture.failedFuture(e);
             }
-            return CompletableFuture.completedFuture(null);
         }
         
         @Override
