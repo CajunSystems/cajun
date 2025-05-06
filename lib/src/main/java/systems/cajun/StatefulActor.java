@@ -18,8 +18,20 @@ import java.util.function.Function;
  * - State snapshots are taken periodically
  * - Recovery uses the latest snapshot plus replay of subsequent messages
  *
- * @param <State> The type of the actor's state
- * @param <Message> The type of messages the actor can process
+ * <h2>IMPORTANT SERIALIZATION REQUIREMENTS</h2>
+ * <p>For persistence to work correctly, both the State and Message types MUST be serializable:</p>
+ * <ul>
+ *   <li>Both State and Message classes must implement java.io.Serializable</li>
+ *   <li>All fields in these classes must also be serializable, or marked as transient</li>
+ *   <li>For non-serializable fields (like lambdas or functional interfaces), use transient and
+ *       implement custom serialization with readObject/writeObject methods</li>
+ *   <li>Add serialVersionUID to all serializable classes to maintain compatibility</li>
+ * </ul>
+ * <p>Failure to meet these requirements will result in NotSerializableException during message
+ *    journaling or state snapshot operations.</p>
+ *
+ * @param <State> The type of the actor's state (must implement java.io.Serializable)
+ * @param <Message> The type of messages the actor can process (must implement java.io.Serializable)
  */
 public abstract class StatefulActor<State, Message> extends Actor<Message> {
 

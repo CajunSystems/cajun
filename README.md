@@ -460,19 +460,48 @@ The `ActorException` class is used for error propagation, particularly when usin
 
 Cajun provides built-in support for state persistence in stateful actors. The `StatefulActor` class extends the base `Actor` class with state management capabilities, allowing actors to maintain and persist their state across restarts.
 
+#### Serialization Requirements
+
+**IMPORTANT**: For persistence to work correctly, both the State and Message types MUST be serializable:
+
+- Both State and Message classes must implement `java.io.Serializable`
+- All fields in these classes must also be serializable, or marked as `transient`
+- For non-serializable fields (like lambdas or functional interfaces), use `transient` and implement custom serialization with `readObject`/`writeObject` methods
+- Add `serialVersionUID` to all serializable classes to maintain compatibility
+
+Failure to meet these requirements will result in `NotSerializableException` during message journaling or state snapshot operations.
+
 ```java
-public class CounterActor extends StatefulActor<CounterState, String> {
+// Example of a properly serializable message class
+public sealed interface CounterMessage extends java.io.Serializable permits 
+        CounterMessage.Increment, CounterMessage.Reset, CounterMessage.GetCount {
     
-    public CounterActor(ActorSystem system, CounterState initialState) {
-        super(system, initialState);
+    record Increment() implements CounterMessage {
+        private static final long serialVersionUID = 1L;
     }
     
-    @Override
-    protected CounterState processMessage(CounterState state, String message) {
-        if ("increment".equals(message)) {
-            return new CounterState(state.getValue() + 1);
+    record Reset() implements CounterMessage {
+        private static final long serialVersionUID = 1L;
+    }
+    
+    // Example of handling non-serializable fields
+    final class GetCount implements CounterMessage {
+        private static final long serialVersionUID = 1L;
+        // Consumer is not Serializable by default, so mark it transient
+        private transient java.util.function.Consumer<Integer> callback;
+        
+        public GetCount(java.util.function.Consumer<Integer> callback) {
+            this.callback = callback;
         }
-        return state;
+        
+        // Custom deserialization to handle the transient field
+        private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
+            in.defaultReadObject();
+            // Provide a default value after deserialization
+            if (callback == null) {
+                callback = (i) -> {};
+            }
+        }
     }
 }
 ```
