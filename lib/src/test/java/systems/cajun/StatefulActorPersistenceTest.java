@@ -9,6 +9,8 @@ import systems.cajun.persistence.SnapshotStore;
 import systems.cajun.persistence.FileMessageJournal;
 import systems.cajun.persistence.FileSnapshotStore;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -31,10 +33,16 @@ public class StatefulActorPersistenceTest {
     private SnapshotStore<CounterState> snapshotStore;
     
     @BeforeEach
-    public void setUp() {
+    public void setUp() throws IOException {
         actorSystem = new ActorSystem();
-        messageJournal = new FileMessageJournal<>(tempDir.toString());
-        snapshotStore = new FileSnapshotStore<>(tempDir.toString());
+        // Create separate directories for the general message journal and snapshot store
+        Path journalPath = tempDir.resolve("journal");
+        Path snapshotPath = tempDir.resolve("snapshots");
+        Files.createDirectories(journalPath);
+        Files.createDirectories(snapshotPath);
+        
+        messageJournal = new FileMessageJournal<>(journalPath);
+        snapshotStore = new FileSnapshotStore<>(snapshotPath);
     }
     
     @AfterEach
@@ -56,9 +64,15 @@ public class StatefulActorPersistenceTest {
         String uniqueActorId = "counter-" + System.currentTimeMillis();
         System.out.println("Using unique actor ID: " + uniqueActorId);
         
-        // Create a new message journal and snapshot store for this test
-        MessageJournal<String> testMessageJournal = new FileMessageJournal<>(tempDir.toString() + "/" + uniqueActorId + "-journal");
-        SnapshotStore<CounterState> testSnapshotStore = new FileSnapshotStore<>(tempDir.toString() + "/" + uniqueActorId + "-snapshots");
+        // Create subdirectories within the temp directory for this specific test
+        Path journalPath = tempDir.resolve(uniqueActorId + "-journal");
+        Path snapshotPath = tempDir.resolve(uniqueActorId + "-snapshots");
+        Files.createDirectories(journalPath);
+        Files.createDirectories(snapshotPath);
+        
+        // Create a new message journal and snapshot store using the temp directory
+        MessageJournal<String> testMessageJournal = new FileMessageJournal<>(journalPath);
+        SnapshotStore<CounterState> testSnapshotStore = new FileSnapshotStore<>(snapshotPath);
         
         // Step 1: Create and initialize actor with initial state 0
         CounterActor actor = new CounterActor(actorSystem, uniqueActorId, 
