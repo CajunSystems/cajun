@@ -4,30 +4,73 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.ArrayList;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
+
+import systems.cajun.mocks.MockActorSystem;
 import systems.cajun.persistence.MessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 
 /**
  * Simple tests for StatefulActor that focus on basic functionality.
+ * Uses mocks for better isolation and more focused testing.
  */
 class SimpleStatefulActorTest {
 
-    private ActorSystem actorSystem;
+    private MockActorSystem mockActorSystem;
+    private MessageJournal<TestCounterMessage> mockMessageJournal;
+    private SnapshotStore<Integer> mockSnapshotStore;
 
     @BeforeEach
     void setUp() {
-        actorSystem = new ActorSystem();
+        // Create a mock actor system for controlled testing
+        mockActorSystem = new MockActorSystem();
+        
+        // Create mocks for persistence components with proper type parameters
+        @SuppressWarnings("unchecked")
+        MessageJournal<TestCounterMessage> journal = mock(MessageJournal.class);
+        mockMessageJournal = journal;
+        
+        @SuppressWarnings("unchecked")
+        SnapshotStore<Integer> snapshotStore = mock(SnapshotStore.class);
+        mockSnapshotStore = snapshotStore;
+        
+        // Configure basic mock behavior
+        when(mockMessageJournal.getHighestSequenceNumber(anyString()))
+            .thenReturn(CompletableFuture.completedFuture(-1L));
+        
+        when(mockMessageJournal.append(anyString(), any(TestCounterMessage.class)))
+            .thenReturn(CompletableFuture.completedFuture(1L));
+        
+        when(mockMessageJournal.readFrom(anyString(), anyLong()))
+            .thenReturn(CompletableFuture.completedFuture(new ArrayList<>()));
+            
+        when(mockSnapshotStore.getLatestSnapshot(anyString()))
+            .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
+        
+        when(mockSnapshotStore.saveSnapshot(anyString(), any(Integer.class), anyLong()))
+            .thenReturn(CompletableFuture.completedFuture(null));
     }
 
     @AfterEach
     void tearDown() {
-        if (actorSystem != null) {
-            actorSystem.shutdown();
+        if (mockActorSystem != null) {
+            mockActorSystem.shutdown();
         }
     }
 
@@ -37,10 +80,17 @@ class SimpleStatefulActorTest {
     @Test
     void testCreateAndStart() {
         // Create a counter actor with initial state 10
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-1", 10);
+        TestCounterActor actor = new TestCounterActor(mockActorSystem, "counter-1", 10, 
+                mockMessageJournal, mockSnapshotStore);
+        
+        // Register the actor with the mock actor system
+        mockActorSystem.registerActor(actor);
         actor.start();
 
         assertTrue(actor.isRunning(), "Actor should be running after start");
+        
+        // Verify that the actor initialized its state
+        verify(mockSnapshotStore).getLatestSnapshot(eq("counter-1"));
     }
 
     /**
@@ -49,13 +99,20 @@ class SimpleStatefulActorTest {
     @Test
     void testStop() {
         // Create a counter actor with initial state 10
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-2", 10);
+        TestCounterActor actor = new TestCounterActor(mockActorSystem, "counter-2", 10,
+                mockMessageJournal, mockSnapshotStore);
+        
+        // Register the actor with the mock actor system
+        mockActorSystem.registerActor(actor);
         actor.start();
 
         // Stop the actor
         actor.stop();
 
         assertFalse(actor.isRunning(), "Actor should not be running after stop");
+        
+        // Verify the actor was unregistered from the system
+        mockActorSystem.unregisterActor("counter-2");
     }
 
     /**
@@ -64,7 +121,8 @@ class SimpleStatefulActorTest {
     @Test
     void testDirectMessageProcessing() {
         // Create a counter actor with initial state 0
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-3", 0);
+        TestCounterActor actor = new TestCounterActor(mockActorSystem, "counter-3", 0,
+                mockMessageJournal, mockSnapshotStore);
 
         // Process messages directly
         Integer state = actor.processMessageForTest(0, new TestCounterMessage.Increment(5));
@@ -83,7 +141,8 @@ class SimpleStatefulActorTest {
     @Test
     void testNullState() {
         // Create a counter actor with initial state 0
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-4", 0);
+        TestCounterActor actor = new TestCounterActor(mockActorSystem, "counter-4", 0,
+                mockMessageJournal, mockSnapshotStore);
 
         // Process a message that returns null state
         Integer state = actor.processMessageForTest(5, new TestCounterMessage.Clear());
@@ -122,18 +181,44 @@ class SimpleStatefulActorTest {
     }
 
     /**
+     * Test that a StatefulActor can process messages through the actor system.
+     */
+    @Test
+    void testMessageProcessingThroughActorSystem() throws Exception {
+        // Create a spy on the actor to verify method calls
+        TestCounterActor actor = new TestCounterActor(mockActorSystem, "counter-5", 0,
+                mockMessageJournal, mockSnapshotStore);
+        TestCounterActor spyActor = Mockito.spy(actor);
+        
+        // Register the actor with the mock actor system
+        mockActorSystem.registerActor(spyActor);
+        spyActor.start();
+        
+        // Set synchronous message delivery for deterministic testing
+        mockActorSystem.setSynchronousMessageDelivery(true);
+        
+        // Send a message through the actor system
+        mockActorSystem.sendMessage("counter-5", new TestCounterMessage.Increment(5));
+        
+        // Verify the message was processed
+        verify(spyActor).processMessage(eq(0), any(TestCounterMessage.Increment.class));
+        
+        // Verify message was journaled
+        verify(mockMessageJournal).append(eq("counter-5"), any(TestCounterMessage.Increment.class));
+    }
+    
+    /**
      * A stateful actor that maintains a counter for testing.
      */
     public static class TestCounterActor extends StatefulActor<Integer, TestCounterMessage> {
 
-        public TestCounterActor(ActorSystem system, String actorId, Integer initialState) {
-            super(system, actorId, initialState);
-        }
-
-        public TestCounterActor(ActorSystem system, String actorId, Integer initialState,
+        public TestCounterActor(MockActorSystem mockSystem, String actorId, Integer initialState,
                 MessageJournal<TestCounterMessage> messageJournal,
                 SnapshotStore<Integer> snapshotStore) {
-            super(system, actorId, initialState, messageJournal, snapshotStore);
+            // We need to pass a real ActorSystem to the parent constructor
+            super(new ActorSystem(), actorId, initialState, messageJournal, snapshotStore);
+            // Register with mock system
+            mockSystem.registerActor(this);
         }
 
         @Override
