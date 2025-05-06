@@ -9,9 +9,11 @@ import systems.cajun.persistence.MockMessageJournal;
 import systems.cajun.persistence.MockSnapshotStore;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -253,15 +255,13 @@ class StatefulActorTest {
         }
         
         /**
-         * Helper method to get the current count synchronously.
-         * This is more readable in tests than using CountDownLatch.
+         * Helper method to get the current count synchronously using mocks.
+         * This is more testable than using latches.
          * 
          * @return The current count
          */
+        @SuppressWarnings("unchecked")
         public int getCountSync() {
-            AtomicInteger result = new AtomicInteger();
-            CountDownLatch latch = new CountDownLatch(1);
-            
             // Always try to wait for state initialization first
             try {
                 waitForStateInitialization(2000);
@@ -270,27 +270,29 @@ class StatefulActorTest {
                 throw new RuntimeException("Interrupted while waiting for state initialization", e);
             }
             
-            tell(new TestCounterMessage.GetCount(count -> {
-                result.set(count);
-                latch.countDown();
-            }));
+            // Create a mock consumer that will be called with the count
+            Consumer<Integer> mockCallback = Mockito.mock(Consumer.class);
             
+            // Send the message with the mock callback
+            tell(new TestCounterMessage.GetCount(mockCallback));
+            
+            // Wait a short time for the message to be processed
             try {
-                // Use a longer timeout (5 seconds) to be more reliable in tests
-                if (!latch.await(5, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timed out waiting for count after 5 seconds");
-                }
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while waiting for count", e);
             }
             
-            return result.get();
+            // Capture the value passed to the callback
+            ArgumentCaptor<Integer> captor = ArgumentCaptor.forClass(Integer.class);
+            Mockito.verify(mockCallback, Mockito.timeout(5000)).accept(captor.capture());
+            
+            return captor.getValue();
         }
         
         /**
-         * Helper method to increment the counter synchronously.
-         * This is more readable in tests than using Thread.sleep().
+         * Helper method to increment the counter synchronously using mocks.
+         * This is more testable than polling with Thread.sleep().
          * 
          * @param amount The amount to increment by
          */
@@ -306,41 +308,49 @@ class StatefulActorTest {
             // Get the current count before incrementing
             int currentCount = getCountSync();
             
+            // Create a CompletableFuture that will be completed when the state changes
+            CompletableFuture<Void> incrementFuture = new CompletableFuture<>();
+            
+            // Create a mock consumer that will check the new state
+            @SuppressWarnings("unchecked")
+            Consumer<Integer> mockCallback = Mockito.mock(Consumer.class);
+            
+            // Set up the mock to complete the future when called with the expected new value
+            Mockito.doAnswer(invocation -> {
+                Integer newCount = invocation.getArgument(0);
+                if (newCount == currentCount + amount) {
+                    incrementFuture.complete(null);
+                }
+                return null;
+            }).when(mockCallback).accept(Mockito.anyInt());
+            
             // Send the increment message
             tell(new TestCounterMessage.Increment(amount));
             
-            // Wait for the state to be updated with a timeout
+            // Wait a short time for the message to be processed
             try {
-                // Poll until the state changes or timeout
-                long startTime = System.currentTimeMillis();
-                int newCount;
-                do {
-                    // Check if we've timed out
-                    if (System.currentTimeMillis() - startTime > 3000) {
-                        throw new RuntimeException("Timed out waiting for increment after 3 seconds");
-                    }
-                    
-                    // Wait a bit before checking again
-                    Thread.sleep(50);
-                    
-                    // Get the new count
-                    newCount = getCountSync();
-                } while (newCount == currentCount);
-                
-                // Verify that the increment was applied correctly
-                if (newCount != currentCount + amount) {
-                    throw new RuntimeException("Increment was not applied correctly. Expected " + 
-                            (currentCount + amount) + " but got " + newCount);
-                }
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while waiting for increment to complete", e);
             }
+            
+            // Get the new count using the mock callback
+            tell(new TestCounterMessage.GetCount(mockCallback));
+            
+            // Wait for the callback to be called with the expected value
+            try {
+                incrementFuture.get(3, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to increment counter", e);
+            }
+            
+            // Verify the callback was called with the expected value
+            Mockito.verify(mockCallback, Mockito.timeout(1000)).accept(currentCount + amount);
         }
         
         /**
-         * Helper method to reset the counter synchronously.
-         * This is more readable in tests than using Thread.sleep().
+         * Helper method to reset the counter synchronously using mocks.
+         * This is more testable than using Thread.sleep().
          */
         public void resetSync() {
             // Always try to wait for state initialization first
@@ -351,18 +361,30 @@ class StatefulActorTest {
                 throw new RuntimeException("Interrupted while waiting for state initialization", e);
             }
             
+            // Create a mock consumer that will be called with the count
+            @SuppressWarnings("unchecked")
+            Consumer<Integer> mockCallback = Mockito.mock(Consumer.class);
+            
+            // Send the reset message
             tell(new TestCounterMessage.Reset());
+            
+            // Wait a short time for the message to be processed
             try {
-                Thread.sleep(200); // Wait longer for the message to be processed
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while waiting for reset to complete", e);
             }
+            
+            // Get the new count using the mock callback
+            tell(new TestCounterMessage.GetCount(mockCallback));
+            
+            // Verify the callback was called with 0
+            Mockito.verify(mockCallback, Mockito.timeout(1000)).accept(0);
         }
         
         /**
-         * Helper method to clear the state synchronously.
-         * This is more readable in tests than using Thread.sleep().
+         * Helper method to clear the state synchronously using mocks.
+         * This is more testable than using Thread.sleep().
          */
         public void clearSync() {
             // Always try to wait for state initialization first
@@ -373,13 +395,25 @@ class StatefulActorTest {
                 throw new RuntimeException("Interrupted while waiting for state initialization", e);
             }
             
+            // Create a mock consumer that will be called with the count
+            @SuppressWarnings("unchecked")
+            Consumer<Integer> mockCallback = Mockito.mock(Consumer.class);
+            
+            // Send the clear message
             tell(new TestCounterMessage.Clear());
+            
+            // Wait a short time for the message to be processed
             try {
-                Thread.sleep(200); // Wait longer for the message to be processed
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while waiting for clear to complete", e);
             }
+            
+            // Get the new count using the mock callback
+            tell(new TestCounterMessage.GetCount(mockCallback));
+            
+            // Verify the callback was called with 0 (default value after clearing)
+            Mockito.verify(mockCallback, Mockito.timeout(1000)).accept(0);
         }
 
         @Override
