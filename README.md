@@ -733,6 +733,9 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
    - [x] State initialization and recovery mechanisms
    - [x] Snapshot-based state persistence
    - [x] Hybrid recovery approach (snapshots + message replay)
+   - [ ] Customizable backends for snapshots and Write-Ahead Log (WAL)
+   - [ ] RocksDB backend for state persistence
+   - [ ] Segregation of runtime implementations (file store, in-memory store, etc.) from the actor system
 5. Partitioned state and sharding strategy
    - [x] Rendezvous hashing for actor assignment
 6. Cluster mode
