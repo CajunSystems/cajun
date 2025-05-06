@@ -15,6 +15,9 @@
   - [Running Examples](#running-examples)
 - [Message Processing and Performance Tuning](#message-processing-and-performance-tuning)
 - [Error Handling and Supervision Strategy](#error-handling-and-supervision-strategy)
+- [Stateful Actors and Persistence](#stateful-actors-and-persistence)
+  - [State Persistence](#state-persistence)
+  - [Message Persistence and Replay](#message-persistence-and-replay)
 - [Cluster Mode](#cluster-mode)
 - [Feature Roadmap](#feature-roadmap)
 
@@ -450,6 +453,121 @@ Actors provide lifecycle hooks that you can override for custom behavior:
 ### Error Propagation
 
 The `ActorException` class is used for error propagation, particularly when using the ESCALATE supervision strategy. It captures the actor ID and original exception for better error handling.
+
+## Stateful Actors and Persistence
+
+### State Persistence
+
+Cajun provides built-in support for state persistence in stateful actors. The `StatefulActor` class extends the base `Actor` class with state management capabilities, allowing actors to maintain and persist their state across restarts.
+
+```java
+public class CounterActor extends StatefulActor<CounterState, String> {
+    
+    public CounterActor(ActorSystem system, CounterState initialState) {
+        super(system, initialState);
+    }
+    
+    @Override
+    protected CounterState processMessage(CounterState state, String message) {
+        if ("increment".equals(message)) {
+            return new CounterState(state.getValue() + 1);
+        }
+        return state;
+    }
+}
+```
+
+The state is persisted using a configurable `StateStore` implementation. Cajun provides several built-in state stores:
+
+- `InMemoryStateStore`: Stores state in memory (useful for testing)
+- `FileStateStore`: Persists state to disk
+
+You can also implement custom state stores by implementing the `StateStore` interface.
+
+### Message Persistence and Replay
+
+Cajun supports message persistence and replay for stateful actors using a Write-Ahead Log (WAL) style approach. This enables actors to recover their state by replaying messages after a restart or crash.
+
+#### Key Features
+
+- **Message Journaling**: All messages are logged to a journal before processing
+- **Snapshots**: Periodic snapshots of actor state to avoid replaying all messages
+- **Recovery**: Automatic state recovery using the latest snapshot plus replay of subsequent messages
+- **Compaction**: Journal entries included in snapshots are automatically removed to save space
+
+#### How It Works
+
+1. **Message Processing**:
+   - When a message is received, it's first logged to the message journal
+   - The message is then processed, potentially changing the actor's state
+   - State changes are tracked internally
+   - Snapshots of the state are taken at configurable intervals (default: 15 seconds)
+
+2. **Recovery Process**:
+   - When an actor starts, it attempts to recover its state from the latest snapshot
+   - If a snapshot exists, it loads the state from the snapshot
+   - It then replays all messages from the journal with sequence numbers higher than the snapshot
+   - If no snapshot exists, it starts with the initial state and replays all messages
+   - The actor ensures state initialization is complete before processing new messages
+
+#### Example Usage
+
+```java
+// Create a stateful actor with message persistence and replay
+CounterActor actor = new CounterActor(
+    actorSystem,                             // Actor system
+    "counter-1",                             // Actor ID
+    new CounterState(0),                     // Initial state
+    PersistenceFactory.createFileMessageJournal(),  // Message journal
+    PersistenceFactory.createFileSnapshotStore()    // Snapshot store
+);
+
+// Start the actor and ensure state is initialized
+actor.start();
+actor.forceInitializeState().join();
+
+// Send messages to the actor
+actor.tell("increment");
+actor.tell("increment");
+
+// Force a snapshot
+actor.forceSnapshot().join();
+
+// Even if the actor is stopped and restarted, it will recover its state
+actor.stop();
+
+// Create a new actor with the same ID
+// Note: null initial state forces recovery from persistence
+CounterActor newActor = new CounterActor(
+    actorSystem,
+    "counter-1",
+    null,  // null initial state forces recovery
+    PersistenceFactory.createFileMessageJournal(),
+    PersistenceFactory.createFileSnapshotStore()
+);
+
+// Start the actor and ensure state is initialized
+newActor.start();
+newActor.forceInitializeState().join();
+
+// The actor will automatically recover its state
+// newActor.getCurrentValue() will return 2
+```
+
+#### Configuration
+
+You can configure the persistence behavior with the following parameters:
+
+- **Snapshot Interval**: How often snapshots are taken (default: 15 seconds)
+- **Custom Persistence**: You can provide custom implementations of `MessageJournal` and `SnapshotStore`
+
+#### Benefits
+
+- **Durability**: Actor state can survive process restarts and crashes
+- **Consistency**: Ensures that actor state is consistent after recovery
+- **Performance**: Efficient recovery using snapshots and incremental replay
+- **Reliability**: Explicit state initialization ensures deterministic behavior
+- **Flexibility**: Pluggable storage backends for different use cases
 
 ## Cluster Mode
 

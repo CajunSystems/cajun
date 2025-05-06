@@ -3,27 +3,35 @@ package systems.cajun;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import systems.cajun.persistence.StateStore;
-import systems.cajun.persistence.StateStoreFactory;
+import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.SnapshotStore;
+import systems.cajun.persistence.MockMessageJournal;
+import systems.cajun.persistence.MockSnapshotStore;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Comparator;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Basic tests for StatefulActor functionality.
+ * More comprehensive tests with mocks are in StatefulActorMockTest.
+ * Integration tests with file-based persistence are in StatefulActorPersistenceTest.
+ */
 class StatefulActorTest {
 
     private ActorSystem actorSystem;
-
+    private MockMessageJournal<TestCounterMessage> messageJournal;
+    private MockSnapshotStore<Integer> snapshotStore;
+    
     @BeforeEach
     void setUp() {
         actorSystem = new ActorSystem();
+        // Create fresh mock implementations for each test to prevent state leakage
+        messageJournal = new MockMessageJournal<>();
+        snapshotStore = new MockSnapshotStore<>();
     }
 
     @AfterEach
@@ -33,301 +41,90 @@ class StatefulActorTest {
         }
     }
 
+    /**
+     * Test basic state recovery from a mock store.
+     * This test verifies that an actor can recover its state from a snapshot and message journal.
+     */
     @Test
-    void testInitialState() throws InterruptedException {
-        // Create a counter actor with initial state 10
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-1", 10);
-        actor.start();
-
-        // Get the current count
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger result = new AtomicInteger();
-        actor.tell(new TestCounterMessage.GetCount(count -> {
-            result.set(count);
-            latch.countDown();
-        }));
-
-        // Wait for the result
-        assertTrue(latch.await(1, TimeUnit.SECONDS), "Timed out waiting for response");
-        assertEquals(10, result.get(), "Initial state should be 10");
-    }
-
-    @Test
-    void testStateUpdate() throws InterruptedException {
+    void testStateRecoveryWithMockStore() throws InterruptedException {
+        // Create a unique actor ID for this test
+        String actorId = "counter-recovery-" + System.currentTimeMillis();
+        
+        // Create dedicated mock journal and snapshot store
+        MockMessageJournal<TestCounterMessage> testJournal = new MockMessageJournal<>();
+        MockSnapshotStore<Integer> testSnapshotStore = new MockSnapshotStore<>();
+        
         // Create a counter actor with initial state 0
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-2", 0);
+        TestCounterActor actor = new TestCounterActor(actorSystem, actorId, 0,
+                                                    testJournal, testSnapshotStore);
         actor.start();
+        
+        // Wait for state initialization to complete
+        assertTrue(actor.waitForStateInitialization(2000), "Timed out waiting for state initialization");
 
-        // Send increment messages
+        // Increment the counter and verify
         actor.tell(new TestCounterMessage.Increment(5));
+        Thread.sleep(100);
+        assertEquals(5, actor.getCountSync(), "State should be updated to 5");
+        
+        // Force a snapshot
+        actor.forceSnapshot().join();
+        
+        // Increment again
         actor.tell(new TestCounterMessage.Increment(10));
-
-        // Wait for the messages to be processed
         Thread.sleep(100);
-
-        // Get the current count
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger result = new AtomicInteger();
-        actor.tell(new TestCounterMessage.GetCount(count -> {
-            result.set(count);
-            latch.countDown();
-        }));
-
-        // Wait for the result
-        assertTrue(latch.await(1, TimeUnit.SECONDS), "Timed out waiting for response");
-        assertEquals(15, result.get(), "State should be updated to 15");
-    }
-
-    @Test
-    void testResetState() throws InterruptedException {
-        // Create a counter actor with initial state 0
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-3", 0);
-        actor.start();
-
-        // Send increment messages
-        actor.tell(new TestCounterMessage.Increment(5));
-        actor.tell(new TestCounterMessage.Increment(10));
-
-        // Wait for the messages to be processed
-        Thread.sleep(100);
-
-        // Reset the state
-        actor.tell(new TestCounterMessage.Reset());
-
-        // Wait for the reset to be processed
-        Thread.sleep(100);
-
-        // Get the current count
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger result = new AtomicInteger();
-        actor.tell(new TestCounterMessage.GetCount(count -> {
-            result.set(count);
-            latch.countDown();
-        }));
-
-        // Wait for the result
-        assertTrue(latch.await(1, TimeUnit.SECONDS), "Timed out waiting for response");
-        assertEquals(0, result.get(), "State should be reset to 0");
-    }
-
-    @Test
-    void testClearState() throws InterruptedException {
-        // Create a counter actor with initial state 5
-        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-4", 5);
-        actor.start();
-
-        // Clear the state
-        actor.tell(new TestCounterMessage.Clear());
-
-        // Wait for the clear to be processed
-        Thread.sleep(100);
-
-        // Get the current count
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<Integer> result = new AtomicReference<>();
-        actor.tell(new TestCounterMessage.GetCount(count -> {
-            result.set(count);
-            latch.countDown();
-        }));
-
-        // Wait for the result
-        assertTrue(latch.await(1, TimeUnit.SECONDS), "Timed out waiting for response");
-        assertNull(result.get(), "State should be null after clearing");
-    }
-
-    @Test
-    void testStateRecoveryWithInMemoryStore() throws InterruptedException {
-        String actorId = "counter-recovery-1";
-        StateStore<String, Integer> stateStore = StateStoreFactory.createInMemoryStore();
-
-        // Create a counter actor with initial state 0
-        TestCounterActor actor = new TestCounterActor(actorSystem, actorId, 0, stateStore);
-        actor.start();
-
-        // Send increment messages
-        actor.tell(new TestCounterMessage.Increment(5));
-        actor.tell(new TestCounterMessage.Increment(10));
-
-        // Wait for the messages to be processed using polling
-        int expectedState = 15;
-        int maxWaitTimeMs = 200; // Increased from 100ms but still faster than 1 second
-        int pollIntervalMs = 10;
-        int elapsedTime = 0;
-        AtomicInteger currentState = new AtomicInteger(0);
-        CountDownLatch pollLatch = new CountDownLatch(1);
-
-        while (currentState.get() != expectedState && elapsedTime < maxWaitTimeMs) {
-            actor.tell(new TestCounterMessage.GetCount(count -> {
-                currentState.set(count);
-                if (count == expectedState) {
-                    pollLatch.countDown();
-                }
-            }));
-
-            if (pollLatch.await(pollIntervalMs, TimeUnit.MILLISECONDS)) {
-                break; // State reached expected value
-            }
-
-            elapsedTime += pollIntervalMs;
-        }
-
+        assertEquals(15, actor.getCountSync(), "State should be updated to 15");
+        
         // Stop the actor
         actor.stop();
+        Thread.sleep(100);
 
-        // Create a new actor with the same ID and state store
-        TestCounterActor newActor = new TestCounterActor(actorSystem, actorId, 0, stateStore);
+        // Create a new actor with the same ID and persistence components
+        // This should recover the state from the snapshot and journal
+        TestCounterActor newActor = new TestCounterActor(actorSystem, actorId, null, // null forces recovery
+                                                       testJournal, testSnapshotStore);
         newActor.start();
 
-        // Get the recovered count
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger result = new AtomicInteger();
-        newActor.tell(new TestCounterMessage.GetCount(count -> {
-            result.set(count);
-            latch.countDown();
-        }));
+        // Wait for state initialization to complete
+        assertTrue(newActor.waitForStateInitialization(2000), "Timed out waiting for state initialization");
 
-        // Wait for the result
-        assertTrue(latch.await(1, TimeUnit.SECONDS), "Timed out waiting for response");
-        assertEquals(15, result.get(), "State should be recovered from the store");
+        // Verify the state was recovered correctly
+        assertEquals(15, newActor.getCountSync(), "State should be recovered correctly");
+        
+        // Stop the new actor
+        newActor.stop();
     }
 
+    /**
+     * Test error handling during message processing.
+     * This test verifies that the actor can continue processing messages after an error.
+     */
     @Test
-    void testStateRecoveryWithFileStore() throws InterruptedException, IOException {
-        // Create a unique actor ID for this test to avoid conflicts with other tests
-        String actorId = "counter-recovery-" + System.currentTimeMillis();
-
-        // Create a file-based state store
-        Path tempDir = Files.createTempDirectory("actor-test");
-        StateStore<String, Integer> stateStore = StateStoreFactory.createFileStore(tempDir.toString());
-
-        try {
-            // Create a counter actor with initial state 0
-            TestCounterActor actor = new TestCounterActor(actorSystem, actorId, 0, stateStore);
-            actor.start();
-
-            // Send increment messages
-            for (int i = 0; i < 5; i++) {
-                actor.tell(new TestCounterMessage.Increment(3));
-            }
-
-            // Wait for the state to be updated and persisted
-            CountDownLatch pollLatch = new CountDownLatch(1);
-            long timeout = 5000; // 5 seconds timeout
-            long pollIntervalMs = 100;
-            long elapsedTime = 0;
-
-            while (elapsedTime < timeout) {
-                // Poll the actor state
-                actor.tell(new TestCounterMessage.GetCount(count -> {
-                    if (count == 15) {
-                        pollLatch.countDown();
-                    }
-                }));
-
-                if (pollLatch.await(pollIntervalMs, TimeUnit.MILLISECONDS)) {
-                    break; // State reached expected value
-                }
-
-                elapsedTime += pollIntervalMs;
-            }
-
-            // Ensure state is persisted before stopping
-            Thread.sleep(100);
-
-            // Stop the actor
-            actor.stop();
-
-            // Wait a bit to ensure the actor is fully stopped and state is persisted
-            Thread.sleep(200);
-
-            // Create a new actor with the same ID and state store
-            TestCounterActor newActor = new TestCounterActor(actorSystem, actorId, 0, stateStore);
-            newActor.withShutdownTimeout(1); // Set a short shutdown timeout
-            newActor.start();
-
-            // Wait for state initialization to complete
-            Thread.sleep(200);
-
-            // Get the recovered count
-            CountDownLatch latch = new CountDownLatch(1);
-            AtomicInteger result = new AtomicInteger();
-            newActor.tell(new TestCounterMessage.GetCount(count -> {
-                result.set(count);
-                latch.countDown();
-            }));
-
-            // Wait for the result with a timeout
-            boolean responded = latch.await(1, TimeUnit.SECONDS);
-
-            // Stop the actor regardless of test outcome
-            newActor.stop();
-
-            // Now assert the results
-            assertTrue(responded, "Timed out waiting for response");
-            assertEquals(15, result.get(), "State should be recovered from the file store");
-        } finally {
-            // Clean up temporary directory
-            try {
-                Files.walk(tempDir)
-                        .sorted(Comparator.reverseOrder())
-                        .forEach(path -> {
-                            try {
-                                Files.deleteIfExists(path);
-                            } catch (IOException e) {
-                                // Ignore deletion errors
-                            }
-                        });
-            } catch (IOException e) {
-                // Ignore cleanup errors
-            }
-        }
-    }
-
-    @Test
-    void testErrorHandlingDuringStateOperation() throws InterruptedException {
-        // Create a unique actor ID for this test to avoid conflicts with other tests
-        String actorId = "counter-error-" + System.currentTimeMillis();
-
+    void testErrorHandlingDuringMessageProcessing() throws InterruptedException {
         // Create a counter actor with initial state 0
-        TestCounterActor actor = new TestCounterActor(actorSystem, actorId, 0);
-        actor.withShutdownTimeout(1); // Set a short shutdown timeout
+        TestCounterActor actor = new TestCounterActor(actorSystem, "counter-error", 0,
+                                                    messageJournal, snapshotStore);
+        actor.start();
 
-        try {
-            actor.start();
+        // Wait for state initialization
+        assertTrue(actor.waitForStateInitialization(1000), "Timed out waiting for state initialization");
+        
+        // Verify initial state
+        assertEquals(0, actor.getCountSync(), "Initial state should be 0");
 
-            // Wait for the actor to fully initialize
-            Thread.sleep(100);
+        // Send a message that will cause an error
+        actor.tell(new TestCounterMessage.CauseError());
+        Thread.sleep(100);
+        
+        // The actor should still be running and able to process messages
+        actor.tell(new TestCounterMessage.Increment(5));
+        Thread.sleep(100);
 
-            // Send a message that will cause an error
-            actor.tell(new TestCounterMessage.CauseError());
-
-            // Wait for the error to be processed
-            Thread.sleep(200);
-
-            // The actor should still be running and able to process messages
-            actor.tell(new TestCounterMessage.Increment(5));
-
-            // Wait for the increment to be processed
-            Thread.sleep(200);
-
-            // Get the current count
-            CountDownLatch latch = new CountDownLatch(1);
-            AtomicInteger result = new AtomicInteger();
-            actor.tell(new TestCounterMessage.GetCount(count -> {
-                result.set(count);
-                latch.countDown();
-            }));
-
-            // Wait for the result with a timeout
-            boolean responded = latch.await(1, TimeUnit.SECONDS);
-
-            // Now assert the results
-            assertTrue(responded, "Timed out waiting for response");
-            assertEquals(5, result.get(), "State should be updated after error");
-        } finally {
-            // Clean up
-            actor.stop();
-        }
+        // Verify the actor recovered and processed the message after the error
+        assertEquals(5, actor.getCountSync(), "State should be updated after error");
+        
+        // Clean up
+        actor.stop();
     }
 
     /**
@@ -379,10 +176,58 @@ class StatefulActorTest {
         public TestCounterActor(ActorSystem system, String actorId, Integer initialState) {
             super(system, actorId, initialState);
         }
-
+        
         public TestCounterActor(ActorSystem system, String actorId, Integer initialState,
-                                StateStore<String, Integer> stateStore) {
-            super(system, actorId, initialState, stateStore);
+                                MessageJournal<TestCounterMessage> messageJournal) {
+            super(system, actorId, initialState, messageJournal);
+        }
+        
+        public TestCounterActor(ActorSystem system, String actorId, Integer initialState,
+                                MessageJournal<TestCounterMessage> messageJournal,
+                                SnapshotStore<Integer> snapshotStore) {
+            super(system, actorId, initialState, messageJournal, snapshotStore);
+        }
+        
+        /**
+         * Force initialization of state and wait for it to complete.
+         * This is useful for testing to ensure the state is loaded before checking values.
+         * 
+         * @return A CompletableFuture that completes when the state has been initialized
+         */
+        public CompletableFuture<Void> forceInitializeState() {
+            System.out.println("Forcing state initialization for " + getActorId());
+            return initializeState()
+                .thenAccept(result -> {
+                    System.out.println("State initialization completed for " + getActorId() + ", state: " + getState());
+                })
+                .exceptionally(e -> {
+                    System.err.println("Error initializing state for " + getActorId() + ": " + e.getMessage());
+                    e.printStackTrace();
+                    return null;
+                });
+        }
+        
+        /**
+         * Force a snapshot to be taken immediately and wait for it to complete.
+         * This is useful for testing to ensure the state is persisted before checking recovery.
+         * 
+         * @return A CompletableFuture that completes when the snapshot has been taken
+         */
+        public CompletableFuture<Void> forceSnapshot() {
+            System.out.println("Forcing snapshot for " + getActorId() + ", state: " + getState());
+            return super.forceSnapshot();
+        }
+        
+        /**
+         * Persists the current state to the state store by updating the state with its current value.
+         * This is useful for testing to ensure the state is persisted before checking recovery.
+         * 
+         * @return A CompletableFuture that completes when the state has been persisted
+         */
+        public CompletableFuture<Void> persistState() {
+            System.out.println("Persisting state for " + getActorId() + ", state: " + getState());
+            // We can't call the private persistState() method directly, so we'll use updateState instead
+            return updateState(getState());
         }
 
         @Override
@@ -392,13 +237,149 @@ class StatefulActorTest {
             } else if (message instanceof TestCounterMessage.Reset) {
                 return 0;
             } else if (message instanceof TestCounterMessage.Clear) {
-                return null; // Setting state to null will cause it to be deleted from the store
+                // Clear the state and then immediately set it to 0 (default value)
+                clearState().thenRun(() -> {
+                    // Set the state to 0 after clearing using the protected updateState method
+                    updateState(0);
+                });
+                return 0; // Return 0 as the new state
             } else if (message instanceof TestCounterMessage.GetCount getCount) {
-                getCount.callback().accept(state);
+                // If state is null (e.g., during clearing), use 0 as default
+                getCount.callback().accept(state != null ? state : 0);
             } else if (message instanceof TestCounterMessage.CauseError) {
                 throw new RuntimeException("Test error");
             }
             return state;
+        }
+        
+        /**
+         * Helper method to get the current count synchronously.
+         * This is more readable in tests than using CountDownLatch.
+         * 
+         * @return The current count
+         */
+        public int getCountSync() {
+            AtomicInteger result = new AtomicInteger();
+            CountDownLatch latch = new CountDownLatch(1);
+            
+            // Always try to wait for state initialization first
+            try {
+                waitForStateInitialization(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for state initialization", e);
+            }
+            
+            tell(new TestCounterMessage.GetCount(count -> {
+                result.set(count);
+                latch.countDown();
+            }));
+            
+            try {
+                // Use a longer timeout (5 seconds) to be more reliable in tests
+                if (!latch.await(5, TimeUnit.SECONDS)) {
+                    throw new RuntimeException("Timed out waiting for count after 5 seconds");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for count", e);
+            }
+            
+            return result.get();
+        }
+        
+        /**
+         * Helper method to increment the counter synchronously.
+         * This is more readable in tests than using Thread.sleep().
+         * 
+         * @param amount The amount to increment by
+         */
+        public void incrementSync(int amount) {
+            // Always try to wait for state initialization first
+            try {
+                waitForStateInitialization(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for state initialization", e);
+            }
+            
+            // Get the current count before incrementing
+            int currentCount = getCountSync();
+            
+            // Send the increment message
+            tell(new TestCounterMessage.Increment(amount));
+            
+            // Wait for the state to be updated with a timeout
+            try {
+                // Poll until the state changes or timeout
+                long startTime = System.currentTimeMillis();
+                int newCount;
+                do {
+                    // Check if we've timed out
+                    if (System.currentTimeMillis() - startTime > 3000) {
+                        throw new RuntimeException("Timed out waiting for increment after 3 seconds");
+                    }
+                    
+                    // Wait a bit before checking again
+                    Thread.sleep(50);
+                    
+                    // Get the new count
+                    newCount = getCountSync();
+                } while (newCount == currentCount);
+                
+                // Verify that the increment was applied correctly
+                if (newCount != currentCount + amount) {
+                    throw new RuntimeException("Increment was not applied correctly. Expected " + 
+                            (currentCount + amount) + " but got " + newCount);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for increment to complete", e);
+            }
+        }
+        
+        /**
+         * Helper method to reset the counter synchronously.
+         * This is more readable in tests than using Thread.sleep().
+         */
+        public void resetSync() {
+            // Always try to wait for state initialization first
+            try {
+                waitForStateInitialization(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for state initialization", e);
+            }
+            
+            tell(new TestCounterMessage.Reset());
+            try {
+                Thread.sleep(200); // Wait longer for the message to be processed
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for reset to complete", e);
+            }
+        }
+        
+        /**
+         * Helper method to clear the state synchronously.
+         * This is more readable in tests than using Thread.sleep().
+         */
+        public void clearSync() {
+            // Always try to wait for state initialization first
+            try {
+                waitForStateInitialization(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for state initialization", e);
+            }
+            
+            tell(new TestCounterMessage.Clear());
+            try {
+                Thread.sleep(200); // Wait longer for the message to be processed
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for clear to complete", e);
+            }
         }
 
         @Override

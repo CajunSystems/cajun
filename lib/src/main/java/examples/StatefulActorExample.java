@@ -7,8 +7,9 @@ import systems.cajun.ActorSystem;
 import systems.cajun.FunctionalStatefulActor;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
-import systems.cajun.persistence.StateStore;
-import systems.cajun.persistence.StateStoreFactory;
+import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.SnapshotStore;
+import systems.cajun.persistence.PersistenceFactory;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -16,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
 /**
@@ -66,48 +68,50 @@ public class StatefulActorExample {
     private static void simpleCounterExample(ActorSystem system) throws Exception {
         logger.info("Starting simple counter example with in-memory persistence");
 
-        // Create a counter actor with initial state 0
-        CounterActor counterActor = new CounterActor(system, "counter", 0);
-        counterActor.start();
+        // Create a counter actor with default persistence
+        CounterActor counter = new CounterActor(system, "counter-1", 0, PersistenceFactory.createFileMessageJournal());
 
         // Send increment messages
-        counterActor.tell(new CounterMessage.Increment(5));
-        counterActor.tell(new CounterMessage.Increment(10));
+        counter.tell(new CounterMessage.Increment(5));
+        counter.tell(new CounterMessage.Increment(10));
 
         // Wait for the messages to be processed
         Thread.sleep(100);
 
         // Get the current count
         CountDownLatch latch = new CountDownLatch(1);
-        int[] result = new int[1];
-        counterActor.tell(new CounterMessage.GetCount(count -> {
-            result[0] = count;
+        AtomicInteger result = new AtomicInteger();
+        counter.tell(new CounterMessage.GetCount(count -> {
+            result.set(count);
             latch.countDown();
         }));
 
-        // Wait for the result
+        // Wait for the response
         latch.await(1, TimeUnit.SECONDS);
-        logger.info("Counter value: {}", result[0]);
+        int count = result.get();
+        logger.info("Counter value: {}", count);
 
         // Reset the counter
-        counterActor.tell(new CounterMessage.Reset());
+        counter.tell(new CounterMessage.Reset());
 
         // Wait for the reset to be processed
         Thread.sleep(100);
 
         // Get the count again
         CountDownLatch latch2 = new CountDownLatch(1);
-        counterActor.tell(new CounterMessage.GetCount(count -> {
-            result[0] = count;
+        AtomicInteger result2 = new AtomicInteger();
+        counter.tell(new CounterMessage.GetCount(count2 -> {
+            result2.set(count2);
             latch2.countDown();
         }));
 
-        // Wait for the result
+        // Wait for the response
         latch2.await(1, TimeUnit.SECONDS);
-        logger.info("Counter value after reset: {}", result[0]);
+        int count2 = result2.get();
+        logger.info("Counter value after reset: {}", count2);
 
         // Shutdown the actor
-        system.shutdown(counterActor.getActorId());
+        system.shutdown(counter.getActorId());
     }
 
     /**
@@ -116,56 +120,55 @@ public class StatefulActorExample {
     private static void fileBasedCounterExample(ActorSystem system, String stateDir) throws Exception {
         logger.info("Starting counter example with file-based persistence");
 
-        // Create a state store
-        StateStore<String, Integer> stateStore = StateStoreFactory.createFileStore(stateDir);
+        // Create message journal and snapshot store for persistence
+        MessageJournal<CounterMessage> messageJournal = PersistenceFactory.createFileMessageJournal(stateDir);
+        SnapshotStore<Integer> snapshotStore = PersistenceFactory.createFileSnapshotStore(stateDir);
 
         // Create a counter actor with initial state 0 and file-based persistence
-        CounterActor counterActor = new CounterActor(system, "file-counter", 0, stateStore);
-        counterActor.start();
+        CounterActor counter = new CounterActor(system, "file-counter", 0, messageJournal, snapshotStore);
+        counter.start();
 
         // Send increment messages
-        counterActor.tell(new CounterMessage.Increment(3));
-        counterActor.tell(new CounterMessage.Increment(7));
+        counter.tell(new CounterMessage.Increment(3));
+        counter.tell(new CounterMessage.Increment(7));
 
         // Wait for the messages to be processed
         Thread.sleep(100);
 
         // Get the current count
         CountDownLatch latch = new CountDownLatch(1);
-        int[] result = new int[1];
-        counterActor.tell(new CounterMessage.GetCount(count -> {
-            result[0] = count;
+        AtomicInteger result = new AtomicInteger();
+        counter.tell(new CounterMessage.GetCount(count -> {
+            result.set(count);
             latch.countDown();
         }));
 
         // Wait for the result
         latch.await(1, TimeUnit.SECONDS);
-        logger.info("File-based counter value: {}", result[0]);
+        logger.info("File-based counter value: {}", result.get());
 
         // Shutdown the actor
-        system.shutdown(counterActor.getActorId());
+        system.shutdown(counter.getActorId());
 
         // Create a new actor with the same ID to demonstrate state recovery
         logger.info("Creating a new actor with the same ID to demonstrate state recovery");
-        CounterActor newCounterActor = new CounterActor(system, "file-counter", 0, stateStore);
-        newCounterActor.start();
+        CounterActor newCounter = new CounterActor(system, "file-counter", 0, messageJournal, snapshotStore);
+        newCounter.start();
 
         // Get the recovered count
         CountDownLatch latch2 = new CountDownLatch(1);
-        newCounterActor.tell(new CounterMessage.GetCount(count -> {
-            result[0] = count;
+        AtomicInteger result2 = new AtomicInteger();
+        newCounter.tell(new CounterMessage.GetCount(count -> {
+            result2.set(count);
             latch2.countDown();
         }));
 
         // Wait for the result
         latch2.await(1, TimeUnit.SECONDS);
-        logger.info("Recovered counter value: {}", result[0]);
+        logger.info("Recovered counter value: {}", result2.get());
 
         // Shutdown the actor
-        system.shutdown(newCounterActor.getActorId());
-
-        // Close the state store
-        stateStore.close();
+        system.shutdown(newCounter.getActorId());
     }
 
     /**
@@ -288,8 +291,14 @@ public class StatefulActorExample {
         }
 
         public CounterActor(ActorSystem system, String actorId, Integer initialState, 
-                            StateStore<String, Integer> stateStore) {
-            super(system, actorId, initialState, stateStore);
+                            MessageJournal<CounterMessage> messageJournal) {
+            super(system, actorId, initialState, messageJournal);
+        }
+        
+        public CounterActor(ActorSystem system, String actorId, Integer initialState, 
+                            MessageJournal<CounterMessage> messageJournal,
+                            SnapshotStore<Integer> snapshotStore) {
+            super(system, actorId, initialState, messageJournal, snapshotStore);
         }
 
         @Override
