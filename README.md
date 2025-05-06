@@ -723,11 +723,16 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
 3. Actor supervision hierarchy and fault tolerance
    - [x] Basic supervision strategies (RESUME, RESTART, STOP, ESCALATE)
    - [x] Hierarchical supervision
-   - [ ] Custom supervision policies
+   - [x] Custom supervision policies
+   - [x] Lifecycle hooks (preStart, postStop, onError)
+   - [x] Integrated logging with SLF4J and Logback
 4. Persistent state and messaging for actors
    - [x] StatefulActor with persistent state management
    - [x] Pluggable state storage backends (in-memory, file-based)
-   - [ ] Message persistence and replay
+   - [x] Message persistence and replay
+   - [x] State initialization and recovery mechanisms
+   - [x] Snapshot-based state persistence
+   - [x] Hybrid recovery approach (snapshots + message replay)
 5. Partitioned state and sharding strategy
    - [x] Rendezvous hashing for actor assignment
 6. Cluster mode
