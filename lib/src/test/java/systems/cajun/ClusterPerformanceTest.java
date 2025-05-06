@@ -1,4 +1,4 @@
-package systems.cajun.performance;
+package systems.cajun;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -6,10 +6,9 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.Actor;
-import systems.cajun.ActorSystem;
-import systems.cajun.Pid;
 import systems.cajun.cluster.*;
+import systems.cajun.runtime.cluster.ClusterFactory;
+import systems.cajun.runtime.cluster.DirectMessagingSystem;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -27,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 2. Require etcd to be running (for cluster coordination)
  * 
  * To run these tests specifically, use:
- * ./gradlew performanceTest --tests "systems.cajun.performance.ClusterPerformanceTest"
+ * ./gradlew performanceTest --tests "systems.cajun.ClusterPerformanceTest"
  */
 @Tag("performance")
 @Tag("requires-etcd")
@@ -87,17 +86,17 @@ public class ClusterPerformanceTest {
 
         try {
             logger.info("Connecting to etcd at http://localhost:2379");
-            metadataStore1 = new EtcdMetadataStore("http://localhost:2379");
-            metadataStore2 = new EtcdMetadataStore("http://localhost:2379");
+            metadataStore1 = ClusterFactory.createEtcdMetadataStore("http://localhost:2379");
+            metadataStore2 = ClusterFactory.createEtcdMetadataStore("http://localhost:2379");
 
             // Setup messaging systems for both nodes
             logger.info("Setting up messaging systems");
-            DirectMessagingSystem messagingSystem1 = new DirectMessagingSystem("node1", 8080);
-            DirectMessagingSystem messagingSystem2 = new DirectMessagingSystem("node2", 8081);
+            MessagingSystem messagingSystem1 = ClusterFactory.createDirectMessagingSystem("node1", 8080);
+            MessagingSystem messagingSystem2 = ClusterFactory.createDirectMessagingSystem("node2", 8081);
 
             // Add node information to each messaging system
-            messagingSystem1.addNode("node2", "localhost", 8081);
-            messagingSystem2.addNode("node1", "localhost", 8080);
+            ((DirectMessagingSystem)messagingSystem1).addNode("node2", "localhost", 8081);
+            ((DirectMessagingSystem)messagingSystem2).addNode("node1", "localhost", 8080);
 
             // Create cluster actor systems for both nodes
             logger.info("Creating cluster actor systems");

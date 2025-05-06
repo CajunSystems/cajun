@@ -2,7 +2,11 @@ package systems.cajun;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.persistence.*;
+import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.SnapshotStore;
+import systems.cajun.persistence.JournalEntry;
+import systems.cajun.persistence.SnapshotEntry;
+import systems.cajun.runtime.persistence.PersistenceFactory;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;

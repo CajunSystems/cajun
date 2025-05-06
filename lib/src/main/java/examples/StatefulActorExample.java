@@ -17,8 +17,10 @@ import systems.cajun.FunctionalStatefulActor;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
 import systems.cajun.persistence.MessageJournal;
-import systems.cajun.persistence.PersistenceFactory;
 import systems.cajun.persistence.SnapshotStore;
+import systems.cajun.persistence.JournalEntry;
+import systems.cajun.persistence.SnapshotEntry;
+import systems.cajun.runtime.persistence.PersistenceFactory;
 
 /**
  * Example demonstrating the use of stateful actors.

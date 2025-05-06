@@ -2,7 +2,7 @@ package systems.cajun;
 
 import systems.cajun.persistence.MessageJournal;
 import systems.cajun.persistence.SnapshotStore;
-import systems.cajun.persistence.PersistenceFactory;
+import systems.cajun.runtime.persistence.PersistenceFactory;
 
 import java.util.function.BiFunction;
 

@@ -1,4 +1,4 @@
-package systems.cajun.cluster;
+package systems.cajun.runtime.cluster;
 
 import io.etcd.jetcd.ByteSequence;
 import io.etcd.jetcd.Client;
@@ -9,6 +9,7 @@ import io.etcd.jetcd.lease.LeaseKeepAliveResponse;
 import io.etcd.jetcd.options.GetOption;
 import io.etcd.jetcd.watch.WatchEvent;
 import io.grpc.stub.StreamObserver;
+import systems.cajun.cluster.MetadataStore;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

@@ -20,12 +20,21 @@ tasks.withType(JavaCompile).each {
     it.options.compilerArgs.add('--enable-preview')
 }
 
-dependencies {
+// Define source sets for core and runtime
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java']
+        }
+    }
+}
 
-    implementation "io.etcd:jetcd-core:0.7.6"
+dependencies {
+    // Core dependencies (abstract interfaces)
+    api 'org.slf4j:slf4j-api:2.0.9'
     
-    // Logging dependencies
-    implementation 'org.slf4j:slf4j-api:2.0.9'
+    // Runtime implementation dependencies
+    implementation "io.etcd:jetcd-core:0.7.6"
     implementation 'ch.qos.logback:logback-classic:1.4.11'
 
     // Use JUnit Jupiter for testing.

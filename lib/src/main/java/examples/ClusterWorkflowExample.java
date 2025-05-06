@@ -4,6 +4,7 @@ import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
 import systems.cajun.cluster.*;
+import systems.cajun.runtime.cluster.ClusterFactory;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -505,22 +506,22 @@ public class ClusterWorkflowExample {
 
         try {
             System.out.println("Connecting to etcd at http://localhost:2379");
-            metadataStore1 = new EtcdMetadataStore("http://localhost:2379");
-            metadataStore2 = new EtcdMetadataStore("http://localhost:2379");
+            metadataStore1 = ClusterFactory.createEtcdMetadataStore("http://localhost:2379");
+            metadataStore2 = ClusterFactory.createEtcdMetadataStore("http://localhost:2379");
 
             // Setup messaging systems for both nodes
             System.out.println("Setting up messaging systems");
-            DirectMessagingSystem messagingSystem1 = new DirectMessagingSystem("node1", 8080);
-            DirectMessagingSystem messagingSystem2 = new DirectMessagingSystem("node2", 8081);
+            MessagingSystem messagingSystem1 = ClusterFactory.createDirectMessagingSystem("node1", 8080);
+            MessagingSystem messagingSystem2 = ClusterFactory.createDirectMessagingSystem("node2", 8081);
 
             // Add node information to each messaging system
-            messagingSystem1.addNode("node2", "localhost", 8081);
-            messagingSystem2.addNode("node1", "localhost", 8080);
+            ((systems.cajun.runtime.cluster.DirectMessagingSystem)messagingSystem1).addNode("node2", "localhost", 8081);
+            ((systems.cajun.runtime.cluster.DirectMessagingSystem)messagingSystem2).addNode("node1", "localhost", 8080);
 
             // Create cluster actor systems for both nodes
             System.out.println("Creating cluster actor systems");
-            node1System = new ClusterActorSystem("node1", metadataStore1, messagingSystem1);
-            node2System = new ClusterActorSystem("node2", metadataStore2, messagingSystem2);
+            node1System = ClusterFactory.createClusterActorSystem("node1", metadataStore1, messagingSystem1);
+            node2System = ClusterFactory.createClusterActorSystem("node2", metadataStore2, messagingSystem2);
 
             // Set delivery guarantee for reliable messaging
             node1System.withDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE);

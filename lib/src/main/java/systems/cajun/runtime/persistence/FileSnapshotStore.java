@@ -1,7 +1,9 @@
-package systems.cajun.persistence;
+package systems.cajun.runtime.persistence;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import systems.cajun.persistence.SnapshotEntry;
+import systems.cajun.persistence.SnapshotStore;
 
 import java.io.*;
 import java.nio.file.Files;

@@ -1,4 +1,4 @@
-package systems.cajun.performance;
+package systems.cajun;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -6,10 +6,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.Actor;
-import systems.cajun.ActorSystem;
-import systems.cajun.ChainedActor;
-import systems.cajun.Pid;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -206,21 +202,15 @@ public class ActorPerformanceTest {
             }
         }
         
-        // Final system shutdown to clean up any remaining resources
-        actorSystem.shutdown();
-        
         long endShutdownTime = System.nanoTime();
         double shutdownTimeSeconds = (endShutdownTime - startShutdownTime) / 1_000_000_000.0;
         
         logger.info("Actor Lifecycle Performance Test Results:");
         logger.info("Actor Count: {}", ACTOR_COUNT);
-        logger.info("Creation Time: {} seconds ({} actors/second)", 
-                creationTimeSeconds, ACTOR_COUNT / creationTimeSeconds);
-        logger.info("Shutdown Time: {} seconds ({} actors/second)", 
-                shutdownTimeSeconds, ACTOR_COUNT / shutdownTimeSeconds);
-        
-        // Create a new actor system for tearDown to work properly
-        actorSystem = new ActorSystem();
+        logger.info("Creation Time: {} seconds", creationTimeSeconds);
+        logger.info("Creation Rate: {} actors/second", ACTOR_COUNT / creationTimeSeconds);
+        logger.info("Shutdown Time: {} seconds", shutdownTimeSeconds);
+        logger.info("Shutdown Rate: {} actors/second", ACTOR_COUNT / shutdownTimeSeconds);
     }
 }
 

@@ -1,10 +1,13 @@
-package systems.cajun.persistence;
+package systems.cajun.runtime.persistence;
+
+import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.SnapshotStore;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * Factory class for creating persistence components.
+ * Factory class for creating persistence component implementations.
  */
 public class PersistenceFactory {
     
