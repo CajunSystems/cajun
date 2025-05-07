@@ -245,30 +245,61 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         }
     }
 
+    // CompletableFuture that completes when this actor's persistence executor has shut down
+    private final CompletableFuture<Void> persistenceShutdownFuture = new CompletableFuture<>();
+    
     @Override
     protected void postStop() {
         super.postStop();
+        
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
             if (stateChanged) {
-                // Take a final snapshot
-                takeSnapshot().join();
-                // Reset the changes counter
-                changesSinceLastSnapshot = 0;
+                try {
+                    // Take a final snapshot and wait for it to complete
+                    logger.debug("Taking final snapshot for actor {} before shutdown", actorId);
+                    takeSnapshot().join();
+                    // Reset the changes counter
+                    changesSinceLastSnapshot = 0;
+                } catch (Exception e) {
+                    logger.error("Error taking final snapshot for actor {} during shutdown", actorId, e);
+                }
             }
         }
         
         // Shutdown the persistence executor
+        logger.debug("Shutting down persistence executor for actor {}", actorId);
         persistenceExecutor.shutdown();
-        try {
-            if (!persistenceExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                logger.warn("Persistence executor for actor {} did not terminate in time", actorId);
-                persistenceExecutor.shutdownNow();
+        
+        // Start a background thread to monitor the shutdown and complete the future
+        // This allows the actor's thread to continue without blocking
+        CompletableFuture.runAsync(() -> {
+            try {
+                if (!persistenceExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    logger.warn("Persistence executor for actor {} did not terminate in time, forcing shutdown", actorId);
+                    persistenceExecutor.shutdownNow();
+                    if (!persistenceExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        logger.error("Persistence executor for actor {} could not be terminated", actorId);
+                    }
+                }
+                logger.debug("Persistence executor for actor {} has terminated", actorId);
+                persistenceShutdownFuture.complete(null);
+            } catch (InterruptedException e) {
+                logger.warn("Interrupted while waiting for persistence executor to terminate", e);
+                Thread.currentThread().interrupt();
+                persistenceShutdownFuture.completeExceptionally(e);
             }
-        } catch (InterruptedException e) {
-            logger.warn("Interrupted while waiting for persistence executor to terminate", e);
-            Thread.currentThread().interrupt();
-        }
+        });
+    }
+    
+    /**
+     * Gets a CompletableFuture that completes when this actor's persistence executor has shut down.
+     * This is useful for the ActorSystem to wait for all persistence operations to complete during shutdown.
+     * 
+     * @return A CompletableFuture that completes when the persistence executor has shut down
+     */
+    public CompletableFuture<Void> getPersistenceShutdownFuture() {
+        return persistenceShutdownFuture;
     }
 
     @Override

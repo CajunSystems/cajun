@@ -1,13 +1,18 @@
 package systems.cajun;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -232,16 +237,48 @@ public class ActorSystem {
     
     /**
      * Shuts down all actors in the system.
-     * This method stops all actors and clears the actor registry.
+     * This method stops all actors, waits for any persistence operations to complete,
+     * and then clears the actor registry and shuts down the thread pools.
      */
     public void shutdown() {
         // Create a copy of the actors map to avoid concurrent modification issues
         Map<String, Actor<?>> actorsCopy = new HashMap<>(actors);
+        
+        // First, collect all StatefulActors to track their persistence shutdown
+        List<CompletableFuture<Void>> persistenceShutdownFutures = new ArrayList<>();
+        for (Actor<?> actor : actorsCopy.values()) {
+            if (actor instanceof StatefulActor<?,?> statefulActor) {
+                persistenceShutdownFutures.add(statefulActor.getPersistenceShutdownFuture());
+            }
+        }
 
         // Stop all actors
+        logger.info("Stopping all actors");
         for (Actor<?> actor : actorsCopy.values()) {
             if (actor.isRunning()) {
                 actor.stop();
+            }
+        }
+        
+        // Wait for all persistence operations to complete
+        if (!persistenceShutdownFutures.isEmpty()) {
+            logger.info("Waiting for {} StatefulActor persistence operations to complete", 
+                    persistenceShutdownFutures.size());
+            try {
+                // Create a combined future that completes when all persistence operations are done
+                CompletableFuture<Void> allPersistenceComplete = 
+                        CompletableFuture.allOf(persistenceShutdownFutures.toArray(new CompletableFuture[0]));
+                
+                // Wait for all persistence operations to complete with a timeout
+                allPersistenceComplete.get(30, TimeUnit.SECONDS);
+                logger.info("All StatefulActor persistence operations completed successfully");
+            } catch (InterruptedException e) {
+                logger.warn("Interrupted while waiting for persistence operations to complete");
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException e) {
+                logger.warn("Error during persistence shutdown: {}", e.getMessage());
+            } catch (TimeoutException e) {
+                logger.warn("Timed out waiting for persistence operations to complete");
             }
         }
 
@@ -272,17 +309,22 @@ public class ActorSystem {
         
         // Shutdown the shared executor if it exists
         if (sharedExecutor != null) {
+            logger.debug("Shutting down shared executor");
             sharedExecutor.shutdown();
             try {
                 int timeoutSeconds = threadPoolConfig.getActorShutdownTimeoutSeconds();
                 if (!sharedExecutor.awaitTermination(timeoutSeconds, TimeUnit.SECONDS)) {
+                    logger.warn("Shared executor did not terminate in time, forcing shutdown");
                     sharedExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {
+                logger.warn("Interrupted while waiting for shared executor to terminate");
                 sharedExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }
+        
+        logger.info("Actor system shutdown complete");
     }
 
     @SuppressWarnings("unchecked")

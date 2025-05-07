@@ -45,7 +45,11 @@ public class BatchedFileMessageJournal<M> extends FileMessageJournal<M> implemen
     // Batching state
     private final Map<String, List<MessageBatchEntry<M>>> pendingBatches = new ConcurrentHashMap<>();
     private final Map<String, ReadWriteLock> actorLocks = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = new Thread(r, "journal-flush-scheduler");
+        t.setDaemon(true); // Make thread daemon so it doesn't prevent JVM shutdown
+        return t;
+    });
     
     /**
      * Creates a new BatchedFileMessageJournal with the specified directory.
