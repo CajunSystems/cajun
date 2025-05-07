@@ -21,7 +21,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-
 import systems.cajun.mocks.MockActorSystem;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
@@ -231,6 +230,17 @@ class SimpleStatefulActorTest {
             super(new ActorSystem(), actorId, initialState, messageJournal, snapshotStore);
             // Register with mock system
             mockSystem.registerActor(this);
+        }
+
+        @Override
+        public void start() {
+            super.start();
+            // Ensure state initialization completes before returning
+            try {
+                waitForStateInitialization(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
 
         @Override

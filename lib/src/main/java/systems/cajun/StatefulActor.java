@@ -1,20 +1,27 @@
 package systems.cajun;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import systems.cajun.persistence.BatchedMessageJournal;
-import systems.cajun.persistence.SnapshotStore;
-import systems.cajun.persistence.JournalEntry;
-import systems.cajun.persistence.SnapshotEntry;
-import systems.cajun.runtime.persistence.PersistenceFactory;
-
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import systems.cajun.persistence.BatchedMessageJournal;
+import systems.cajun.persistence.JournalEntry;
+import systems.cajun.persistence.SnapshotEntry;
+import systems.cajun.persistence.SnapshotStore;
+import systems.cajun.runtime.persistence.PersistenceFactory;
+
+import java.io.Serializable;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * An actor that maintains and persists its state.
@@ -255,14 +262,12 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
             if (stateChanged) {
+                // Take a final snapshot and wait for it to complete
+                logger.debug("Taking final snapshot for actor {} before shutdown", actorId);
                 try {
-                    // Take a final snapshot and wait for it to complete
-                    logger.debug("Taking final snapshot for actor {} before shutdown", actorId);
                     takeSnapshot().join();
-                    // Reset the changes counter
-                    changesSinceLastSnapshot = 0;
                 } catch (Exception e) {
-                    logger.error("Error taking final snapshot for actor {} during shutdown", actorId, e);
+                    logger.error("Error taking snapshot for actor {}", actorId, e);
                 }
             }
         }
@@ -271,25 +276,60 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         logger.debug("Shutting down persistence executor for actor {}", actorId);
         persistenceExecutor.shutdown();
         
-        // Start a background thread to monitor the shutdown and complete the future
-        // This allows the actor's thread to continue without blocking
-        CompletableFuture.runAsync(() -> {
+        // Create a non-daemon thread for proper shutdown handling
+        // This is important for ensuring resources are properly cleaned up
+        Thread shutdownMonitor = new Thread(() -> {
             try {
-                if (!persistenceExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                // Wait for persistence executor to terminate with timeout
+                if (!persistenceExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
                     logger.warn("Persistence executor for actor {} did not terminate in time, forcing shutdown", actorId);
-                    persistenceExecutor.shutdownNow();
-                    if (!persistenceExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                        logger.error("Persistence executor for actor {} could not be terminated", actorId);
+                    
+                    // Get list of running tasks before shutdown for diagnostic purposes
+                    List<Runnable> pendingTasks = persistenceExecutor.shutdownNow();
+                    if (!pendingTasks.isEmpty()) {
+                        logger.warn("Actor {} had {} pending persistence tasks at shutdown", 
+                                actorId, pendingTasks.size());
+                    }
+                    
+                    // Final termination attempt with shorter timeout
+                    if (!persistenceExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                        logger.error("Persistence executor for actor {} could not be terminated after forced shutdown", 
+                                actorId);
                     }
                 }
+                
                 logger.debug("Persistence executor for actor {} has terminated", actorId);
                 persistenceShutdownFuture.complete(null);
             } catch (InterruptedException e) {
                 logger.warn("Interrupted while waiting for persistence executor to terminate", e);
                 Thread.currentThread().interrupt();
+                persistenceExecutor.shutdownNow();
+                persistenceShutdownFuture.completeExceptionally(e);
+            } catch (Exception e) {
+                logger.error("Error during persistence executor shutdown for actor {}", actorId, e);
+                persistenceExecutor.shutdownNow();
                 persistenceShutdownFuture.completeExceptionally(e);
             }
-        });
+        }, "shutdown-monitor-" + actorId);
+        
+        // Make it a daemon thread to avoid preventing JVM shutdown in extreme cases
+        // This is a safety measure, but the thread should complete normally in most cases
+        shutdownMonitor.setDaemon(true);
+        
+        // Set higher priority to ensure shutdown completes promptly
+        shutdownMonitor.setPriority(Thread.NORM_PRIORITY + 1);
+        
+        // Start the shutdown monitor thread
+        shutdownMonitor.start();
+        
+        // As an additional safety measure, register a JVM shutdown hook to ensure
+        // the executor is terminated if the JVM is shutting down
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (!persistenceExecutor.isTerminated()) {
+                logger.warn("Forcing termination of persistence executor for actor {} during JVM shutdown", actorId);
+                persistenceExecutor.shutdownNow();
+            }
+        }, "shutdown-hook-" + actorId));
     }
     
     /**
