@@ -1,5 +1,6 @@
 package systems.cajun.runtime.persistence;
 
+import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.MessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 
@@ -59,5 +60,49 @@ public class PersistenceFactory {
     public static <S> SnapshotStore<S> createFileSnapshotStore(String baseDir) {
         Path snapshotDir = Paths.get(baseDir, SNAPSHOT_DIR);
         return new FileSnapshotStore<>(snapshotDir);
+    }
+    
+    /**
+     * Creates a batched file-based message journal with the default directory.
+     * This implementation provides better performance by batching write operations.
+     *
+     * @param <M> The type of messages
+     * @return A new BatchedFileMessageJournal instance
+     */
+    public static <M> BatchedMessageJournal<M> createBatchedFileMessageJournal() {
+        Path journalDir = Paths.get(DEFAULT_BASE_DIR, JOURNAL_DIR);
+        return new BatchedFileMessageJournal<>(journalDir);
+    }
+    
+    /**
+     * Creates a batched file-based message journal with a custom directory.
+     * This implementation provides better performance by batching write operations.
+     *
+     * @param <M> The type of messages
+     * @param baseDir The base directory for persistence
+     * @return A new BatchedFileMessageJournal instance
+     */
+    public static <M> BatchedMessageJournal<M> createBatchedFileMessageJournal(String baseDir) {
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR);
+        return new BatchedFileMessageJournal<>(journalDir);
+    }
+    
+    /**
+     * Creates a batched file-based message journal with custom batch settings.
+     * This implementation provides better performance by batching write operations.
+     *
+     * @param <M> The type of messages
+     * @param baseDir The base directory for persistence
+     * @param maxBatchSize The maximum number of messages to batch before flushing
+     * @param maxBatchDelayMs The maximum delay in milliseconds before flushing a batch
+     * @return A new BatchedFileMessageJournal instance
+     */
+    public static <M> BatchedMessageJournal<M> createBatchedFileMessageJournal(
+            String baseDir, int maxBatchSize, long maxBatchDelayMs) {
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR);
+        BatchedFileMessageJournal<M> journal = new BatchedFileMessageJournal<>(journalDir);
+        journal.setMaxBatchSize(maxBatchSize);
+        journal.setMaxBatchDelayMs(maxBatchDelayMs);
+        return journal;
     }
 }

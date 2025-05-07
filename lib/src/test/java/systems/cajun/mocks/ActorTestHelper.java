@@ -139,7 +139,7 @@ public class ActorTestHelper {
      * @param <M> The type of messages
      * @return A spy on the stateful actor
      */
-    public static <S, M> StatefulActor<S, M> spyOnStatefulActor(StatefulActor<S, M> actor) {
+    public static <S, M extends systems.cajun.persistence.OperationAwareMessage> StatefulActor<S, M> spyOnStatefulActor(StatefulActor<S, M> actor) {
         return Mockito.spy(actor);
     }
 }

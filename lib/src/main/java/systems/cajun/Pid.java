@@ -1,8 +1,11 @@
 package systems.cajun;
 
+import java.io.Serializable;
 import java.util.concurrent.TimeUnit;
 import systems.cajun.cluster.DeliveryGuarantee;
 import systems.cajun.cluster.ClusterActorSystem;
+import systems.cajun.persistence.MessageAdapter;
+import systems.cajun.persistence.OperationAwareMessage;
 
 /**
  * Process ID (Pid) for an actor, used to send messages to the actor.
@@ -89,5 +92,62 @@ public record Pid(String actorId, ActorSystem system) {
             }
         }
         return actorId + "@" + systemId;
+    }
+    
+    /**
+     * Sends a message to a stateful actor by automatically adapting it to an OperationAwareMessage.
+     * This allows stateless actors to send regular messages to stateful actors without
+     * requiring the original messages to implement OperationAwareMessage.
+     * 
+     * By default, this method treats the message as a write operation (isReadOnly = false).
+     * If you know the message is read-only, use tellReadOnly instead.
+     *
+     * @param <T> The type of the original message
+     * @param message The message to send
+     */
+    public <T extends Serializable> void tellStateful(T message) {
+        MessageAdapter<T> adapter = MessageAdapter.writeOp(message);
+        tell(adapter);
+    }
+    
+    /**
+     * Sends a message to a stateful actor as a read-only operation by automatically adapting it
+     * to an OperationAwareMessage with isReadOnly = true.
+     * This allows stateless actors to send regular messages to stateful actors without
+     * requiring the original messages to implement OperationAwareMessage.
+     *
+     * @param <T> The type of the original message
+     * @param message The message to send as a read-only operation
+     */
+    public <T extends Serializable> void tellReadOnly(T message) {
+        MessageAdapter<T> adapter = MessageAdapter.readOnly(message);
+        tell(adapter);
+    }
+    
+    /**
+     * Sends a message to a stateful actor with a delay by automatically adapting it
+     * to an OperationAwareMessage.
+     * 
+     * @param <T> The type of the original message
+     * @param message The message to send
+     * @param delay The delay amount
+     * @param timeUnit The time unit for the delay
+     */
+    public <T extends Serializable> void tellStateful(T message, long delay, TimeUnit timeUnit) {
+        MessageAdapter<T> adapter = MessageAdapter.writeOp(message);
+        tell(adapter, delay, timeUnit);
+    }
+    
+    /**
+     * Sends a message to a stateful actor as a read-only operation with a delay.
+     * 
+     * @param <T> The type of the original message
+     * @param message The message to send as a read-only operation
+     * @param delay The delay amount
+     * @param timeUnit The time unit for the delay
+     */
+    public <T extends Serializable> void tellReadOnly(T message, long delay, TimeUnit timeUnit) {
+        MessageAdapter<T> adapter = MessageAdapter.readOnly(message);
+        tell(adapter, delay, timeUnit);
     }
 }

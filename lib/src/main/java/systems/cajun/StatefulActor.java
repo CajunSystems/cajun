@@ -2,7 +2,7 @@ package systems.cajun;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 import systems.cajun.persistence.JournalEntry;
 import systems.cajun.persistence.SnapshotEntry;
@@ -41,7 +41,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
 
     private static final Logger logger = LoggerFactory.getLogger(StatefulActor.class);
 
-    private final MessageJournal<Message> messageJournal;
+    private final BatchedMessageJournal<Message> messageJournal;
     private final SnapshotStore<State> snapshotStore;
     private final AtomicReference<State> currentState = new AtomicReference<>();
     private final AtomicLong lastProcessedSequence = new AtomicLong(-1);
@@ -60,7 +60,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      */
     public StatefulActor(ActorSystem system, State initialState) {
         this(system, initialState,
-             PersistenceFactory.createFileMessageJournal(), 
+             PersistenceFactory.createBatchedFileMessageJournal(), 
              PersistenceFactory.createFileSnapshotStore());
     }
 
@@ -71,7 +71,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param initialState The initial state of the actor
      * @param messageJournal The message journal to use for message persistence
      */
-    public StatefulActor(ActorSystem system, State initialState, MessageJournal<Message> messageJournal) {
+    public StatefulActor(ActorSystem system, State initialState, BatchedMessageJournal<Message> messageJournal) {
         this(system, initialState, messageJournal, PersistenceFactory.createFileSnapshotStore());
     }
 
@@ -84,7 +84,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      */
     public StatefulActor(ActorSystem system, String actorId, State initialState) {
         this(system, actorId, initialState,
-             PersistenceFactory.createFileMessageJournal(),
+             PersistenceFactory.createBatchedFileMessageJournal(),
              PersistenceFactory.createFileSnapshotStore());
     }
 
@@ -96,7 +96,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param initialState The initial state of the actor
      * @param messageJournal The message journal to use for message persistence
      */
-    public StatefulActor(ActorSystem system, String actorId, State initialState, MessageJournal<Message> messageJournal) {
+    public StatefulActor(ActorSystem system, String actorId, State initialState, BatchedMessageJournal<Message> messageJournal) {
         this(system, actorId, initialState, messageJournal, PersistenceFactory.createFileSnapshotStore());
     }
     
@@ -109,7 +109,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param snapshotStore The snapshot store to use for state snapshots
      */
     public StatefulActor(ActorSystem system, State initialState, 
-                         MessageJournal<Message> messageJournal,
+                         BatchedMessageJournal<Message> messageJournal,
                          SnapshotStore<State> snapshotStore) {
         super(system);
         this.initialState = initialState;
@@ -128,7 +128,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param snapshotStore The snapshot store to use for state snapshots
      */
     public StatefulActor(ActorSystem system, String actorId, State initialState, 
-                         MessageJournal<Message> messageJournal,
+                         BatchedMessageJournal<Message> messageJournal,
                          SnapshotStore<State> snapshotStore) {
         super(system, actorId);
         this.initialState = initialState;
@@ -223,9 +223,10 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         // Take snapshots periodically
                         long now = System.currentTimeMillis();
                         if (now - lastSnapshotTime > SNAPSHOT_INTERVAL_MS) {
-                            takeSnapshot();
+                            takeSnapshot().thenRun(() -> {
+                                stateChanged = false;
+                            });
                             lastSnapshotTime = now;
-                            stateChanged = false;
                         }
                     }
                 } catch (Exception e) {
@@ -315,19 +316,20 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         if (initialState != null) {
                             currentState.set(initialState);
                             logger.debug("Actor {} state initialized with provided initial state", actorId);
+                            // Take an initial snapshot with the initial state
+                            lastSnapshotTime = System.currentTimeMillis(); // Record snapshot time
+                            return takeSnapshot();
                         } else {
                             logger.debug("Actor {} state initialized with null state", actorId);
                             // Leave currentState as null
-                        }
-                        stateInitialized = true;
-                        
-                        // Take an initial snapshot with the initial state if it's not null
-                        if (initialState != null) {
-                            return takeSnapshot();
-                        } else {
+                            stateInitialized = true;
                             return CompletableFuture.completedFuture(null);
                         }
                     }
+                })
+                .thenRun(() -> {
+                    // Ensure state is marked as initialized
+                    stateInitialized = true;
                 })
                 .thenApply(v -> null);
     }
@@ -347,28 +349,29 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         // Set the state from the snapshot
                         currentState.set(snapshot.getState());
                         lastProcessedSequence.set(snapshotSequence);
+                        lastSnapshotTime = System.currentTimeMillis(); // Record snapshot time
                         
                         logger.debug("Actor {} recovered state from snapshot at sequence {}", 
                                 actorId, snapshotSequence);
                         
                         // Replay messages after the snapshot sequence number
                         return replayMessages(snapshotSequence + 1)
-                                .thenApply(v -> {
-                                    stateInitialized = true;
-                                    return true;
-                                });
+                                .thenApply(v -> true);
                     } else {
                         // No snapshot found, try to replay all messages
                         return messageJournal.getHighestSequenceNumber(actorId)
                                 .thenCompose(highestSeq -> {
                                     if (highestSeq >= 0) {
                                         // There are messages in the journal, start with initial state and replay all
-                                        currentState.set(initialState);
-                                        return replayMessages(0)
-                                                .thenApply(v -> {
-                                                    stateInitialized = true;
-                                                    return true;
-                                                });
+                                        if (initialState != null) {
+                                            currentState.set(initialState);
+                                            return replayMessages(0)
+                                                    .thenApply(v -> true);
+                                        } else {
+                                            // Cannot replay messages without an initial state
+                                            logger.warn("Actor {} cannot replay messages without an initial state", actorId);
+                                            return CompletableFuture.completedFuture(false);
+                                        }
                                     } else {
                                         // No messages in journal either
                                         return CompletableFuture.completedFuture(false);
@@ -402,11 +405,19 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     
                     // Process each message in sequence
                     long lastSeq = -1;
+                    boolean stateWasChanged = false;
+                    
                     for (JournalEntry<Message> entry : entries) {
                         try {
                             State currentStateValue = currentState.get();
                             State newState = processMessage(currentStateValue, entry.getMessage());
-                            currentState.set(newState);
+                            
+                            // Only update if state has changed
+                            if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
+                                currentState.set(newState);
+                                stateWasChanged = true;
+                            }
+                            
                             lastSeq = entry.getSequenceNumber();
                         } catch (Exception e) {
                             logger.error("Error replaying message with sequence {} for actor {}", 
@@ -417,6 +428,13 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     
                     if (lastSeq >= 0) {
                         lastProcessedSequence.set(lastSeq);
+                    }
+                    
+                    // If state changed during replay, take a snapshot
+                    if (stateWasChanged) {
+                        stateChanged = true;
+                        lastSnapshotTime = System.currentTimeMillis();
+                        return takeSnapshot();
                     }
                     
                     logger.debug("Completed replaying messages for actor {} up to sequence {}", 
@@ -464,6 +482,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 })
                 .exceptionally(e -> {
                     logger.error("Error taking snapshot for actor {}", actorId, e);
+                    stateChanged = true; // Mark as changed so we'll try again later
                     return null;
                 });
     }
@@ -516,6 +535,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @return A CompletableFuture that completes when the snapshot has been taken
      */
     protected CompletableFuture<Void> forceSnapshot() {
-        return takeSnapshot();
+        CompletableFuture<Void> result = takeSnapshot();
+        lastSnapshotTime = System.currentTimeMillis();
+        stateChanged = false;
+        return result;
     }
 }

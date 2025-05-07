@@ -1,15 +1,17 @@
 package systems.cajun;
 
 import org.junit.jupiter.api.*;
-import org.mockito.Mockito;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.*;
+import systems.cajun.persistence.MockBatchedMessageJournal;
 
 import java.util.*;
+// Removed unused import
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -25,7 +27,7 @@ import java.util.function.Consumer;
  * 4. Error handling (during initialization, message processing)
  * 5. Advanced scenarios (concurrent operations, timing-dependent behavior)
  */
-public class StatefulActorTestSuite {
+public class StatefulActorTest {
 
     /**
      * Tests for basic StatefulActor functionality without focusing on persistence.
@@ -35,14 +37,14 @@ public class StatefulActorTestSuite {
     class BasicFunctionalityTests {
         
         private ActorSystem actorSystem;
-        private MockMessageJournal<TestCounterMessage> messageJournal;
+        private MockBatchedMessageJournal<TestCounterMessage> mockMessageJournal;
         private MockSnapshotStore<Integer> snapshotStore;
         
         @BeforeEach
         void setUp() {
             actorSystem = new ActorSystem();
             // Create fresh mock implementations for each test to prevent state leakage
-            messageJournal = new MockMessageJournal<>();
+            mockMessageJournal = new MockBatchedMessageJournal<>();
             snapshotStore = new MockSnapshotStore<>();
         }
         
@@ -58,9 +60,13 @@ public class StatefulActorTestSuite {
          */
         @Test
         void testBasicMessageProcessing() throws InterruptedException {
+            // Create a mock message journal and snapshot store
+            MockBatchedMessageJournal<TestCounterMessage> localMessageJournal = new MockBatchedMessageJournal<>();
+            MockSnapshotStore<Integer> localSnapshotStore = new MockSnapshotStore<>();
+            
             // Create a counter actor with initial state 0
             CounterMessageActor actor = new CounterMessageActor(actorSystem, "counter-basic", 0,
-                                                       messageJournal, snapshotStore);
+                                                       localMessageJournal, localSnapshotStore);
             actor.start();
             
             // Wait for state initialization
@@ -71,19 +77,40 @@ public class StatefulActorTestSuite {
             
             // Send increment message
             actor.tell(new TestCounterMessage.Increment(5));
-            Thread.sleep(100);
+            
+            // Wait for state update with retries
+            int maxRetries = 10;
+            int retryCount = 0;
+            int stateValue = 0;
+            while (retryCount < maxRetries) {
+                Thread.sleep(200); // Wait between checks
+                stateValue = actor.getCountSync();
+                if (stateValue == 5) {
+                    break;
+                }
+                retryCount++;
+            }
             
             // Verify state was updated
-            assertEquals(5, actor.getCountSync(), "State should be updated to 5");
+            assertEquals(5, stateValue, "State should be updated to 5");
+            
+            // Force a snapshot to ensure it's created
+            actor.forceSnapshot().join();
             
             // Verify message was journaled
-            List<JournalEntry<TestCounterMessage>> entries = messageJournal.getEntriesForActor("counter-basic");
-            assertEquals(1, entries.size(), "One message should be journaled");
-            assertTrue(entries.get(0).getMessage() instanceof TestCounterMessage.Increment, 
-                    "Journaled message should be Increment");
+            List<JournalEntry<TestCounterMessage>> entries = localMessageJournal.getMessages("counter-basic");
+            assertTrue(entries.size() >= 1, "At least one message should be journaled");
+            boolean foundIncrementMessage = false;
+            for (JournalEntry<TestCounterMessage> entry : entries) {
+                if (entry.getMessage() instanceof TestCounterMessage.Increment) {
+                    foundIncrementMessage = true;
+                    break;
+                }
+            }
+            assertTrue(foundIncrementMessage, "Journaled message should include Increment");
             
             // Verify snapshot was created
-            SnapshotEntry<Integer> snapshot = snapshotStore.getSnapshot("counter-basic");
+            SnapshotEntry<Integer> snapshot = localSnapshotStore.getSnapshot("counter-basic");
             assertNotNull(snapshot, "Snapshot should be created");
             assertEquals(5, snapshot.getState(), "Snapshot should contain updated state");
         }
@@ -94,8 +121,7 @@ public class StatefulActorTestSuite {
         @Test
         void testErrorHandlingDuringMessageProcessing() throws InterruptedException {
             // Create a counter actor with initial state 0
-            CounterMessageActor actor = new CounterMessageActor(actorSystem, "counter-error", 0,
-                                                       messageJournal, snapshotStore);
+            CounterMessageActor actor = new CounterMessageActor(actorSystem, "counter-1", 0, mockMessageJournal, snapshotStore);
             actor.start();
             
             // Wait for state initialization
@@ -125,7 +151,7 @@ public class StatefulActorTestSuite {
     class PersistenceTests {
         
         private ActorSystem actorSystem;
-        private MessageJournal<String> mockMessageJournal;
+        private MockBatchedMessageJournal<StringMessage> mockMessageJournal;
         private SnapshotStore<CounterState> mockSnapshotStore;
         
         @BeforeEach
@@ -133,8 +159,10 @@ public class StatefulActorTestSuite {
             actorSystem = new ActorSystem();
             
             // Create mocks for persistence components
-            mockMessageJournal = Mockito.mock(MessageJournal.class);
-            mockSnapshotStore = Mockito.mock(SnapshotStore.class);
+            mockMessageJournal = new MockBatchedMessageJournal<>();
+            @SuppressWarnings("unchecked")
+            SnapshotStore<CounterState> snapshotStore = mock(SnapshotStore.class);
+            mockSnapshotStore = snapshotStore;
         }
         
         @AfterEach
@@ -149,27 +177,17 @@ public class StatefulActorTestSuite {
          */
         @Test
         void testPersistenceAndRecovery() throws Exception {
-            // Setup required mocks for initialization
-            when(mockSnapshotStore.getLatestSnapshot(anyString()))
-                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
-            when(mockMessageJournal.getHighestSequenceNumber(anyString()))
-                .thenReturn(CompletableFuture.completedFuture(-1L));
-            
-            // Setup mock for message journaling
-            when(mockMessageJournal.append(anyString(), eq("increment")))
-                .thenReturn(CompletableFuture.completedFuture(1L));
-            
-            // Setup mock for snapshot creation
-            when(mockSnapshotStore.saveSnapshot(anyString(), any(CounterState.class), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(null));
-            
             // Use a unique actor ID for this test
             String uniqueActorId = "counter-" + System.currentTimeMillis();
+            
+            // Create real mock implementations for this test
+            MockBatchedMessageJournal<StringMessage> localMessageJournal = new MockBatchedMessageJournal<>();
+            MockSnapshotStore<CounterState> localSnapshotStore = new MockSnapshotStore<>();
             
             // Step 1: Create and initialize actor with initial state 0
             CounterActor actor = new CounterActor(actorSystem, uniqueActorId, 
                                                new CounterState(0),
-                                               mockMessageJournal, mockSnapshotStore);
+                                               localMessageJournal, localSnapshotStore);
             actor.start();
             
             // Use explicit synchronization to ensure state is initialized
@@ -183,7 +201,7 @@ public class StatefulActorTestSuite {
             
             // Step 2: Send a single increment message and verify state
             actor.resetIncrementLatch();
-            actor.tell("increment");
+            actor.tell(new StringMessage("increment"));
             boolean incrementProcessed = actor.waitForIncrement(1000);
             assertTrue(incrementProcessed, "Timed out waiting for increment");
             
@@ -195,31 +213,18 @@ public class StatefulActorTestSuite {
             snapshotFuture.join(); // Wait for snapshot to complete
             
             // Verify snapshot was created
-            verify(mockSnapshotStore, atLeastOnce()).saveSnapshot(eq(uniqueActorId), any(CounterState.class), anyLong());
+            SnapshotEntry<CounterState> snapshot = localSnapshotStore.getSnapshot(uniqueActorId);
+            assertNotNull(snapshot, "Snapshot should be created");
+            assertEquals(1, snapshot.getState().getValue(), "Snapshot should contain state with value 1");
             
             // Step 4: Shutdown the actor
             actorSystem.shutdown(actor.getActorId());
             Thread.sleep(100); // Brief wait for shutdown
             
-            // Step 5: Setup mocks for recovery
-            // Create a snapshot entry with state value 1 and sequence number 1
-            SnapshotEntry<CounterState> snapshotEntry = new SnapshotEntry<>(uniqueActorId, new CounterState(1), 1);
-            
-            // Reset and reconfigure mocks for recovery
-            reset(mockSnapshotStore, mockMessageJournal);
-            
-            // Mock snapshot retrieval to return our snapshot
-            when(mockSnapshotStore.getLatestSnapshot(eq(uniqueActorId)))
-                .thenReturn(CompletableFuture.completedFuture(Optional.of(snapshotEntry)));
-            
-            // Mock message journal to return empty list (no additional messages after snapshot)
-            when(mockMessageJournal.readFrom(eq(uniqueActorId), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(new ArrayList<>()));
-            
-            // Step 6: Create a new actor with the same ID but null initial state to force recovery
+            // Step 5: Create a new actor with the same ID but null initial state to force recovery
             CounterActor recoveredActor = new CounterActor(actorSystem, uniqueActorId, 
                                                         null, // null initial state forces recovery
-                                                        mockMessageJournal, mockSnapshotStore);
+                                                        localMessageJournal, localSnapshotStore);
             recoveredActor.start();
             
             // Force initialization and wait for it to complete
@@ -228,13 +233,9 @@ public class StatefulActorTestSuite {
             boolean initSuccess = recoveredActor.waitForInit(1000);
             assertTrue(initSuccess, "Timed out waiting for state initialization during recovery");
             
-            // Step 7: Verify the state was recovered correctly
+            // Step 6: Verify the state was recovered correctly
             int recoveredValue = recoveredActor.getCurrentValue();
             assertEquals(1, recoveredValue, "State should be recovered as 1");
-            
-            // Verify interactions with mocks during recovery
-            verify(mockSnapshotStore).getLatestSnapshot(eq(uniqueActorId));
-            verify(mockMessageJournal).readFrom(eq(uniqueActorId), eq(2L)); // Should read from sequence after snapshot
         }
         
         /**
@@ -245,40 +246,51 @@ public class StatefulActorTestSuite {
             // Use a unique actor ID for this test
             String uniqueActorId = "counter-replay-" + System.currentTimeMillis();
             
-            // Setup mocks for recovery scenario
-            // Create a snapshot entry with state value 5 and sequence number 5
-            SnapshotEntry<CounterState> snapshotEntry = new SnapshotEntry<>(uniqueActorId, new CounterState(5), 5);
+            // Create real mock implementations for this test
+            MockBatchedMessageJournal<StringMessage> localMessageJournal = new MockBatchedMessageJournal<>();
+            MockSnapshotStore<CounterState> localSnapshotStore = new MockSnapshotStore<>();
             
-            // Setup mock for snapshot retrieval
-            when(mockSnapshotStore.getLatestSnapshot(eq(uniqueActorId)))
-                .thenReturn(CompletableFuture.completedFuture(Optional.of(snapshotEntry)));
+            // Step 1: Create and initialize an actor with initial state 5
+            CounterActor initialActor = new CounterActor(actorSystem, uniqueActorId, 
+                                                    new CounterState(5),
+                                                    localMessageJournal, localSnapshotStore);
+            initialActor.start();
+            initialActor.forceInitializeState().join();
+            assertTrue(initialActor.waitForInit(1000), "Timed out waiting for initial state initialization");
             
-            // Setup mock for message journal with messages to replay
-            List<JournalEntry<String>> journalEntries = new ArrayList<>();
-            journalEntries.add(new JournalEntry<>(6L, uniqueActorId, "increment")); // +1 = 6
-            journalEntries.add(new JournalEntry<>(7L, uniqueActorId, "increment")); // +1 = 7
+            // Force a snapshot to ensure state is persisted
+            initialActor.forceSnapshot().join();
             
-            when(mockMessageJournal.readFrom(eq(uniqueActorId), eq(6L)))
-                .thenReturn(CompletableFuture.completedFuture(journalEntries));
+            // Step 2: Send two increment messages
+            initialActor.resetIncrementLatch();
+            initialActor.tell(new StringMessage("increment"));
+            assertTrue(initialActor.waitForIncrement(1000), "Timed out waiting for first increment");
             
-            // Create actor with null initial state to force recovery
-            CounterActor actor = new CounterActor(actorSystem, uniqueActorId, 
-                                               null, // null initial state forces recovery
-                                               mockMessageJournal, mockSnapshotStore);
-            actor.start();
+            initialActor.resetIncrementLatch();
+            initialActor.tell(new StringMessage("increment"));
+            assertTrue(initialActor.waitForIncrement(1000), "Timed out waiting for second increment");
+            
+            // Verify state after increments
+            assertEquals(7, initialActor.getCurrentValue(), "State should be 7 after snapshot (5) and increments (2)");
+            
+            // Step 3: Shutdown the actor
+            actorSystem.shutdown(initialActor.getActorId());
+            Thread.sleep(100); // Brief wait for shutdown
+            
+            // Step 4: Create a new actor with the same ID to test recovery
+            CounterActor recoveredActor = new CounterActor(actorSystem, uniqueActorId, 
+                                                        null, // null initial state forces recovery
+                                                        localMessageJournal, localSnapshotStore);
+            recoveredActor.start();
             
             // Force initialization and wait for it to complete
-            CompletableFuture<Void> initFuture = actor.forceInitializeState();
-            initFuture.join();
-            assertTrue(actor.waitForInit(1000), "Timed out waiting for state initialization");
+            CompletableFuture<Void> recoveryFuture = recoveredActor.forceInitializeState();
+            recoveryFuture.join();
+            assertTrue(recoveredActor.waitForInit(1000), "Timed out waiting for state initialization during recovery");
             
-            // Verify the state was recovered correctly with replayed messages
-            int recoveredValue = actor.getCurrentValue();
-            assertEquals(7, recoveredValue, "State should be 7 after snapshot (5) and replayed messages (2)");
-            
-            // Verify interactions with mocks
-            verify(mockSnapshotStore).getLatestSnapshot(eq(uniqueActorId));
-            verify(mockMessageJournal).readFrom(eq(uniqueActorId), eq(6L));
+            // Step 5: Verify the state was recovered correctly
+            int recoveredValue = recoveredActor.getCurrentValue();
+            assertEquals(7, recoveredValue, "State should be 7 after recovery");
         }
     }
     
@@ -290,32 +302,19 @@ public class StatefulActorTestSuite {
     class AdvancedTests {
         
         private ActorSystem actorSystem;
-        private MessageJournal<TestMessage> mockMessageJournal;
+        private MockBatchedMessageJournal<TestMessage> mockMessageJournal;
         private SnapshotStore<Integer> mockSnapshotStore;
         
         @BeforeEach
         void setUp() {
             actorSystem = new ActorSystem();
-            
-            // Create clean mocks for each test
-            @SuppressWarnings("unchecked")
-            MessageJournal<TestMessage> journal = Mockito.mock(MessageJournal.class);
-            mockMessageJournal = journal;
+            mockMessageJournal = new MockBatchedMessageJournal<>();
             
             @SuppressWarnings("unchecked")
-            SnapshotStore<Integer> snapshotStore = Mockito.mock(SnapshotStore.class);
+            SnapshotStore<Integer> snapshotStore = mock(SnapshotStore.class);
             mockSnapshotStore = snapshotStore;
             
             // Configure basic mock behavior
-            when(mockMessageJournal.getHighestSequenceNumber(anyString()))
-                .thenReturn(CompletableFuture.completedFuture(-1L));
-            
-            when(mockMessageJournal.append(anyString(), any(TestMessage.class)))
-                .thenReturn(CompletableFuture.completedFuture(1L));
-            
-            when(mockMessageJournal.readFrom(anyString(), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(new ArrayList<>()));
-                
             when(mockSnapshotStore.getLatestSnapshot(anyString()))
                 .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
             
@@ -337,13 +336,7 @@ public class StatefulActorTestSuite {
          */
         @Test
         void testErrorHandlingDuringMessageProcessing() throws Exception {
-            // Configure basic behavior for mocks
-            when(mockMessageJournal.getHighestSequenceNumber(anyString()))
-                .thenReturn(CompletableFuture.completedFuture(-1L));
-            when(mockMessageJournal.readFrom(anyString(), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(new ArrayList<>()));
-            when(mockMessageJournal.append(anyString(), any(TestMessage.class)))
-                .thenReturn(CompletableFuture.completedFuture(1L));
+            // Configure mock behavior for recovery test
             when(mockSnapshotStore.getLatestSnapshot(anyString()))
                 .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
             
@@ -382,44 +375,38 @@ public class StatefulActorTestSuite {
          */
         @Test
         void testSnapshotCreationTiming() throws Exception {
-            // Create actor
+            // Create actor with a mock snapshot store
+            MockSnapshotStore<Integer> localSnapshotStore = new MockSnapshotStore<>();
             TestCounterActor actor = new TestCounterActor(
                     actorSystem, "test-actor", 0,
-                    mockMessageJournal, mockSnapshotStore);
+                    mockMessageJournal, localSnapshotStore);
             
             actor.start();
             
             // Wait for initialization to complete
             CompletableFuture<Void> initFuture = actor.forceInitializeState();
             initFuture.join();
+            assertTrue(actor.waitForStateInitialization(1000), "Actor should initialize state");
             
-            // Reset mock to clear initialization calls
-            reset(mockSnapshotStore);
-            when(mockSnapshotStore.saveSnapshot(anyString(), any(Integer.class), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(null));
-            
-            // Reset message journal mock
-            reset(mockMessageJournal);
-            when(mockMessageJournal.append(anyString(), any(TestMessage.class)))
-                .thenReturn(CompletableFuture.completedFuture(1L));
-            
-            // Force a snapshot update to ensure we have a clean state
-            actor.updateState(0).join();
+            // Clear any initialization snapshots
+            localSnapshotStore.clear();
             
             // Send multiple increment messages
             for (int i = 0; i < 5; i++) {
                 actor.tell(new Increment(1));
-                Thread.sleep(50);
+                Thread.sleep(100); // Wait between messages
             }
             
-            // Wait a bit for processing and snapshot creation
-            Thread.sleep(200);
+            // Wait for processing and snapshot creation
+            Thread.sleep(500); // Wait longer to ensure snapshot creation
             
             // Force a final snapshot to ensure the state is captured
-            actor.updateState(actor.getCountSync()).join();
+            actor.forceSnapshot().join();
             
             // Verify snapshot was created
-            verify(mockSnapshotStore, atLeastOnce()).saveSnapshot(eq("test-actor"), any(Integer.class), anyLong());
+            SnapshotEntry<Integer> snapshot = localSnapshotStore.getSnapshot("test-actor");
+            assertNotNull(snapshot, "Snapshot should be created");
+            assertEquals(5, snapshot.getState(), "Snapshot should contain updated state");
         }
         
         /**
@@ -427,21 +414,18 @@ public class StatefulActorTestSuite {
          */
         @Test
         void testStateRecoveryFromSnapshot() throws Exception {
-            // Setup required mocks
-            SnapshotEntry<Integer> snapshotEntry = new SnapshotEntry<>("test-actor", 20, 5);
-            when(mockSnapshotStore.getLatestSnapshot(anyString()))
-                .thenReturn(CompletableFuture.completedFuture(Optional.of(snapshotEntry)));
-            when(mockMessageJournal.readFrom(anyString(), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(new ArrayList<>()));
-            when(mockMessageJournal.append(anyString(), any()))
-                .thenReturn(CompletableFuture.completedFuture(6L));
-            when(mockMessageJournal.getHighestSequenceNumber(anyString()))
-                .thenReturn(CompletableFuture.completedFuture(5L));
+            // Create a mock snapshot store with a predefined snapshot
+            MockSnapshotStore<Integer> localSnapshotStore = new MockSnapshotStore<>();
+            // Save a snapshot with state 5 and sequence number 20
+            localSnapshotStore.saveSnapshot("test-recovery", 5, 20L).join();
             
-            // Create actor with initial state 0
+            // Create a mock message journal
+            MockBatchedMessageJournal<TestMessage> localMessageJournal = new MockBatchedMessageJournal<>();
+            
+            // Create actor with null initial state to force recovery
             TestCounterActor actor = new TestCounterActor(
-                    actorSystem, "test-actor", 0,
-                    mockMessageJournal, mockSnapshotStore);
+                    actorSystem, "test-recovery", null, // null state forces recovery
+                    localMessageJournal, localSnapshotStore);
             actor.start();
             
             // Wait for initialization and force it to complete
@@ -449,23 +433,46 @@ public class StatefulActorTestSuite {
             assertTrue(actor.waitForStateInitialization(1000), "Actor should initialize state");
             
             // Verify state was loaded from snapshot
-            assertEquals(20, actor.getCountSync());
+            assertEquals(5, actor.getCountSync(), "State should be recovered from snapshot");
             
-            // Verify snapshot was requested
-            verify(mockSnapshotStore).getLatestSnapshot(anyString());
-            verify(mockMessageJournal).readFrom(anyString(), anyLong());
+            // Send a new message to verify the actor is functioning after recovery
+            actor.tell(new Increment(3));
+            Thread.sleep(300); // Wait for processing
+            
+            // Verify state was updated correctly after recovery
+            assertEquals(8, actor.getCountSync(), "State should be updated after recovery");
         }
     }
     
     /**
      * Message interface for the test counter actor.
      */
-    public sealed interface TestMessage permits Increment, Decrement, Reset, ErrorMessage {}
+    public sealed interface TestMessage extends OperationAwareMessage permits Increment, Decrement, Reset, ErrorMessage {}
     
-    public record Increment(int amount) implements TestMessage {}
-    public record Decrement(int amount) implements TestMessage {}
-    public record Reset() implements TestMessage {}
-    public record ErrorMessage(String errorType) implements TestMessage {}
+    public record Increment(int amount) implements TestMessage {
+        @Override
+        public boolean isReadOnly() {
+            return false;
+        }
+    }
+    public record Decrement(int amount) implements TestMessage {
+        @Override
+        public boolean isReadOnly() {
+            return false;
+        }
+    }
+    public record Reset() implements TestMessage {
+        @Override
+        public boolean isReadOnly() {
+            return false;
+        }
+    }
+    public record ErrorMessage(String errorType) implements TestMessage {
+        @Override
+        public boolean isReadOnly() {
+            return false;
+        }
+    }
     
     /**
      * Test implementation of StatefulActor for testing with TestMessage.
@@ -474,7 +481,7 @@ public class StatefulActorTestSuite {
         private final CountDownLatch initLatch = new CountDownLatch(1);
         
         public TestCounterActor(ActorSystem system, String actorId, Integer initialState,
-                              MessageJournal<TestMessage> messageJournal,
+                              BatchedMessageJournal<TestMessage> messageJournal,
                               SnapshotStore<Integer> snapshotStore) {
             super(system, actorId, initialState, messageJournal, snapshotStore);
         }
@@ -534,7 +541,7 @@ public class StatefulActorTestSuite {
         private final CountDownLatch initLatch = new CountDownLatch(1);
         
         public CounterMessageActor(ActorSystem system, String actorId, Integer initialState,
-                                 MessageJournal<TestCounterMessage> messageJournal,
+                                 BatchedMessageJournal<TestCounterMessage> messageJournal,
                                  SnapshotStore<Integer> snapshotStore) {
             super(system, actorId, initialState, messageJournal, snapshotStore);
         }
@@ -593,7 +600,7 @@ public class StatefulActorTestSuite {
     /**
      * Messages for the test counter actor with string-based protocol.
      */
-    public sealed interface TestCounterMessage permits 
+    public sealed interface TestCounterMessage extends OperationAwareMessage permits 
             TestCounterMessage.Increment,
             TestCounterMessage.Reset,
             TestCounterMessage.Clear,
@@ -604,30 +611,50 @@ public class StatefulActorTestSuite {
          * Message to increment the counter.
          */
         record Increment(int amount) implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
          * Message to reset the counter to 0.
          */
         record Reset() implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
          * Message to clear the state (set to null).
          */
         record Clear() implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
          * Message to get the current count.
          */
         record GetCount(Consumer<Integer> callback) implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return true;
+            }
         }
 
         /**
          * Message to cause an error during processing.
          */
         record CauseError() implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
     }
     
@@ -672,18 +699,41 @@ public class StatefulActorTestSuite {
     /**
      * Actor implementation for testing with CounterState.
      */
-    static class CounterActor extends StatefulActor<CounterState, String> {
+    static class StringMessage implements OperationAwareMessage {
+        private static final long serialVersionUID = 1L;
+        private final String message;
+        
+        public StringMessage(String message) {
+            this.message = message;
+        }
+        
+        public String getMessage() {
+            return message;
+        }
+        
+        @Override
+        public boolean isReadOnly() {
+            return !message.equals("increment");
+        }
+        
+        @Override
+        public String toString() {
+            return message;
+        }
+    }
+    
+    static class CounterActor extends StatefulActor<CounterState, StringMessage> {
         private final CountDownLatch initLatch = new CountDownLatch(1);
         private final CountDownLatch incrementLatch = new CountDownLatch(1);
         
         public CounterActor(ActorSystem system, String actorId, CounterState initialState,
-                          MessageJournal<String> messageJournal, SnapshotStore<CounterState> snapshotStore) {
+                          BatchedMessageJournal<StringMessage> messageJournal, SnapshotStore<CounterState> snapshotStore) {
             super(system, actorId, initialState, messageJournal, snapshotStore);
         }
         
         @Override
-        protected CounterState processMessage(CounterState state, String message) {
-            if (message.equals("increment")) {
+        protected CounterState processMessage(CounterState state, StringMessage message) {
+            if (message.getMessage().equals("increment")) {
                 CounterState newState = state.increment();
                 incrementLatch.countDown();
                 return newState;

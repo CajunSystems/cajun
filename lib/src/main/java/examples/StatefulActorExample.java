@@ -16,10 +16,9 @@ import systems.cajun.ActorSystem;
 import systems.cajun.FunctionalStatefulActor;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
-import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
-import systems.cajun.persistence.JournalEntry;
-import systems.cajun.persistence.SnapshotEntry;
+// No unused imports
 import systems.cajun.runtime.persistence.PersistenceFactory;
 
 /**
@@ -88,7 +87,7 @@ public class StatefulActorExample {
         logger.info("Starting simple counter example with in-memory persistence");
 
         // Create a counter actor with default persistence
-        CounterActor counter = new CounterActor(system, "counter-1", 0, PersistenceFactory.createFileMessageJournal());
+        CounterActor counter = new CounterActor(system, "counter-1", 0, PersistenceFactory.createBatchedFileMessageJournal());
         
         // Start the actor and wait for state initialization to complete
         counter.start();
@@ -145,7 +144,7 @@ public class StatefulActorExample {
         logger.info("Starting counter example with file-based persistence");
 
         // Create message journal and snapshot store for persistence
-        MessageJournal<CounterMessage> messageJournal = PersistenceFactory.createFileMessageJournal(stateDir);
+        BatchedMessageJournal<CounterMessage> messageJournal = PersistenceFactory.createBatchedFileMessageJournal(stateDir);
         SnapshotStore<Integer> snapshotStore = PersistenceFactory.createFileSnapshotStore(stateDir);
 
         // Create a counter actor with initial state 0 and file-based persistence
@@ -270,7 +269,7 @@ public class StatefulActorExample {
                 actorId, 
                 initialStates[i], 
                 actions[i],
-                PersistenceFactory.createFileMessageJournal(),
+                PersistenceFactory.createBatchedFileMessageJournal(),
                 PersistenceFactory.createFileSnapshotStore()
             );
             
@@ -316,7 +315,7 @@ public class StatefulActorExample {
      * IMPORTANT: This interface and all its implementations must implement java.io.Serializable
      * for persistence to work correctly. Each implementation should also define a serialVersionUID.
      */
-    public sealed interface CounterMessage extends java.io.Serializable permits 
+    public sealed interface CounterMessage extends systems.cajun.persistence.OperationAwareMessage permits 
             CounterMessage.Increment, 
             CounterMessage.Reset, 
             CounterMessage.GetCount,
@@ -329,6 +328,11 @@ public class StatefulActorExample {
          */
         record Increment(int amount) implements CounterMessage {
             private static final long serialVersionUID = 1L;
+            
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
@@ -336,6 +340,11 @@ public class StatefulActorExample {
          */
         record Reset() implements CounterMessage {
             private static final long serialVersionUID = 1L;
+            
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
@@ -356,6 +365,11 @@ public class StatefulActorExample {
             private static final long serialVersionUID = 1L;
             // Consumer is not Serializable by default, so we mark it as transient
             private transient java.util.function.Consumer<Integer> callback;
+            
+            @Override
+            public boolean isReadOnly() {
+                return true;
+            }
             
             public GetCount(java.util.function.Consumer<Integer> callback) {
                 this.callback = callback;
@@ -380,6 +394,11 @@ public class StatefulActorExample {
          */
         record ThrowError() implements CounterMessage {
             private static final long serialVersionUID = 1L;
+            
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
     }
 
@@ -395,14 +414,14 @@ public class StatefulActorExample {
         }
 
         public CounterActor(ActorSystem system, String actorId, Integer initialState, 
-                            MessageJournal<CounterMessage> messageJournal) {
+                            BatchedMessageJournal<CounterMessage> messageJournal) {
             super(system, actorId, initialState, messageJournal);
             // Configure error handling strategy
             withSupervisionStrategy(SupervisionStrategy.RESTART);
         }
         
         public CounterActor(ActorSystem system, String actorId, Integer initialState, 
-                            MessageJournal<CounterMessage> messageJournal,
+                            BatchedMessageJournal<CounterMessage> messageJournal,
                             SnapshotStore<Integer> snapshotStore) {
             super(system, actorId, initialState, messageJournal, snapshotStore);
             // Configure error handling strategy

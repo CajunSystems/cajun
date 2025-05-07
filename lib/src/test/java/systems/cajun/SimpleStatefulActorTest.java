@@ -23,7 +23,7 @@ import org.mockito.Mockito;
 
 
 import systems.cajun.mocks.MockActorSystem;
-import systems.cajun.persistence.MessageJournal;
+import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 
 /**
@@ -33,7 +33,7 @@ import systems.cajun.persistence.SnapshotStore;
 class SimpleStatefulActorTest {
 
     private MockActorSystem mockActorSystem;
-    private MessageJournal<TestCounterMessage> mockMessageJournal;
+    private BatchedMessageJournal<TestCounterMessage> mockMessageJournal;
     private SnapshotStore<Integer> mockSnapshotStore;
 
     @BeforeEach
@@ -43,7 +43,7 @@ class SimpleStatefulActorTest {
         
         // Create mocks for persistence components with proper type parameters
         @SuppressWarnings("unchecked")
-        MessageJournal<TestCounterMessage> journal = mock(MessageJournal.class);
+        BatchedMessageJournal<TestCounterMessage> journal = mock(BatchedMessageJournal.class);
         mockMessageJournal = journal;
         
         @SuppressWarnings("unchecked")
@@ -156,7 +156,7 @@ class SimpleStatefulActorTest {
     /**
      * Messages for the test counter actor.
      */
-    public sealed interface TestCounterMessage permits
+    public sealed interface TestCounterMessage extends systems.cajun.persistence.OperationAwareMessage permits
             TestCounterMessage.Increment,
             TestCounterMessage.Reset,
             TestCounterMessage.Clear {
@@ -165,18 +165,30 @@ class SimpleStatefulActorTest {
          * Message to increment the counter.
          */
         record Increment(int amount) implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
          * Message to reset the counter to 0.
          */
         record Reset() implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
 
         /**
          * Message to clear the state (set to null).
          */
         record Clear() implements TestCounterMessage {
+            @Override
+            public boolean isReadOnly() {
+                return false;
+            }
         }
     }
 
@@ -213,7 +225,7 @@ class SimpleStatefulActorTest {
     public static class TestCounterActor extends StatefulActor<Integer, TestCounterMessage> {
 
         public TestCounterActor(MockActorSystem mockSystem, String actorId, Integer initialState,
-                MessageJournal<TestCounterMessage> messageJournal,
+                BatchedMessageJournal<TestCounterMessage> messageJournal,
                 SnapshotStore<Integer> snapshotStore) {
             // We need to pass a real ActorSystem to the parent constructor
             super(new ActorSystem(), actorId, initialState, messageJournal, snapshotStore);

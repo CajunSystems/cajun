@@ -181,7 +181,7 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
         return CompletableFuture.supplyAsync(() -> getHighestSequenceNumberSync(actorId));
     }
     
-    private long getHighestSequenceNumberSync(String actorId) {
+    protected long getHighestSequenceNumberSync(String actorId) {
         try {
             Path actorJournalDir = getActorJournalDir(actorId);
             if (!Files.exists(actorJournalDir)) {
@@ -210,10 +210,20 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
         }
     }
     
-    private Path getActorJournalDir(String actorId) {
+    protected Path getActorJournalDir(String actorId) {
         // Sanitize actor ID to be a valid directory name
         String sanitizedId = actorId.replaceAll("[^a-zA-Z0-9_.-]", "_");
         return journalDir.resolve(sanitizedId);
+    }
+    
+    /**
+     * Gets the sequence counters map.
+     * This is used by subclasses to access the sequence counters.
+     *
+     * @return The sequence counters map
+     */
+    protected Map<String, AtomicLong> getSequenceCounters() {
+        return sequenceCounters;
     }
     
     @Override
