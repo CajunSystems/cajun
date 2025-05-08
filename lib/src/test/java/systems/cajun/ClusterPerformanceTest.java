@@ -63,10 +63,28 @@ public class ClusterPerformanceTest {
 
         if (node2System != null) {
             try {
-                node2System.stop().get(10, TimeUnit.SECONDS);
+                // First ensure the metadata store is properly connected
+                MetadataStore metadataStore = node2System.getMetadataStore();
+                MessagingSystem messagingSystem = node2System.getMessagingSystem();
+                
+                // Gracefully stop components in order
+                CompletableFuture<Void> stopFuture = node2System.stop();
+                stopFuture.get(10, TimeUnit.SECONDS);
                 logger.info("Node 2 stopped successfully");
             } catch (Exception e) {
                 logger.error("Error stopping node 2: {}", e.getMessage());
+                
+                // Fallback cleanup if the main stop method failed
+                try {
+                    // Try to stop individual components if the main stop failed
+                    MessagingSystem messagingSystem = node2System.getMessagingSystem();
+                    if (messagingSystem != null) {
+                        messagingSystem.stop().get(5, TimeUnit.SECONDS);
+                        logger.info("Node 2 messaging system stopped successfully");
+                    }
+                } catch (Exception ex) {
+                    logger.error("Error during fallback cleanup of node 2: {}", ex.getMessage());
+                }
             }
         }
     }
@@ -271,23 +289,19 @@ public class ClusterPerformanceTest {
             for (int i = 0; i < processorsPerPath - 1; i++) {
                 // Get the actor reference from the appropriate system
                 ClusterActorSystem system = (i % 2 == 0) ? system1 : system2;
-                WorkflowProcessorActor processor = (WorkflowProcessorActor) system.getActor(pathProcessors[i]);
-                if (processor != null) {
-                    processor.setNextProcessor(pathProcessors[i + 1]);
-                }
+                Optional<WorkflowProcessorActor> processorOpt = Optional.ofNullable((WorkflowProcessorActor) system.getActor(pathProcessors[i]));
+                int finalI = i;
+                processorOpt.ifPresent(processor -> processor.setNextProcessor(pathProcessors[finalI + 1]));
             }
 
             // Connect the last processor to the aggregator
             ClusterActorSystem lastSystem = ((processorsPerPath - 1) % 2 == 0) ? system1 : system2;
-            WorkflowProcessorActor lastProcessor = (WorkflowProcessorActor) lastSystem.getActor(pathProcessors[processorsPerPath - 1]);
-            if (lastProcessor != null) {
-                lastProcessor.setNextProcessor(aggregatorPid);
-            }
+            Optional<WorkflowProcessorActor> lastProcessorOpt = Optional.ofNullable((WorkflowProcessorActor) lastSystem.getActor(pathProcessors[processorsPerPath - 1]));
+            lastProcessorOpt.ifPresent(lastProcessor -> lastProcessor.setNextProcessor(aggregatorPid));
 
             // Connect source to the first processor of this path
-            if (source != null) {
-                source.addPathProcessor(pathId, pathProcessors[0]);
-            }
+            Optional<WorkflowSourceActor> sourceOpt = Optional.ofNullable((WorkflowSourceActor) system1.getActor(sourcePid));
+            sourceOpt.ifPresent(sourceProcessor -> sourceProcessor.addPathProcessor(pathId, pathProcessors[0]));
         }
 
         logger.info("Workflow setup complete");

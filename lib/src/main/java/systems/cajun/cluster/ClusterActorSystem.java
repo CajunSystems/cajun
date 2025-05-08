@@ -440,7 +440,18 @@ public class ClusterActorSystem extends ActorSystem {
     }
 
     /**
-     * Reassigns actors from a departed node.
+     * Returns the actor with the specified ID, or Optional.empty() if no such actor exists.
+     * 
+     * @param pid The PID of the actor to get
+     * @return An Optional containing the actor, or Optional.empty() if not found
+     */
+    public Optional<Actor<?>> getActorOptional(Pid pid) {
+        return Optional.ofNullable(getActor(pid));
+    }
+
+    /**
+     * Reassigns actors from a departed node to available nodes in the cluster.
+     * Ensures idempotency and handles race conditions gracefully.
      *
      * @param departedNodeId The ID of the departed node
      */

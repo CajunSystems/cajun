@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import systems.cajun.metrics.ActorMetrics;
+import systems.cajun.metrics.MetricsRegistry;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.JournalEntry;
 import systems.cajun.persistence.SnapshotEntry;
@@ -37,6 +39,8 @@ public class StatefulActorPerformanceTest {
     @BeforeEach
     void setUp() {
         actorSystem = new ActorSystem();
+        // Reset metrics registry before each test
+        MetricsRegistry.resetAllMetrics();
     }
 
     @AfterEach
@@ -94,11 +98,23 @@ public class StatefulActorPerformanceTest {
         double elapsedSeconds = (endTime - startTime) / 1_000_000_000.0;
         double messagesPerSecond = MESSAGE_COUNT / elapsedSeconds;
         
+        // Get metrics for the actor
+        ActorMetrics metrics = actor.getMetrics();
+        
         logger.info("StatefulActor Single Actor Performance Test Results:");
         logger.info("Messages Sent: {}", MESSAGE_COUNT);
         logger.info("Elapsed Time: {} seconds", elapsedSeconds);
         logger.info("Throughput: {} messages/second", String.format("%.2f", messagesPerSecond));
         logger.info("Final Counter Value: {}", actor.getCurrentValue());
+        
+        // Log metrics information
+        logger.info("Metrics - Message Count: {}", metrics.getMessageCount());
+        logger.info("Metrics - State Changes: {}", metrics.getStateChangeCount());
+        logger.info("Metrics - Snapshots Taken: {}", metrics.getSnapshotCount());
+        logger.info("Metrics - Errors: {}", metrics.getErrorCount());
+        logger.info("Metrics - Avg Processing Time: {} ms", String.format("%.3f", metrics.getAverageProcessingTimeMs()));
+        logger.info("Metrics - Min Processing Time: {} ns", metrics.getMinProcessingTimeNs());
+        logger.info("Metrics - Max Processing Time: {} ns", metrics.getMaxProcessingTimeNs());
     }
     
     /**
@@ -169,9 +185,34 @@ public class StatefulActorPerformanceTest {
         logger.info("Elapsed Time: {} seconds", elapsedSeconds);
         logger.info("Throughput: {} messages/second", String.format("%.2f", messagesPerSecond));
         
+        // Log metrics from MetricsRegistry
+        logger.info("Total Message Count (from registry): {}", MetricsRegistry.getTotalMessageCount());
+        logger.info("Total State Changes (from registry): {}", MetricsRegistry.getTotalStateChangeCount());
+        logger.info("Total Snapshots (from registry): {}", MetricsRegistry.getTotalSnapshotCount());
+        logger.info("Total Errors (from registry): {}", MetricsRegistry.getTotalErrorCount());
+        logger.info("Average Processing Time (from registry): {} ms", String.format("%.3f", MetricsRegistry.getAverageProcessingTimeMs()));
+        
+        // Log actor with highest message count
+        ActorMetrics highestMsgCountActor = MetricsRegistry.getActorWithHighestMessageCount();
+        if (highestMsgCountActor != null) {
+            logger.info("Actor with highest message count: {} (count: {})", 
+                      highestMsgCountActor.getActorId(), highestMsgCountActor.getMessageCount());
+        }
+        
+        // Log actor with highest processing time
+        ActorMetrics slowestActor = MetricsRegistry.getActorWithHighestAverageProcessingTime();
+        if (slowestActor != null) {
+            logger.info("Actor with highest avg processing time: {} ({} ms)", 
+                      slowestActor.getActorId(), String.format("%.3f", slowestActor.getAverageProcessingTimeMs()));
+        }
+        
         // Log individual actor results
         for (int i = 0; i < ACTOR_COUNT; i++) {
-            logger.info("Actor {}: Final Counter Value: {}", i, actors.get(i).getCurrentValue());
+            CounterActor actor = actors.get(i);
+            ActorMetrics metrics = actor.getMetrics();
+            
+            logger.info("Actor {}: Final Counter Value: {}, Avg Processing Time: {} ms", 
+                      i, actor.getCurrentValue(), String.format("%.3f", metrics.getAverageProcessingTimeMs()));
         }
     }
     
@@ -185,6 +226,9 @@ public class StatefulActorPerformanceTest {
         final int[] SNAPSHOT_INTERVALS = {100, 1000, 10000}; // Different snapshot intervals to test
         
         for (int snapshotInterval : SNAPSHOT_INTERVALS) {
+            // Reset metrics registry before each snapshot interval test
+            MetricsRegistry.resetAllMetrics();
+            
             // Create in-memory persistence components
             InMemoryBatchedMessageJournal<CounterMessage> messageJournal = new InMemoryBatchedMessageJournal<>();
             InMemorySnapshotStore<CounterState> snapshotStore = new InMemorySnapshotStore<>();
@@ -225,13 +269,19 @@ public class StatefulActorPerformanceTest {
             double elapsedSeconds = (endTime - startTime) / 1_000_000_000.0;
             double messagesPerSecond = MESSAGE_COUNT / elapsedSeconds;
             
+            // Get metrics for the actor
+            ActorMetrics metrics = actor.getMetrics();
+            
             logger.info("StatefulActor Snapshot Strategy Performance Test Results:");
             logger.info("Snapshot Interval: {} messages", snapshotInterval);
             logger.info("Messages Sent: {}", MESSAGE_COUNT);
             logger.info("Elapsed Time: {} seconds", elapsedSeconds);
             logger.info("Throughput: {} messages/second", String.format("%.2f", messagesPerSecond));
             logger.info("Final Counter Value: {}", actor.getCurrentValue());
-            logger.info("Number of Snapshots Taken: {}", snapshotStore.getSnapshotCount("counter-snapshot-" + snapshotInterval));
+            logger.info("Number of Snapshots Taken (store): {}", snapshotStore.getSnapshotCount("counter-snapshot-" + snapshotInterval));
+            logger.info("Number of Snapshots Taken (metrics): {}", metrics.getSnapshotCount());
+            logger.info("Average Processing Time: {} ms", String.format("%.3f", metrics.getAverageProcessingTimeMs()));
+            logger.info("State Changes: {}", metrics.getStateChangeCount());
             logger.info("-----------------------------------------------------");
         }
     }
@@ -253,6 +303,7 @@ public class StatefulActorPerformanceTest {
         messageJournal.setMaxBatchDelayMs(50);
         
         // Step 1: Create first actor and populate state
+        ActorMetrics initialActorMetrics;
         {
             CounterActor actor = new CounterActor(actorSystem, "counter-recovery", 
                                                 new CounterState(0), messageJournal, snapshotStore);
@@ -281,12 +332,22 @@ public class StatefulActorPerformanceTest {
             // Force a final snapshot
             actor.forceSnapshot().join();
             
+            // Save metrics before stopping
+            initialActorMetrics = actor.getMetrics();
+            
             // Stop the actor
             actor.stop();
             
             logger.info("Initial actor stopped after processing {} messages", MESSAGE_COUNT);
             logger.info("Final Counter Value: {}", actor.getCurrentValue());
+            logger.info("Initial Actor Metrics - Messages: {}, State Changes: {}, Snapshots: {}", 
+                      initialActorMetrics.getMessageCount(), 
+                      initialActorMetrics.getStateChangeCount(),
+                      initialActorMetrics.getSnapshotCount());
         }
+        
+        // Reset metrics registry before recovery
+        MetricsRegistry.resetAllMetrics();
         
         // Step 2: Create a new actor with the same ID and measure recovery time
         long startTime = System.nanoTime();
@@ -302,11 +363,17 @@ public class StatefulActorPerformanceTest {
         long endTime = System.nanoTime();
         
         double recoveryTimeSeconds = (endTime - startTime) / 1_000_000_000.0;
+        ActorMetrics recoveryMetrics = recoveredActor.getMetrics();
         
         logger.info("StatefulActor Recovery Performance Test Results:");
         logger.info("Messages to Recover: {}", MESSAGE_COUNT);
         logger.info("Recovery Time: {} seconds", recoveryTimeSeconds);
         logger.info("Recovered Counter Value: {}", recoveredActor.getCurrentValue());
+        logger.info("Recovery Metrics - Messages Processed: {}", recoveryMetrics.getMessageCount());
+        logger.info("Recovery Metrics - State Changes: {}", recoveryMetrics.getStateChangeCount());
+        logger.info("Recovery Metrics - Snapshots: {}", recoveryMetrics.getSnapshotCount());
+        logger.info("Messages Processed Per Second During Recovery: {} msg/s", 
+                  String.format("%.2f", recoveryMetrics.getMessageCount() / recoveryTimeSeconds));
         
         // Verify recovery was successful
         assertEquals(MESSAGE_COUNT, recoveredActor.getCurrentValue(), 

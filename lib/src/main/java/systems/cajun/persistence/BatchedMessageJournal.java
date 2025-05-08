@@ -43,4 +43,13 @@ public interface BatchedMessageJournal<M> extends MessageJournal<M> {
      * @return A CompletableFuture that completes when the flush is done
      */
     CompletableFuture<Void> flush();
+    
+    /**
+     * Checks if the journal is healthy and operational.
+     * 
+     * @return true if the journal is healthy, false otherwise
+     */
+    default boolean isHealthy() {
+        return true;
+    }
 }

@@ -43,4 +43,13 @@ public interface SnapshotStore<S> {
      * Closes the snapshot store, releasing any resources.
      */
     void close();
+    
+    /**
+     * Checks if the snapshot store is healthy and operational.
+     * 
+     * @return true if the snapshot store is healthy, false otherwise
+     */
+    default boolean isHealthy() {
+        return true;
+    }
 }

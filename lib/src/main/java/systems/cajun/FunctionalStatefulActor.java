@@ -1,5 +1,6 @@
 package systems.cajun;
 
+import systems.cajun.metrics.ActorMetrics;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.OperationAwareMessage;
 import systems.cajun.persistence.SnapshotStore;
@@ -130,6 +131,11 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
             @Override
             protected S processMessage(S state, M message) {
                 return action.apply(state, message);
+            }
+            
+            @Override
+            public ActorMetrics getMetrics() {
+                return super.getMetrics();
             }
         };
     }

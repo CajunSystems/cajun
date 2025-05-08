@@ -1,10 +1,7 @@
 package systems.cajun;
 
 import java.lang.reflect.InvocationTargetException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -73,6 +70,16 @@ public class ActorSystem {
      */
     public Map<String, Actor<?>> getActors() {
         return Map.copyOf(actors);
+    }
+
+    /**
+     * Returns the actor with the specified ID, or Optional.empty() if no such actor exists.
+     * 
+     * @param pid The PID of the actor to get
+     * @return An Optional containing the actor, or Optional.empty() if not found
+     */
+    public Optional<Actor<?>> getActorOptional(Pid pid) {
+        return Optional.ofNullable(actors.get(pid.actorId()));
     }
 
     /**

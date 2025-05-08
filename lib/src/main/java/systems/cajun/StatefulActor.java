@@ -13,6 +13,8 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import systems.cajun.metrics.ActorMetrics;
+import systems.cajun.metrics.MetricsRegistry;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.JournalEntry;
 import systems.cajun.persistence.SnapshotEntry;
@@ -61,6 +63,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     private boolean stateChanged = false;
     private long lastSnapshotTime = 0;
     private int changesSinceLastSnapshot = 0;
+    
+    // Metrics for this actor
+    private final ActorMetrics metrics;
     
     // Dedicated thread pool for persistence operations
     private final ExecutorService persistenceExecutor;
@@ -157,6 +162,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         this.snapshotStore = snapshotStore;
         this.actorId = getActorId();
         this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
+        this.metrics = new ActorMetrics(actorId);
     }
 
     /**
@@ -194,6 +200,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         this.snapshotStore = snapshotStore;
         this.actorId = actorId;
         this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
+        this.metrics = new ActorMetrics(actorId);
     }
     
     /**
@@ -220,6 +227,11 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     @Override
     protected void preStart() {
         super.preStart();
+        
+        // Register metrics
+        metrics.register();
+        MetricsRegistry.registerActorMetrics(actorId, metrics);
+        
         // Initialize state asynchronously to avoid blocking the actor thread
         initializeState().thenRun(() -> {
             logger.debug("Actor {} state initialization completed", getActorId());
@@ -227,6 +239,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         }).exceptionally(ex -> {
             logger.error("Actor {} state initialization failed", getActorId(), ex);
             stateInitializationFuture.completeExceptionally(ex);
+            metrics.errorOccurred();
             return null;
         });
     }
@@ -259,6 +272,10 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     protected void postStop() {
         super.postStop();
         
+        // Unregister metrics
+        metrics.unregister();
+        MetricsRegistry.unregisterActorMetrics(actorId);
+        
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
             if (stateChanged) {
@@ -268,6 +285,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     takeSnapshot().join();
                 } catch (Exception e) {
                     logger.error("Error taking snapshot for actor {}", actorId, e);
+                    metrics.errorOccurred();
                 }
             }
         }
@@ -354,10 +372,15 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
             }).exceptionally(ex -> {
                 logger.error("Error initializing state for actor {}", getActorId(), ex);
                 handleException(message, ex);
+                metrics.errorOccurred();
                 return null;
             });
             return;
         }
+
+        // Record that a message was received
+        metrics.messageReceived();
+        long startTime = System.nanoTime();
 
         // First, journal the message
         messageJournal.append(actorId, message)
@@ -376,6 +399,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         stateChanged = true;
                         changesSinceLastSnapshot++;
                         
+                        // Record state change in metrics
+                        metrics.stateChanged();
+                        
                         // Take snapshots using adaptive strategy
                         long now = System.currentTimeMillis();
                         if (now - lastSnapshotTime > snapshotIntervalMs || 
@@ -383,18 +409,27 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                             takeSnapshot().thenRun(() -> {
                                 stateChanged = false;
                                 changesSinceLastSnapshot = 0;
+                                
+                                // Record snapshot in metrics
+                                metrics.snapshotTaken();
                             });
                             lastSnapshotTime = now;
                         }
                     }
+                    
+                    // Record message processing time
+                    long processingTime = System.nanoTime() - startTime;
+                    metrics.messageProcessed(processingTime);
                 } catch (Exception e) {
                     logger.error("Error processing message in actor {}", actorId, e);
                     handleException(message, e);
+                    metrics.errorOccurred();
                 }
             })
             .exceptionally(e -> {
                 logger.error("Error journaling message for actor {}", actorId, e);
                 handleException(message, new ActorException("Failed to journal message", e));
+                metrics.errorOccurred();
                 return null;
             });
     }
@@ -414,7 +449,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      *
      * @return The current state
      */
-    protected State getState() {
+    public State getState() {
         return currentState.get();
     }
 
@@ -425,24 +460,24 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @return A CompletableFuture that completes when the state has been snapshotted
      */
     protected CompletableFuture<Void> updateState(State newState) {
-        currentState.set(newState);
-        stateChanged = true;
-        // Run snapshot asynchronously on the persistence thread pool
-        return runAsync(() -> takeSnapshot());
-    }
-
-    /**
-     * Updates the state by applying a function to the current state and takes a snapshot.
-     *
-     * @param updateFunction A function that takes the current state and returns a new state
-     * @return A CompletableFuture that completes when the state has been snapshotted
-     */
-    protected CompletableFuture<Void> updateState(Function<State, State> updateFunction) {
-        State newState = updateFunction.apply(currentState.get());
-        currentState.set(newState);
-        stateChanged = true;
-        // Run snapshot asynchronously on the persistence thread pool
-        return runAsync(() -> takeSnapshot());
+        State oldState = currentState.get();
+        if (newState != oldState && (newState == null || !newState.equals(oldState))) {
+            currentState.set(newState);
+            stateChanged = true;
+            changesSinceLastSnapshot++;
+            
+            // Record state change in metrics
+            metrics.stateChanged();
+            
+            return takeSnapshot().thenRun(() -> {
+                stateChanged = false;
+                changesSinceLastSnapshot = 0;
+                
+                // Record snapshot in metrics
+                metrics.snapshotTaken();
+            });
+        }
+        return CompletableFuture.completedFuture(null);
     }
 
     /**
@@ -494,7 +529,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 })
                 .thenApply(v -> null));
     }
-    
+
     /**
      * Attempts to recover the actor's state from the latest snapshot and by replaying messages from the journal.
      *
@@ -545,7 +580,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     return false;
                 });
     }
-    
+
     /**
      * Replays messages from the journal starting from the specified sequence number.
      *
@@ -614,62 +649,37 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     public CompletableFuture<Void> forceInitializeState() {
         return stateInitializationFuture;
     }
-    
+
     /**
      * Takes a snapshot of the current state and persists it to the snapshot store.
      * Also truncates the message journal to remove messages that are included in the snapshot.
      *
      * @return A CompletableFuture that completes when the snapshot has been taken
      */
-    /**
-     * Helper method to run a task asynchronously on the persistence thread pool.
-     * 
-     * @param supplier The task to run
-     * @return A CompletableFuture that completes when the task completes
-     */
-    private <T> CompletableFuture<T> runAsync(Supplier<CompletableFuture<T>> supplier) {
-        CompletableFuture<T> future = new CompletableFuture<>();
-        CompletableFuture.runAsync(() -> {
-            try {
-                supplier.get().thenAccept(future::complete)
-                       .exceptionally(e -> {
-                           future.completeExceptionally(e);
-                           return null;
-                       });
-            } catch (Exception e) {
-                future.completeExceptionally(e);
-            }
-        }, persistenceExecutor);
-        return future;
-    }
-    
     private CompletableFuture<Void> takeSnapshot() {
-        State state = currentState.get();
-        long sequence = lastProcessedSequence.get();
-        
-        if (state == null) {
-            logger.debug("Not taking snapshot for actor {} as state is null", actorId);
+        if (!stateInitialized) {
             return CompletableFuture.completedFuture(null);
         }
         
+        State state = currentState.get();
+        if (state == null) {
+            logger.debug("Not taking snapshot for actor {} because state is null", actorId);
+            return CompletableFuture.completedFuture(null);
+        }
+        
+        long sequence = lastProcessedSequence.get();
         logger.debug("Taking snapshot for actor {} at sequence {}", actorId, sequence);
         
-        // Use the persistence thread pool for the snapshot operation
-        return runAsync(() -> snapshotStore.saveSnapshot(actorId, state, sequence)
-                .thenCompose(v -> {
-                    // Truncate the journal to remove messages that are included in the snapshot
-                    // We keep the last message to ensure continuity
-                    if (sequence > 0) {
-                        return messageJournal.truncateBefore(actorId, sequence);
-                    } else {
-                        return CompletableFuture.completedFuture(null);
-                    }
+        return snapshotStore.saveSnapshot(actorId, state, sequence)
+                .thenRun(() -> {
+                    logger.debug("Snapshot taken for actor {} at sequence {}", actorId, sequence);
+                    metrics.snapshotTaken();
                 })
                 .exceptionally(e -> {
                     logger.error("Error taking snapshot for actor {}", actorId, e);
-                    stateChanged = true; // Mark as changed so we'll try again later
+                    metrics.errorOccurred();
                     return null;
-                }));
+                });
     }
 
     /**
@@ -706,7 +716,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     return snapshotStore.saveSnapshot(actorId, initialState, -1);
                 }));
     }
-    
+
     /**
      * Gets the sequence number of the last processed message.
      *
@@ -715,7 +725,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     protected long getLastProcessedSequence() {
         return lastProcessedSequence.get();
     }
-    
+
     /**
      * Forces a snapshot to be taken immediately.
      *
@@ -728,7 +738,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         changesSinceLastSnapshot = 0; // Reset changes counter
         return result;
     }
-    
+
     /**
      * Gets the persistence executor service used for asynchronous state operations.
      *
@@ -737,7 +747,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     protected ExecutorService getPersistenceExecutor() {
         return persistenceExecutor;
     }
-    
+
     /**
      * Configures the adaptive snapshot strategy.
      *
@@ -754,7 +764,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         logger.debug("Actor {} snapshot strategy configured: interval={}ms, changesThreshold={}", 
                 actorId, snapshotIntervalMs, changesBeforeSnapshot);
     }
-    
+
     /**
      * Gets the current snapshot interval in milliseconds.
      *
@@ -763,7 +773,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     protected long getSnapshotIntervalMs() {
         return snapshotIntervalMs;
     }
-    
+
     /**
      * Gets the current changes threshold before taking a snapshot.
      *
@@ -772,7 +782,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     protected int getChangesBeforeSnapshot() {
         return changesBeforeSnapshot;
     }
-    
+
     /**
      * Gets the number of state changes since the last snapshot.
      *
@@ -780,5 +790,36 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      */
     protected int getChangesSinceLastSnapshot() {
         return changesSinceLastSnapshot;
+    }
+
+    /**
+     * Gets the metrics for this actor.
+     *
+     * @return The actor metrics
+     */
+    public ActorMetrics getMetrics() {
+        return metrics;
+    }
+
+    /**
+     * Helper method to run a task asynchronously on the persistence thread pool.
+     * 
+     * @param supplier The task to run
+     * @return A CompletableFuture that completes when the task completes
+     */
+    private <T> CompletableFuture<T> runAsync(Supplier<CompletableFuture<T>> supplier) {
+        CompletableFuture<T> future = new CompletableFuture<>();
+        CompletableFuture.runAsync(() -> {
+            try {
+                supplier.get().thenAccept(future::complete)
+                       .exceptionally(e -> {
+                           future.completeExceptionally(e);
+                           return null;
+                       });
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        }, persistenceExecutor);
+        return future;
     }
 }
