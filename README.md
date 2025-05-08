@@ -18,6 +18,12 @@
 - [Stateful Actors and Persistence](#stateful-actors-and-persistence)
   - [State Persistence](#state-persistence)
   - [Message Persistence and Replay](#message-persistence-and-replay)
+  - [Stateful Actor Recovery](#stateful-actor-recovery)
+  - [Adaptive Snapshot Strategy](#adaptive-snapshot-strategy)
+- [Backpressure Aware Stateful Actors](#backpressure-aware-stateful-actors)
+  - [Backpressure Strategies](#backpressure-strategies)
+  - [Retry Mechanisms](#retry-mechanisms)
+  - [Error Recovery](#error-recovery)
 - [Cluster Mode](#cluster-mode)
 - [Feature Roadmap](#feature-roadmap)
 
@@ -364,154 +370,25 @@ The performance tests measure:
 1. **Actor Chain Throughput**: Tests message passing through a chain of actors
 2. **Many-to-One Throughput**: Tests many sender actors sending to a single receiver
 3. **Actor Lifecycle Performance**: Tests creation and stopping of large numbers of actors
-
-These tests can help you determine optimal configurations for your specific use case.
-
-## Error Handling and Supervision Strategy
-
-Cajun provides robust error handling capabilities for actors with a supervision strategy system inspired by Erlang/OTP and Akka.
-
-### Supervision Strategies
-
-The following supervision strategies are available:
-
-- **RESUME**: Continue processing the next message after an error, ignoring the failure (default strategy)
-- **RESTART**: Stop and restart the actor after an error, optionally reprocessing the failed message
-- **STOP**: Stop the actor completely when an error occurs
-- **ESCALATE**: Propagate the error to the parent/system, stopping the current actor
-
-### Example Usage
-
-To set a supervision strategy for an actor:
-
-```java
-// Create an actor system
-ActorSystem system = new ActorSystem();
-
-// Create an actor
-Pid actorPid = system.register(MyActor.class, "my-actor-id");
-
-// Get the actor reference and set its supervision strategy
-MyActor myActor = (MyActor) system.getActor(actorPid);
-myActor.withSupervisionStrategy(Actor.SupervisionStrategy.RESTART);
-```
-
-### Hierarchical Supervision
-
-Cajun supports hierarchical supervision, allowing actors to be organized in a parent-child hierarchy. When a child actor fails, the error can be handled by its parent according to the parent's supervision strategy.
-
-#### Creating Child Actors
-
-You can create child actors from within a parent actor:
-
-```java
-// Inside a parent actor class method
-public void createChildren() {
-    // Create a child actor with a specific ID
-    Pid childPid = this.createChild(ChildActor.class, "child-actor-id");
-
-    // Create a child actor with an auto-generated ID
-    Pid anotherChildPid = this.createChild(AnotherChildActor.class);
-}
-```
-
-You can also register a child actor through the ActorSystem:
-
-```java
-// Create an actor system
-ActorSystem actorSystem = new ActorSystem();
-
-// Create a parent actor
-Pid parentPid = actorSystem.register(ParentActor.class, "parent-actor");
-ParentActor parent = (ParentActor) actorSystem.getActor(parentPid);
-
-// Register a child actor with the parent
-Pid childPid = actorSystem.registerChild(ChildActor.class, "child-actor", parent);
-```
-
-#### Supervision Hierarchy
-
-When a child actor fails with the ESCALATE strategy, the error is propagated to its parent. The parent then applies its own supervision strategy to handle the child's failure:
-
-1. If the parent uses RESUME, the child actor is restarted and continues processing
-2. If the parent uses RESTART, the child actor is restarted
-3. If the parent uses STOP, the child actor remains stopped
-4. If the parent uses ESCALATE, the error continues up the hierarchy
-
-#### Hierarchical Shutdown
-
-When a parent actor is stopped, all its child actors are automatically stopped as well, ensuring proper cleanup of resources.
-
-### Lifecycle Hooks
-
-Actors provide lifecycle hooks that you can override for custom behavior:
-
-- `preStart()`: Called before the actor starts processing messages
-- `postStop()`: Called after the actor has stopped processing messages
-- `onError(Message message, Throwable exception)`: Called when an exception occurs during message processing
-
-### Error Propagation
-
-The `ActorException` class is used for error propagation, particularly when using the ESCALATE supervision strategy. It captures the actor ID and original exception for better error handling.
-
 ## Stateful Actors and Persistence
+
+Cajun provides a `StatefulActor` class that maintains and persists its state. This is useful for actors that need to maintain state across restarts or system failures.
 
 ### State Persistence
 
-Cajun provides built-in support for state persistence in stateful actors. The `StatefulActor` class extends the base `Actor` class with state management capabilities, allowing actors to maintain and persist their state across restarts.
-
-#### Serialization Requirements
-
-**IMPORTANT**: For persistence to work correctly, both the State and Message types MUST be serializable:
-
-- Both State and Message classes must implement `java.io.Serializable`
-- All fields in these classes must also be serializable, or marked as `transient`
-- For non-serializable fields (like lambdas or functional interfaces), use `transient` and implement custom serialization with `readObject`/`writeObject` methods
-- Add `serialVersionUID` to all serializable classes to maintain compatibility
-
-Failure to meet these requirements will result in `NotSerializableException` during message journaling or state snapshot operations.
+Stateful actors can persist their state to disk or other storage backends. This allows actors to recover their state after a restart or crash.
 
 ```java
-// Example of a properly serializable message class
-public sealed interface CounterMessage extends java.io.Serializable permits 
-        CounterMessage.Increment, CounterMessage.Reset, CounterMessage.GetCount {
-    
-    record Increment() implements CounterMessage {
-        private static final long serialVersionUID = 1L;
-    }
-    
-    record Reset() implements CounterMessage {
-        private static final long serialVersionUID = 1L;
-    }
-    
-    // Example of handling non-serializable fields
-    final class GetCount implements CounterMessage {
-        private static final long serialVersionUID = 1L;
-        // Consumer is not Serializable by default, so mark it transient
-        private transient java.util.function.Consumer<Integer> callback;
-        
-        public GetCount(java.util.function.Consumer<Integer> callback) {
-            this.callback = callback;
-        }
-        
-        // Custom deserialization to handle the transient field
-        private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
-            in.defaultReadObject();
-            // Provide a default value after deserialization
-            if (callback == null) {
-                callback = (i) -> {};
-            }
-        }
-    }
-}
+// Create a stateful actor with an initial state
+StatefulActor<Integer, CounterMessage> counterActor = new CounterActor(system, 0);
+
+// Register the actor with the system
+Pid counterPid = system.register(counterActor);
+
+// Send messages to the actor
+counterPid.tell(new IncrementMessage());
+counterPid.tell(new GetCountMessage(myPid));
 ```
-
-The state is persisted using a configurable `StateStore` implementation. Cajun provides several built-in state stores:
-
-- `InMemoryStateStore`: Stores state in memory (useful for testing)
-- `FileStateStore`: Persists state to disk
-
-You can also implement custom state stores by implementing the `StateStore` interface.
 
 ### Message Persistence and Replay
 
@@ -520,144 +397,174 @@ Cajun supports message persistence and replay for stateful actors using a Write-
 #### Key Features
 
 - **Message Journaling**: All messages are logged to a journal before processing
-- **Snapshots**: Periodic snapshots of actor state to avoid replaying all messages
-- **Recovery**: Automatic state recovery using the latest snapshot plus replay of subsequent messages
-- **Compaction**: Journal entries included in snapshots are automatically removed to save space
-
-#### How It Works
-
-1. **Message Processing**:
-   - When a message is received, it's first logged to the message journal
-   - The message is then processed, potentially changing the actor's state
-   - State changes are tracked internally
-   - Snapshots of the state are taken at configurable intervals (default: 15 seconds)
-
-2. **Recovery Process**:
-   - When an actor starts, it attempts to recover its state from the latest snapshot
-   - If a snapshot exists, it loads the state from the snapshot
-   - It then replays all messages from the journal with sequence numbers higher than the snapshot
-   - If no snapshot exists, it starts with the initial state and replays all messages
-   - The actor ensures state initialization is complete before processing new messages
-
-#### Example Usage
+- **State Snapshots**: Periodic snapshots of actor state are taken to speed up recovery
+- **Hybrid Recovery**: Uses latest snapshot plus replay of subsequent messages
 
 ```java
-// Create a stateful actor with message persistence and replay
-CounterActor actor = new CounterActor(
-    actorSystem,                             // Actor system
-    "counter-1",                             // Actor ID
-    new CounterState(0),                     // Initial state
-    PersistenceFactory.createFileMessageJournal(),  // Message journal
-    PersistenceFactory.createFileSnapshotStore()    // Snapshot store
-);
-
-// Start the actor and ensure state is initialized
-actor.start();
-actor.forceInitializeState().join();
-
-// Send messages to the actor
-actor.tell("increment");
-actor.tell("increment");
-
-// Force a snapshot
-actor.forceSnapshot().join();
-
-// Even if the actor is stopped and restarted, it will recover its state
-actor.stop();
-
-// Create a new actor with the same ID
-// Note: null initial state forces recovery from persistence
-CounterActor newActor = new CounterActor(
-    actorSystem,
-    "counter-1",
-    null,  // null initial state forces recovery
-    PersistenceFactory.createFileMessageJournal(),
+// Configure a stateful actor with custom persistence
+StatefulActor<MyState, MyMessage> actor = new MyStatefulActor(
+    system,
+    initialState,
+    PersistenceFactory.createBatchedFileMessageJournal(),
     PersistenceFactory.createFileSnapshotStore()
 );
 
-// Start the actor and ensure state is initialized
-newActor.start();
-newActor.forceInitializeState().join();
-
-// The actor will automatically recover its state
-// newActor.getCurrentValue() will return 2
+// Register the actor
+Pid actorPid = system.register(actor);
 ```
 
-#### Configuration
+### Stateful Actor Recovery
 
-You can configure the persistence behavior with the following parameters:
+The StatefulActor implements a robust recovery mechanism that ensures state consistency after system restarts or failures:
 
-- **Snapshot Interval**: How often snapshots are taken (default: 15 seconds)
-- **Custom Persistence**: You can provide custom implementations of `MessageJournal` and `SnapshotStore`
+1. **Initialization Process**:
+   - On startup, the actor attempts to load the most recent snapshot
+   - If a snapshot exists, it restores the state from that snapshot
+   - It then replays any messages received after the snapshot was taken
+   - If no snapshot exists, it initializes with the provided initial state
 
-#### Benefits
+2. **Explicit State Initialization**:
+   ```java
+   // Force initialization and wait for it to complete (useful in tests)
+   statefulActor.forceInitializeState().join();
+   
+   // Or with timeout
+   boolean initialized = statefulActor.waitForStateInitialization(1000);
+   ```
 
-- **Durability**: Actor state can survive process restarts and crashes
-- **Consistency**: Ensures that actor state is consistent after recovery
-- **Performance**: Efficient recovery using snapshots and incremental replay
-- **Reliability**: Explicit state initialization ensures deterministic behavior
-- **Flexibility**: Pluggable storage backends for different use cases
+3. **Handling Null States**:
+   - StatefulActor properly handles null initial states for recovery cases
+   - State can be null during initialization and will be properly recovered if snapshots exist
+
+### Adaptive Snapshot Strategy
+
+StatefulActor implements an adaptive snapshot strategy to balance performance and recovery speed:
+
+```java
+// Configure snapshot strategy (time-based and change-count-based)
+statefulActor.configureSnapshotStrategy(
+    30000,    // Take snapshot every 30 seconds
+    500       // Or after 500 state changes, whichever comes first
+);
+
+// Force an immediate snapshot
+statefulActor.forceSnapshot().join();
+```
+
+Key snapshot features:
+- **Time-based snapshots**: Automatically taken after a configurable time interval
+- **Change-based snapshots**: Taken after a certain number of state changes
+- **Dedicated thread pool**: Snapshots are taken asynchronously to avoid blocking the actor
+- **Final snapshots**: A snapshot is automatically taken when the actor stops
+
+## Backpressure Aware Stateful Actors
+
+Cajun provides a `BackpressureAwareStatefulActor` that extends the StatefulActor with backpressure capabilities to handle high load scenarios gracefully.
+
+```java
+// Create a backpressure-aware stateful actor with default strategies
+BackpressureAwareStatefulActor<MyState, MyMessage> actor = 
+    new MyBackpressureAwareActor(system, initialState);
+
+// Or with custom strategies
+BackpressureAwareStatefulActor<MyState, MyMessage> actor = 
+    new MyBackpressureAwareActor(
+        system,
+        initialState,
+        new AdaptiveBackpressureStrategy(),
+        RetryStrategy.builder()
+            .maxRetries(5)
+            .initialDelayMs(100)
+            .build()
+    );
+
+// Add custom error handling
+actor.withErrorHook(ex -> logger.error("Error in actor processing", ex));
+```
+
+### Backpressure Strategies
+
+The BackpressureAwareStatefulActor monitors system load and can apply different strategies when under pressure:
+
+1. **Load Monitoring**:
+   - Tracks message queue size
+   - Measures message processing times
+   - Monitors persistence queue size
+
+2. **Adaptive Backpressure**:
+   - Gradually increases backpressure as load increases
+   - Can throttle, delay, or reject messages based on current load
+   - Provides metrics for monitoring backpressure levels
+
+3. **Monitoring Backpressure**:
+   ```java
+   // Get current backpressure metrics
+   BackpressureMetrics metrics = actor.getBackpressureMetrics();
+   
+   // Get current backpressure level (0.0-1.0)
+   double level = actor.getCurrentBackpressureLevel();
+   
+   // Get estimated queue size
+   int queueSize = actor.getEstimatedQueueSize();
+   ```
+
+### Retry Mechanisms
+
+BackpressureAwareStatefulActor includes built-in retry capabilities for handling transient failures:
+
+```java
+// Create a custom retry strategy
+RetryStrategy retryStrategy = RetryStrategy.builder()
+    .maxRetries(3)
+    .initialDelayMs(100)
+    .maxDelayMs(5000)
+    .backoffMultiplier(2.0)
+    .retryableExceptions(IOException.class, TimeoutException.class)
+    .build();
+```
+
+Key retry features:
+- **Exponential backoff**: Increasing delays between retry attempts
+- **Configurable retry count**: Set maximum number of retry attempts
+- **Exception filtering**: Specify which exceptions should trigger retries
+- **Asynchronous execution**: Retries are scheduled on a dedicated thread pool
+
+### Error Recovery
+
+The BackpressureAwareStatefulActor enhances error recovery with:
+
+1. **Graceful degradation**: Can continue processing critical messages while under load
+2. **Error hooks**: Custom error handlers for specific error scenarios
+3. **Processing metrics**: Tracks and exposes processing performance metrics
+4. **Adaptive behavior**: Can adjust processing strategy based on error patterns
 
 ## Cluster Mode
 
-<img src="docs/actor_cluster_mode.png" alt="Actor cluster mode" style="height:auto;">
+Cajun supports running in a distributed cluster mode, allowing actors to communicate across multiple nodes.
 
-Cajun supports running in a cluster mode where actors can be distributed across multiple nodes, with automatic failover and recovery.
-
-### Setting Up Cluster Mode
+### Setting Up a Cluster
 
 ```java
-// Create a metadata store (using etcd)
-MetadataStore metadataStore = new EtcdMetadataStore("http://localhost:2379");
+// Create a cluster configuration
+ClusterConfig config = ClusterConfig.builder()
+    .nodeName("node1")
+    .port(2551)
+    .seedNodes(List.of("127.0.0.1:2551", "127.0.0.1:2552"))
+    .build();
 
-// Create a messaging system (using direct TCP)
-MessagingSystem messagingSystem = new DirectMessagingSystem("system1", 8080);
+// Create a clustered actor system
+ActorSystem system = ActorSystem.createClustered(config);
 
-// Create a cluster actor system
-ClusterActorSystem system = new ClusterActorSystem("system1", metadataStore, messagingSystem);
-
-// Start the system
-system.start().get();
-
-// Create actors as usual
-Pid actor = system.register(MyActor.class, "my-actor");
-
-// Send messages as usual
-actor.tell("Hello, actor!");
-
-// Shut down the system when done
-system.stop().get();
+// Create and register actors as usual
+Pid actorPid = system.register(MyActor.class, "my-actor");
 ```
 
-### Key Features
-
-#### Distributed Actor Assignment
-
-Actors are assigned to nodes in the cluster using rendezvous hashing, which provides a consistent distribution even when nodes join or leave the cluster.
-
-```java
-// Create an actor on a specific node
-Pid actor = system.createActorOnNode(MyActor.class, "my-actor", "node2");
-```
-
-#### Leader Election
-
-A leader node is elected using a distributed lock in the metadata store. The leader is responsible for managing actor assignments and handling node failures.
-
-```java
-// Check if this node is the leader
-if (system.isLeader()) {
-    // Perform leader-specific tasks
-}
-```
-
-#### Remote Messaging
+### Communicating with Remote Actors
 
 Messages can be sent to actors regardless of which node they're running on. The system automatically routes messages to the correct node.
 
 ```java
 // Send a message to an actor (works the same whether the actor is local or remote)
-actor.tell("Hello, actor!");
 ```
 
 #### Fault Tolerance
