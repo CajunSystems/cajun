@@ -396,6 +396,7 @@ public class BackpressureAwareStatefulActorTest {
                 // Use reflection to access the private errorHook field
                 java.lang.reflect.Field errorHookField = BackpressureAwareStatefulActor.class.getDeclaredField("errorHook");
                 errorHookField.setAccessible(true);
+                @SuppressWarnings("unchecked")
                 Consumer<Throwable> errorHook = (Consumer<Throwable>) errorHookField.get(this);
                 errorHook.accept(exception);
             } catch (Exception e) {

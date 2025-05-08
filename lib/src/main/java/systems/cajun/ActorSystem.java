@@ -10,6 +10,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.time.Duration;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +20,20 @@ import systems.cajun.config.ThreadPoolFactory;
 public class ActorSystem {
 
     private static final Logger logger = LoggerFactory.getLogger(ActorSystem.class);
+
+    /**
+     * Represents a message wrapper for the ask pattern, including the original message
+     * and the Pid to which the reply should be sent.
+     * @param <RequestMessage> The type of the original message.
+     * @param message The original message.
+     * @param replyTo The Pid of the actor expecting the reply.
+     */
+    public record AskPayload<RequestMessage>(RequestMessage message, Pid replyTo) {}
+
+    /**
+     * Internal message to signal a timeout for an ask operation.
+     */
+    private static final class AskTimeoutMessage {}
 
     private final ConcurrentHashMap<String, Actor<?>> actors;
     private final ScheduledExecutorService delayScheduler;
@@ -366,6 +381,77 @@ public class ActorSystem {
         } else {
             logger.warn("Actor not found for delayed message: {}", actorId);
         }
+    }
+
+    /**
+     * Sends a message to the target actor and returns a CompletableFuture that will be completed with the reply.
+     *
+     * @param target The Pid of the target actor.
+     * @param message The message to send.
+     * @param timeout The maximum time to wait for a reply.
+     * @param <RequestMessage> The type of the request message.
+     * @param <ResponseMessage> The type of the expected response message.
+     * @return A CompletableFuture that will be completed with the response or an exception if a timeout occurs.
+     */
+    public <RequestMessage, ResponseMessage> CompletableFuture<ResponseMessage> ask(Pid target, RequestMessage message, Duration timeout) {
+        CompletableFuture<ResponseMessage> future = new CompletableFuture<>();
+        String replyActorId = "temp-reply-" + UUID.randomUUID().toString();
+
+        // Create a temporary actor to handle the reply and timeout
+        Actor<Object> replyActor = new Actor<>(this, replyActorId) { // Actor type changed to Object
+            @Override
+            protected void receive(Object receivedMessage) { // Message type changed to Object
+                if (!future.isDone()) { // Process only if future is not already completed
+                    if (receivedMessage instanceof AskTimeoutMessage) {
+                        future.completeExceptionally(new TimeoutException("Ask operation timed out after " + timeout.toMillis() + " ms for actor " + target.actorId()));
+                    } else {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            ResponseMessage reply = (ResponseMessage) receivedMessage;
+                            future.complete(reply);
+                        } catch (ClassCastException e) {
+                            logger.warn("Temporary reply actor {} for target {} received unexpected message type: {}",
+                                    replyActorId, target.actorId(), receivedMessage.getClass().getName(), e);
+                            // Explicitly create the RuntimeException with the ClassCastException as its cause
+                            RuntimeException runtimeException = new RuntimeException(
+                                "Internal error: Ask pattern reply actor received unexpected message type.",
+                                e // The caught ClassCastException
+                            );
+                            future.completeExceptionally(runtimeException);
+                        }
+                    }
+                }
+                // Stop the temporary actor after processing the message (either reply or timeout)
+                // or if an error occurs, or if future was already done.
+                // The actual unregistration and final future completion (if needed) is in postStop.
+                this.stop();
+            }
+
+            @Override
+            protected void postStop() {
+                // If the actor is stopped and the future isn't done (e.g., external stop, or unexpected shutdown)
+                // complete the future exceptionally. This ensures the future is always resolved.
+                if (!future.isDone()) {
+                    future.completeExceptionally(new TimeoutException("Ask operation for actor " + target.actorId() + " ended before a reply was received or completed. Reply actor ID: " + replyActorId));
+                }
+                actors.remove(replyActorId); // Unregister after stopping, ensuring cleanup
+            }
+        };
+
+        actors.put(replyActorId, replyActor);
+        replyActor.start();
+        Pid replyToPid = replyActor.self();
+
+        // Send the AskPayload to the target actor
+        AskPayload<RequestMessage> askMessage = new AskPayload<>(message, replyToPid);
+        target.tell(askMessage);
+
+        // Schedule a timeout message to be sent to the reply actor using the system's delayed message routing
+        this.routeMessage(replyActorId, new AskTimeoutMessage(), timeout.toMillis(), TimeUnit.MILLISECONDS);
+
+        // The CompletableFuture will be completed either by the replyActor receiving a response,
+        // a timeout message, or by its postStop logic if stopped prematurely.
+        return future;
     }
 
 }

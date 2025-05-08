@@ -14,6 +14,7 @@
   - [Using the Actor System](#using-the-actor-system)
   - [Running Examples](#running-examples)
 - [Message Processing and Performance Tuning](#message-processing-and-performance-tuning)
+- [Request-Response with Ask Pattern](#request-response-with-ask-pattern)
 - [Error Handling and Supervision Strategy](#error-handling-and-supervision-strategy)
 - [Stateful Actors and Persistence](#stateful-actors-and-persistence)
   - [State Persistence](#state-persistence)
@@ -370,6 +371,233 @@ The performance tests measure:
 1. **Actor Chain Throughput**: Tests message passing through a chain of actors
 2. **Many-to-One Throughput**: Tests many sender actors sending to a single receiver
 3. **Actor Lifecycle Performance**: Tests creation and stopping of large numbers of actors
+
+## Request-Response with Ask Pattern
+
+While actors typically communicate through one-way asynchronous messages, Cajun provides an "ask pattern" for request-response interactions where you need to wait for a reply.
+
+### Basic Usage
+
+The ask pattern allows you to send a message to an actor and receive a response as a `CompletableFuture`:
+
+```java
+// Send a request to an actor and get a future response
+CompletableFuture<String> future = actorSystem.ask(
+    targetActorPid,       // The actor to ask
+    "ping",               // The message to send
+    Duration.ofSeconds(3) // Timeout for the response
+);
+
+// Process the response when it arrives
+future.thenAccept(response -> {
+    System.out.println("Received response: " + response);
+});
+
+// Or wait for the response (blocking)
+try {
+    String response = future.get(5, TimeUnit.SECONDS);
+    System.out.println("Received response: " + response);
+} catch (ExecutionException | InterruptedException | TimeoutException e) {
+    System.err.println("Error getting response: " + e.getMessage());
+}
+```
+
+### Implementing Responders
+
+Actors that respond to ask requests must handle the special `AskPayload` wrapper message:
+
+```java
+public class ResponderActor extends Actor<ActorSystem.AskPayload<String>> {
+    
+    public ResponderActor(ActorSystem system, String actorId) {
+        super(system, actorId);
+    }
+    
+    @Override
+    protected void receive(ActorSystem.AskPayload<String> payload) {
+        // Extract the original message
+        String message = payload.message();
+        
+        // Process the message
+        String response = processMessage(message);
+        
+        // Send the response back to the temporary reply actor
+        payload.replyTo().tell(response);
+    }
+    
+    private String processMessage(String message) {
+        if ("ping".equals(message)) {
+            return "pong";
+        }
+        return "unknown command";
+    }
+}
+```
+
+### Error Handling
+
+The ask pattern includes robust error handling to manage various failure scenarios:
+
+1. **Timeout Handling**: If no response is received within the specified timeout, the future completes exceptionally with a `TimeoutException`.
+
+2. **Type Mismatch Handling**: If the response type doesn't match the expected type, the future completes exceptionally with a wrapped `ClassCastException`.
+
+3. **Actor Failure Handling**: If the target actor fails while processing the message, the error is propagated to the future based on the actor's supervision strategy.
+
+```java
+try {
+    String response = actorSystem.ask(actorPid, message, Duration.ofSeconds(2)).get();
+    // Process successful response
+} catch (ExecutionException ex) {
+    Throwable cause = ex.getCause();
+    if (cause instanceof TimeoutException) {
+        // Handle timeout
+    } else if (cause instanceof RuntimeException && cause.getCause() instanceof ClassCastException) {
+        // Handle type mismatch
+    } else {
+        // Handle other errors
+    }
+} catch (InterruptedException e) {
+    // Handle interruption
+}
+```
+
+### Implementation Details
+
+Internally, the ask pattern works by:
+
+1. Creating a temporary actor to receive the response
+2. Wrapping the original message in an `AskPayload` that includes the temporary actor's PID
+3. Sending the wrapped message to the target actor
+4. Setting up a timeout to complete the future exceptionally if no response arrives in time
+5. Completing the future when the temporary actor receives a response
+
+This implementation ensures that resources are properly cleaned up, even in failure scenarios, by automatically stopping the temporary actor after processing the response or timeout.
+
+## Error Handling and Supervision Strategy
+
+Cajun provides a robust error handling system with supervision strategies inspired by Erlang OTP. This allows actors to recover from failures gracefully without crashing the entire system.
+
+### Supervision Strategies
+
+The `SupervisionStrategy` enum defines how an actor should respond to failures:
+
+- **RESUME**: Continue processing messages, ignoring the error (best for non-critical errors)
+- **RESTART**: Restart the actor, resetting its state (good for recoverable errors)
+- **STOP**: Stop the actor completely (for unrecoverable errors)
+- **ESCALATE**: Escalate the error to the parent actor (for system-wide issues)
+
+```java
+// Configure an actor with a specific supervision strategy
+MyActor actor = new MyActor(system, "my-actor");
+actor.withSupervisionStrategy(SupervisionStrategy.RESTART);
+
+// Method chaining for configuration
+MyActor actor = new MyActor(system, "my-actor")
+    .withSupervisionStrategy(SupervisionStrategy.RESTART)
+    .withErrorHook(ex -> logger.error("Actor error", ex));
+```
+
+### Lifecycle Hooks
+
+Actors provide lifecycle hooks that are called during error handling and recovery:
+
+- **preStart()**: Called before the actor starts processing messages
+- **postStop()**: Called when the actor is stopped
+- **onError(Throwable)**: Called when an error occurs during message processing
+
+```java
+public class ResilientActor extends Actor<String> {
+    
+    public ResilientActor(ActorSystem system, String actorId) {
+        super(system, actorId);
+    }
+    
+    @Override
+    protected void preStart() {
+        // Initialize resources
+        logger.info("Actor starting: {}", self().id());
+    }
+    
+    @Override
+    protected void postStop() {
+        // Clean up resources
+        logger.info("Actor stopping: {}", self().id());
+    }
+    
+    @Override
+    protected void onError(Throwable error) {
+        // Custom error handling
+        logger.error("Error in actor: {}", self().id(), error);
+    }
+    
+    @Override
+    protected void receive(String message) {
+        // Message processing logic
+    }
+}
+```
+
+### Exception Handling
+
+The `handleException` method provides centralized error management:
+
+```java
+@Override
+protected SupervisionStrategy handleException(Throwable exception) {
+    if (exception instanceof TemporaryException) {
+        // Log and continue for temporary issues
+        logger.warn("Temporary error, resuming", exception);
+        return SupervisionStrategy.RESUME;
+    } else if (exception instanceof RecoverableException) {
+        // Restart for recoverable errors
+        logger.error("Recoverable error, restarting", exception);
+        return SupervisionStrategy.RESTART;
+    } else {
+        // Stop for critical errors
+        logger.error("Critical error, stopping", exception);
+        return SupervisionStrategy.STOP;
+    }
+}
+```
+
+### Integration with Ask Pattern
+
+The error handling system integrates seamlessly with the ask pattern, propagating exceptions to the future:
+
+```java
+try {
+    // If the actor throws an exception while processing this message,
+    // it will be propagated to the future based on the supervision strategy
+    String result = actorSystem.ask(actorPid, "risky-operation", Duration.ofSeconds(5)).get();
+    System.out.println("Success: " + result);
+} catch (ExecutionException ex) {
+    // The original exception is wrapped in an ExecutionException
+    Throwable cause = ex.getCause();
+    System.err.println("Actor error: " + cause.getMessage());
+}
+```
+
+### Logging Integration
+
+Cajun integrates with SLF4J and Logback for comprehensive logging:
+
+```java
+// Configure logging in your application
+private static final Logger logger = LoggerFactory.getLogger(MyActor.class);
+
+// Errors are automatically logged with appropriate levels
+@Override
+protected void receive(Message msg) {
+    try {
+        // Process message
+    } catch (Exception e) {
+        // This will be logged and handled according to the supervision strategy
+        throw new ActorException("Failed to process message", e);
+    }
+}
+```
+
 ## Stateful Actors and Persistence
 
 Cajun provides a `StatefulActor` class that maintains and persists its state. This is useful for actors that need to maintain state across restarts or system failures.
@@ -614,7 +842,7 @@ public class CustomMessagingSystem implements MessagingSystem {
 
 For more details, see the [Cluster Mode Improvements documentation](docs/cluster_mode_improvements.md).
 
-## Feature roadmap
+## Feature Roadmap
 
 1. Actor system and actor lifecycle
    - [x] Create Actor and Actor System
@@ -623,6 +851,8 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
    - [x] Stateful functional style actor
    - [x] Timed messages
    - [x] Error handling with supervision strategies
+   - [x] Request-response pattern with ask functionality
+   - [x] Robust exception handling and propagation
 2. Actor metadata management with etcd
    - [x] Distributed metadata store with etcd support
    - [x] Leader election
@@ -640,12 +870,25 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
    - [x] State initialization and recovery mechanisms
    - [x] Snapshot-based state persistence
    - [x] Hybrid recovery approach (snapshots + message replay)
+   - [x] Explicit state initialization and force initialization methods
+   - [x] Proper handling of null initial states for recovery cases
+   - [x] Adaptive snapshot strategy with time-based and change-count-based options
    - [ ] Customizable backends for snapshots and Write-Ahead Log (WAL)
    - [ ] RocksDB backend for state persistence
    - [ ] Segregation of runtime implementations (file store, in-memory store, etc.) from the actor system
-5. Partitioned state and sharding strategy
+5. Backpressure and load management
+   - [x] BackpressureAwareStatefulActor implementation
+   - [x] Adaptive backpressure strategies
+   - [x] Load monitoring (queue size, processing times, persistence queue)
+   - [x] Configurable retry mechanisms with exponential backoff
+   - [x] Error recovery and graceful degradation
+   - [x] Processing metrics and backpressure level monitoring
+   - [ ] Circuit breaker pattern implementation
+   - [ ] Rate limiting strategies
+
+6. Partitioned state and sharding strategy
    - [x] Rendezvous hashing for actor assignment
-6. Cluster mode
+7. Cluster mode
    - [x] Distributed actor systems
    - [x] Remote messaging between actor systems
    - [x] Actor reassignment on node failure
