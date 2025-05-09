@@ -8,6 +8,7 @@ import systems.cajun.persistence.MockSnapshotStore;
 import systems.cajun.persistence.SnapshotStore;
 
 import java.io.Serializable;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -253,15 +254,15 @@ public class BackpressureAwareStatefulActorTest {
         Thread.sleep(100);
         
         // Get metrics
-        BackpressureMetrics metrics = actor.getBackpressureMetrics();
+        Map<String, Object> metrics = actor.getBackpressureMetrics();
         
         // Verify metrics match
-        assertEquals(0.5, metrics.getBackpressureLevel(), "Backpressure level should match");
-        assertEquals(10, metrics.getCurrentQueueSize(), "Queue size should match");
-        assertEquals(5, metrics.getRejectedMessagesCount(), "Rejected count should match");
-        assertEquals(3, metrics.getDelayedMessagesCount(), "Delayed count should match");
-        assertEquals(100_000_000, metrics.getAverageProcessingTimeNanos(), "Processing time should match");
-        assertEquals(2, metrics.getPersistenceQueueSize(), "Persistence queue size should match");
+        assertEquals(0.5, (Double) metrics.get("backpressureLevel"), "Backpressure level should match");
+        assertEquals(10, (Integer) metrics.get("mailboxSize"), "Queue size should match");
+        assertEquals(5, (Integer) metrics.get("droppedMessages"), "Rejected count should match");
+        assertEquals(3, (Integer) metrics.get("delayedMessages"), "Delayed count should match");
+        assertEquals(100_000_000L, (Long) metrics.get("processingTimeNanos"), "Processing time should match");
+        assertEquals(2, (Integer) metrics.get("persistenceQueueSize"), "Persistence queue size should match");
     }
 
     /**

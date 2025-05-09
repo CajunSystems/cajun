@@ -14,6 +14,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * An extension of StatefulActor that adds backpressure awareness and enhanced error recovery.
@@ -253,8 +255,19 @@ public abstract class BackpressureAwareStatefulActor<State extends Serializable,
      *
      * @return Current backpressure metrics
      */
-    public BackpressureMetrics getBackpressureMetrics() {
-        return backpressureStrategy.getMetrics();
+    @Override
+    public Map<String, Object> getBackpressureMetrics() {
+        BackpressureMetrics metrics = backpressureStrategy.getMetrics();
+        Map<String, Object> metricsMap = new HashMap<>();
+        
+        metricsMap.put("backpressureLevel", metrics.getBackpressureLevel());
+        metricsMap.put("mailboxSize", metrics.getCurrentQueueSize());
+        metricsMap.put("droppedMessages", metrics.getRejectedMessagesCount());
+        metricsMap.put("delayedMessages", metrics.getDelayedMessagesCount());
+        metricsMap.put("processingTimeNanos", metrics.getAverageProcessingTimeNanos());
+        metricsMap.put("persistenceQueueSize", metrics.getPersistenceQueueSize());
+        
+        return metricsMap;
     }
     
     /**
