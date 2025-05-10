@@ -2,13 +2,8 @@ package systems.cajun;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.time.Duration;
 
@@ -317,49 +312,51 @@ public class ActorSystem {
         // Get a copy of all actor IDs to avoid ConcurrentModificationException
         List<String> actorIds = new ArrayList<>(actors.keySet());
         
-        // Create a list to store futures for parallel shutdown
-        List<CompletableFuture<Void>> shutdownFutures = new ArrayList<>();
-        
-        // Shutdown each actor in parallel
-        for (String actorId : actorIds) {
-            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
-                Actor<?> actor = actors.get(actorId);
-                if (actor != null && actor.isRunning()) {
-                    try {
-                        actor.stop();
-                        logger.debug("Actor {} shut down successfully", actorId);
-                    } catch (Exception e) {
-                        logger.warn("Error shutting down actor {}", actorId, e);
+        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            // Submit shutdown task for each actor
+            for (String actorId : actorIds) {
+                scope.fork(() -> {
+                    Actor<?> actor = actors.get(actorId);
+                    if (actor != null && actor.isRunning()) {
+                        try {
+                            actor.stop();
+                            logger.debug("Actor {} shut down successfully", actorId);
+                        } catch (Exception e) {
+                            logger.warn("Error shutting down actor {}", actorId, e);
+                            throw e; // Propagate exception to the scope
+                        }
                     }
-                }
-            });
-            shutdownFutures.add(future);
-        }
-        
-        // Wait for all shutdowns to complete
-        CompletableFuture<Void> allShutdowns = CompletableFuture.allOf(
-                shutdownFutures.toArray(new CompletableFuture[0]));
-        
-        try {
-            // Wait for all actors to shut down
-            allShutdowns.join();
-            
-            // Clear the actor registry
-            actors.clear();
-            
-            // Cancel any scheduled messages
-            for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
-                future.cancel(true);
+                    return null;
+                });
             }
-            pendingDelayedMessages.clear();
             
-            // Shutdown the delay scheduler
-            safeShutdownScheduler(delayScheduler);
+            try {
+                // Wait for all tasks to complete or fail
+                scope.join();
+                // Ensure no failures occurred
+                scope.throwIfFailed(e -> new RuntimeException("Error during actor system shutdown", e));
+                
+                // Clear the actor registry
+                actors.clear();
+                
+                // Cancel any scheduled messages
+                for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
+                    future.cancel(true);
+                }
+                pendingDelayedMessages.clear();
+                
+                // Shutdown the delay scheduler
+                safeShutdownScheduler(delayScheduler);
 
-            // Shutdown the shared executor if it exists
-            safeShutdownScheduler(sharedExecutor);
+                // Shutdown the shared executor if it exists
+                safeShutdownScheduler(sharedExecutor);
 
-            logger.info("Actor system shut down successfully");
+                logger.info("Actor system shut down successfully");
+            } catch (InterruptedException e) {
+                logger.error("Actor system shutdown was interrupted", e);
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Actor system shutdown was interrupted", e);
+            }
         } catch (Exception e) {
             logger.error("Error during actor system shutdown", e);
             throw new RuntimeException("Error during actor system shutdown: " + e.getMessage(), e);

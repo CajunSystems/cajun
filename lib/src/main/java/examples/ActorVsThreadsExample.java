@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
-
 import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.nio.file.Files;
@@ -13,6 +12,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
 
 /**
  * Example demonstrating the differences between actors and pure threads.
@@ -48,10 +50,14 @@ public class ActorVsThreadsExample {
 
         // Run thread-based implementation
         long threadTime = runThreadImplementation();
+        
+        // Run structured concurrency implementation
+        long structuredTime = runStructuredConcurrencyImplementation();
 
         // Log and save results
         double actorThroughput = NUM_MESSAGES / (actorTime / 1000.0);
         double threadThroughput = NUM_MESSAGES / (threadTime / 1000.0);
+        double structuredThroughput = NUM_MESSAGES / (structuredTime / 1000.0);
 
         String results = String.format(
                 "Performance Results:\n" +
@@ -62,9 +68,19 @@ public class ActorVsThreadsExample {
                         "Thread-based implementation:\n" +
                         "  Total time: %d ms\n" +
                         "  Throughput: %.2f messages/second\n\n" +
-                        "Performance ratio (Thread/Actor): %.2f\n",
-                NUM_MESSAGES, actorTime, actorThroughput, threadTime, threadThroughput,
-                (double) threadTime / actorTime);
+                        "Structured Concurrency implementation:\n" +
+                        "  Total time: %d ms\n" +
+                        "  Throughput: %.2f messages/second\n\n" +
+                        "Performance ratio (Thread/Actor): %.2f\n" +
+                        "Performance ratio (Structured/Actor): %.2f\n" +
+                        "Performance ratio (Structured/Thread): %.2f\n",
+                NUM_MESSAGES, 
+                actorTime, actorThroughput, 
+                threadTime, threadThroughput,
+                structuredTime, structuredThroughput,
+                (double) threadTime / actorTime,
+                (double) structuredTime / actorTime,
+                (double) structuredTime / threadTime);
 
         logger.info(results);
 
@@ -194,6 +210,132 @@ public class ActorVsThreadsExample {
         executor.awaitTermination(5, TimeUnit.SECONDS);
 
         logger.info("Thread-based implementation completed in {} ms", executionTime);
+        return executionTime;
+    }
+
+    /**
+     * Runs the implementation using structured concurrency and returns the execution time in milliseconds.
+     */
+    private static long runStructuredConcurrencyImplementation() throws Exception {
+        logger.info("Running structured concurrency implementation...");
+
+        // Create completion latch
+        CountDownLatch completionLatch = new CountDownLatch(1);
+
+        // Create queues for communication between stages
+        BlockingQueue<Integer> sourceToProcessorQueue = new LinkedBlockingQueue<>();
+        BlockingQueue<Integer> processorToSinkQueue = new LinkedBlockingQueue<>();
+
+        // Create atomic counter for tracking progress
+        AtomicInteger processedCount = new AtomicInteger(0);
+
+        // Start timing
+        long startTime = System.currentTimeMillis();
+
+        // Use structured concurrency to manage the pipeline
+        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            // Fork the sink task
+            scope.fork(() -> {
+                int received = 0;
+                while (received < NUM_MESSAGES) {
+                    try {
+                        // Take a processed number from the input queue
+                        Integer number = processorToSinkQueue.take();
+                        
+                        // Count the received number
+                        received++;
+                        
+                        // Log progress periodically
+                        if (received % (NUM_MESSAGES / 10) == 0) {
+                            logger.info("Structured sink received {}% of messages", received * 100 / NUM_MESSAGES);
+                        }
+                        
+                        // Check if all messages have been received
+                        if (received >= NUM_MESSAGES) {
+                            logger.info("Structured sink received all {} messages", NUM_MESSAGES);
+                            completionLatch.countDown();
+                            break;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        logger.error("Structured sink interrupted", e);
+                        break;
+                    }
+                }
+                return null;
+            });
+            
+            // Fork the processor task
+            scope.fork(() -> {
+                int processed = 0;
+                while (processed < NUM_MESSAGES) {
+                    try {
+                        // Take a number from the input queue
+                        Integer number = sourceToProcessorQueue.take();
+                        
+                        // Process the number (increment it)
+                        int processedNumber = number + 1;
+                        
+                        // Put the processed number in the output queue
+                        processorToSinkQueue.put(processedNumber);
+                        
+                        // Track progress
+                        processed++;
+                        if (processed % (NUM_MESSAGES / 10) == 0) {
+                            logger.info("Structured processor processed {}% of messages", processed * 100 / NUM_MESSAGES);
+                        }
+                        
+                        // Check if all messages have been processed
+                        if (processed >= NUM_MESSAGES) {
+                            logger.info("Structured processor completed processing all messages");
+                            break;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        logger.error("Structured processor interrupted", e);
+                        break;
+                    }
+                }
+                return null;
+            });
+            
+            // Fork the source task
+            scope.fork(() -> {
+                logger.info("Structured source starting to generate {} messages", NUM_MESSAGES);
+                
+                try {
+                    // Generate messages
+                    for (int i = 0; i < NUM_MESSAGES; i++) {
+                        sourceToProcessorQueue.put(i);
+                        
+                        // Log progress periodically
+                        if ((i + 1) % (NUM_MESSAGES / 10) == 0) {
+                            logger.info("Structured source generated {}% of messages", (i + 1) * 100 / NUM_MESSAGES);
+                        }
+                    }
+                    
+                    logger.info("Structured source completed generating all messages");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.error("Structured source interrupted", e);
+                }
+                return null;
+            });
+            
+            // Wait for completion latch
+            completionLatch.await();
+            
+            // Join all tasks
+            scope.join();
+            
+            // Check for failures
+            scope.throwIfFailed();
+        }
+        
+        // Calculate execution time
+        long executionTime = System.currentTimeMillis() - startTime;
+        
+        logger.info("Structured concurrency implementation completed in {} ms", executionTime);
         return executionTime;
     }
 
@@ -438,66 +580,5 @@ public class ActorVsThreadsExample {
                 logger.error("Sink thread interrupted", e);
             }
         }
-    }
-
-    /**
-     * Demonstrates the shared state problem in multi-threaded environments.
-     * This method creates multiple threads that access a shared counter without proper synchronization.
-     */
-    private static void demonstrateSharedStateIssue() throws Exception {
-        logger.info("Demonstrating shared state issues in multi-threaded environments");
-
-        // Shared mutable state
-        AtomicInteger synchronizedCounter = new AtomicInteger(0);
-        int[] unsynchronizedCounter = new int[1]; // Using array as a mutable container
-
-        // Number of threads and increments per thread
-        int numThreads = 10;
-        int incrementsPerThread = 100_000;
-
-        // Create executor
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
-        // Create completion latch
-        CountDownLatch latch = new CountDownLatch(numThreads * 2);
-
-        // Start timing
-        long startTime = System.currentTimeMillis();
-
-        // Submit synchronized counter tasks
-        for (int i = 0; i < numThreads; i++) {
-            executor.submit(() -> {
-                for (int j = 0; j < incrementsPerThread; j++) {
-                    synchronizedCounter.incrementAndGet();
-                }
-                latch.countDown();
-            });
-        }
-
-        // Submit unsynchronized counter tasks
-        for (int i = 0; i < numThreads; i++) {
-            executor.submit(() -> {
-                for (int j = 0; j < incrementsPerThread; j++) {
-                    unsynchronizedCounter[0]++; // Race condition!
-                }
-                latch.countDown();
-            });
-        }
-
-        // Wait for completion
-        latch.await();
-
-        // Calculate execution time
-        long executionTime = System.currentTimeMillis() - startTime;
-
-        // Log results
-        logger.info("Shared state demonstration completed in {} ms", executionTime);
-        logger.info("Expected final count: {}", numThreads * incrementsPerThread);
-        logger.info("Synchronized counter final value: {}", synchronizedCounter.get());
-        logger.info("Unsynchronized counter final value: {}", unsynchronizedCounter[0]);
-
-        // Shutdown executor
-        executor.shutdown();
-        executor.awaitTermination(5, TimeUnit.SECONDS);
     }
 }
