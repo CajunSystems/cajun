@@ -98,20 +98,9 @@ public abstract class Actor<Message> {
     }
 
     /**
-     * Sets the batch size for message processing.
-     * A larger batch size can improve throughput but may increase latency.
-     * 
-     * @param batchSize The number of messages to process in a batch
-     * @return This actor instance for method chaining
+     * Starts the actor and begins processing messages.
+     * This should not be called directly for actors registered with an ActorSystem.
      */
-    public Actor<Message> withBatchSize(int batchSize) {
-        if (batchSize < 1) {
-            throw new IllegalArgumentException("Batch size must be at least 1");
-        }
-        this.batchSize = batchSize;
-        return this;
-    }
-
     public void start() {
         if (isRunning) {
             logger.debug("Actor {} is already running", actorId);

@@ -88,50 +88,51 @@ class ActorSystemTest {
     void shouldBeAbleToBeDelayInSendingAMessage() throws InterruptedException {
         // Create a latch to wait for the test to complete
         java.util.concurrent.CountDownLatch testCompletionLatch = new java.util.concurrent.CountDownLatch(1);
-        // Create a latch to track when all count up operations have been processed
-        java.util.concurrent.CountDownLatch countUpLatch = new java.util.concurrent.CountDownLatch(4);
+        
+        // Create a mutable counter to track state outside the actor
+        final int[] finalCount = {0};
 
-        var counterActor = new FunctionalActor<Integer, CounterProtocol>();
-        var counter = actorSystem.register(counterActor.receiveMessage((i, m) -> {
-            switch (m) {
-                case CounterProtocol.CountUp cu -> {
-                    int newCount = i + 1;
-                    countUpLatch.countDown(); // Signal that we processed a count up
-                    return newCount;
-                }
-                case CounterProtocol.GetCount gc -> {
-                    gc.replyTo().tell(new HelloCount(i));
-                }
+        // Create a counter actor with direct state tracking
+        var counter = actorSystem.register((message) -> {
+            if (message instanceof CounterProtocol.CountUp) {
+                finalCount[0]++;
+                return null;
+            } else if (message instanceof CounterProtocol.GetCount gc) {
+                gc.replyTo().tell(new HelloCount(finalCount[0]));
             }
-            return i;
-        }, 0), "Counter-Actor");
+            return null;
+        }, "Counter-Actor");
 
         // Create a functional actor for receiving the count
-        var receiverActor = actorSystem.register(new FunctionalActor<Void, HelloCount>().receiveMessage((state, message) -> {
-            assertEquals(4, message.count(), "Expected count to be 4, but was " + message.count());
-            testCompletionLatch.countDown(); // Signal that we received the message
+        var receiverActor = actorSystem.register((message) -> {
+            if (message instanceof HelloCount hc) {
+                assertEquals(4, hc.count(), "Expected count to be 4, but was " + hc.count());
+                testCompletionLatch.countDown(); // Signal that we received the message
+            }
             return null;
-        }, null), "count-receiver-with-delay");
+        }, "count-receiver-with-delay");
 
         // Give actors time to initialize
         Thread.sleep(100);
         
-        // Use shorter delays to make the test run faster but still test the functionality
+        // Send messages with increasing delays
         counter.tell(new CounterProtocol.CountUp(), 100, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 200, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 300, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 400, TimeUnit.MILLISECONDS);
         
-        // Wait for all count up operations to be processed before sending GetCount
-        boolean allCountsProcessed = countUpLatch.await(5, TimeUnit.SECONDS);
-        assertTrue(allCountsProcessed, "Not all count up operations were processed within the expected time");
+        // Wait for a sufficient time for all delayed messages to be processed
+        Thread.sleep(1000);
         
-        // Now that we know all counts are processed, send the GetCount message
-        counter.tell(new CounterProtocol.GetCount(receiverActor), 100, TimeUnit.MILLISECONDS);
+        // Now send the GetCount message
+        counter.tell(new CounterProtocol.GetCount(receiverActor));
 
         // Wait for the test to complete with a timeout
         boolean completed = testCompletionLatch.await(5, TimeUnit.SECONDS);
         assertTrue(completed, "Test did not complete within the expected time");
+        
+        // Final verification
+        assertEquals(4, finalCount[0], "Expected final count to be 4");
     }
 
     // Tests for the ask method
@@ -167,7 +168,9 @@ class ActorSystemTest {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                payload.replyTo().tell("pong");
+                // Create a Pid for the reply actor and tell it the response
+                Pid replyPid = new Pid(payload.replyTo(), self().system());
+                replyPid.tell("pong");
             } else if ("ping-wrong-type".equals(payload.message())) {
                 // Add a small delay to ensure the reply actor is ready
                 try {
@@ -176,7 +179,8 @@ class ActorSystemTest {
                     Thread.currentThread().interrupt();
                 }
                 // Send an Integer instead of String to trigger ClassCastException
-                payload.replyTo().tell(Integer.valueOf(123)); 
+                Pid replyPid = new Pid(payload.replyTo(), self().system());
+                replyPid.tell(Integer.valueOf(123));
             }
         }
     }
