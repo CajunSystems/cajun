@@ -2,8 +2,6 @@ package systems.cajun;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.flow.BackpressureAwareQueue;
-import systems.cajun.backpressure.BackpressureMetrics;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,17 +10,14 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.HashMap;
 
 public abstract class Actor<Message> {
 
     private static final Logger logger = LoggerFactory.getLogger(Actor.class);
     private static final int DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10;
     private static final int DEFAULT_BATCH_SIZE = 10; // Default number of messages to process in a batch
-    private static final int DEFAULT_QUEUE_CAPACITY = 1000; // Default queue capacity
 
-    // Queue for message processing
-    private final BackpressureAwareQueue<Message> mailbox;
+    private final BlockingQueue<Message> mailbox;
     private volatile boolean isRunning;
     private final String actorId;
     private final ActorSystem system;
@@ -45,6 +40,7 @@ public abstract class Actor<Message> {
     public Actor(ActorSystem system, String actorId) {
         this.system = system;
         this.actorId = actorId;
+        this.mailbox = new LinkedBlockingQueue<>();
 
         // Use configuration from the actor system
         if (system.getThreadPoolFactory() != null) {
@@ -66,22 +62,8 @@ public abstract class Actor<Message> {
                            Executors.newVirtualThreadPerTaskExecutor();
         }
 
-        // Create a backpressure-aware queue with sensible defaults
-        this.mailbox = createMailbox();
-        
         this.pid = new Pid(actorId, system);
-        logger.debug("Actor {} created with batch size {} and backpressure-aware queue", actorId, batchSize);
-    }
-    
-    /**
-     * Creates the mailbox for this actor.
-     * Override this method to customize the mailbox configuration.
-     * 
-     * @return A configured BackpressureAwareQueue
-     */
-    protected BackpressureAwareQueue<Message> createMailbox() {
-        // Default to a buffer size of 1000 and adaptive backpressure mode
-        return new BackpressureAwareQueue<>(DEFAULT_QUEUE_CAPACITY, BackpressureAwareQueue.BackpressureMode.ADAPTIVE);
+        logger.debug("Actor {} created with batch size {}", actorId, batchSize);
     }
 
     protected abstract void receive(Message message);
@@ -129,77 +111,6 @@ public abstract class Actor<Message> {
         this.batchSize = batchSize;
         return this;
     }
-    
-    /**
-     * Configures the backpressure mode for this actor's mailbox.
-     * This method should be called before starting the actor.
-     * 
-     * @param mode The backpressure mode to use
-     * @return This actor instance for method chaining
-     */
-    public Actor<Message> withBackpressureMode(BackpressureAwareQueue.BackpressureMode mode) {
-        if (isRunning) {
-            logger.warn("Changing backpressure mode on a running actor may not take effect immediately");
-        }
-        
-        // Create a new mailbox with the specified mode
-        BackpressureAwareQueue<Message> newMailbox = new BackpressureAwareQueue<>(DEFAULT_QUEUE_CAPACITY, mode);
-        
-        // Transfer any existing messages
-        List<Message> existingMessages = new ArrayList<>();
-        mailbox.drainTo(existingMessages);
-        for (Message message : existingMessages) {
-            newMailbox.offer(message);
-        }
-        
-        // Replace the mailbox field (this is a bit hacky but works for configuration purposes)
-        try {
-            java.lang.reflect.Field field = Actor.class.getDeclaredField("mailbox");
-            field.setAccessible(true);
-            field.set(this, newMailbox);
-        } catch (Exception e) {
-            logger.error("Failed to update backpressure mode", e);
-        }
-        
-        return this;
-    }
-    
-    /**
-     * Configures the buffer size for this actor's mailbox.
-     * This method should be called before starting the actor.
-     * 
-     * @param bufferSize The buffer size to use
-     * @return This actor instance for method chaining
-     */
-    public Actor<Message> withMailboxBufferSize(int bufferSize) {
-        if (isRunning) {
-            logger.warn("Changing buffer size on a running actor may not take effect immediately");
-        }
-        
-        // Get the current backpressure mode
-        BackpressureAwareQueue.BackpressureMode currentMode = BackpressureAwareQueue.BackpressureMode.ADAPTIVE;
-        
-        // Create a new mailbox with the specified buffer size
-        BackpressureAwareQueue<Message> newMailbox = new BackpressureAwareQueue<>(bufferSize, currentMode);
-        
-        // Transfer any existing messages
-        List<Message> existingMessages = new ArrayList<>();
-        mailbox.drainTo(existingMessages);
-        for (Message message : existingMessages) {
-            newMailbox.offer(message);
-        }
-        
-        // Replace the mailbox field
-        try {
-            java.lang.reflect.Field field = Actor.class.getDeclaredField("mailbox");
-            field.setAccessible(true);
-            field.set(this, newMailbox);
-        } catch (Exception e) {
-            logger.error("Failed to update buffer size", e);
-        }
-        
-        return this;
-    }
 
     public void start() {
         if (isRunning) {
@@ -242,14 +153,7 @@ public abstract class Actor<Message> {
     }
 
     public void tell(Message message) {
-        if (message == null) {
-            throw new IllegalArgumentException("Message cannot be null");
-        }
-        
-        boolean accepted = mailbox.offer(message);
-        if (!accepted) {
-            logger.warn("Actor {} rejected message due to backpressure: {}", actorId, message);
-        }
+        mailbox.offer(message);
     }
 
     public boolean isRunning() {
@@ -518,21 +422,6 @@ public abstract class Actor<Message> {
             }
         }
     }
-    
-    /**
-     * Returns the current backpressure metrics for this actor.
-     * 
-     * @return A map of metric names to values
-     */
-    public Map<String, Object> getBackpressureMetrics() {
-        Map<String, Object> metrics = new HashMap<>();
-        metrics.put("droppedMessages", mailbox.getDroppedMessageCount());
-        metrics.put("delayedMessages", mailbox.getDelayedMessageCount());
-        metrics.put("processedMessages", mailbox.getProcessedMessageCount());
-        metrics.put("mailboxSize", mailbox.size());
-        metrics.put("backpressureLevel", mailbox.getCurrentBackpressureLevel());
-        return metrics;
-    }
 
     protected void processMailbox() {
         while (isRunning) {
@@ -554,12 +443,7 @@ public abstract class Actor<Message> {
                     if (!isRunning) break; // Check if we should stop processing
 
                     try {
-                        long startTime = System.nanoTime();
                         receive(message);
-                        long processingTime = System.nanoTime() - startTime;
-                        
-                        // Update backpressure metrics
-                        mailbox.updateBackpressureLevel(processingTime);
                     } catch (Exception e) {
                         logger.error("Actor {} error processing message: {}", actorId, message, e);
                         handleException(message, e);
