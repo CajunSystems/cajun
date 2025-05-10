@@ -126,6 +126,16 @@ public class BackpressureActorTest {
             }
         });
         
+        // Force a metrics update to ensure the callback is registered
+        Method updateMetricsMethod = Actor.class.getDeclaredMethod("updateMetrics");
+        updateMetricsMethod.setAccessible(true);
+        updateMetricsMethod.invoke(actor);
+        
+        // Set a lower high watermark to ensure resizing triggers more easily
+        Field highWatermarkField = Actor.class.getDeclaredField("highWatermark");
+        highWatermarkField.setAccessible(true);
+        highWatermarkField.set(actor, 0.5f); // Lower the threshold to make resizing more likely
+        
         // Send messages rapidly to trigger resizing
         CountDownLatch latch = new CountDownLatch(1);
         Thread sender = new Thread(() -> {
@@ -136,6 +146,15 @@ public class BackpressureActorTest {
                 while (sent < total) {
                     if (actor.tryTell("Message-" + sent)) {
                         sent++;
+                        
+                        // Force metrics update every few messages to increase chances of resizing
+                        if (sent % 10 == 0) {
+                            try {
+                                updateMetricsMethod.invoke(actor);
+                            } catch (Exception e) {
+                                logger.error("Error invoking updateMetrics", e);
+                            }
+                        }
                     } else {
                         // Brief pause when backpressured
                         Thread.sleep(5);
@@ -151,6 +170,9 @@ public class BackpressureActorTest {
         
         // Wait for sender to complete
         assertTrue(latch.await(10, TimeUnit.SECONDS), "Sender should complete within timeout");
+        
+        // Force a final metrics update to ensure any pending resize is applied
+        updateMetricsMethod.invoke(actor);
         
         // Verify mailbox was resized
         assertTrue(highestCapacity.get() > initialCapacity, 

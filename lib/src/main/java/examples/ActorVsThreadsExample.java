@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+
 import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.nio.file.Files;
@@ -12,9 +13,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.Callable;
 
 /**
  * Example demonstrating the differences between actors and pure threads.
@@ -50,7 +48,7 @@ public class ActorVsThreadsExample {
 
         // Run thread-based implementation
         long threadTime = runThreadImplementation();
-        
+
         // Run structured concurrency implementation
         long structuredTime = runStructuredConcurrencyImplementation();
 
@@ -74,8 +72,8 @@ public class ActorVsThreadsExample {
                         "Performance ratio (Thread/Actor): %.2f\n" +
                         "Performance ratio (Structured/Actor): %.2f\n" +
                         "Performance ratio (Structured/Thread): %.2f\n",
-                NUM_MESSAGES, 
-                actorTime, actorThroughput, 
+                NUM_MESSAGES,
+                actorTime, actorThroughput,
                 threadTime, threadThroughput,
                 structuredTime, structuredThroughput,
                 (double) threadTime / actorTime,
@@ -241,15 +239,15 @@ public class ActorVsThreadsExample {
                     try {
                         // Take a processed number from the input queue
                         Integer number = processorToSinkQueue.take();
-                        
+
                         // Count the received number
                         received++;
-                        
+
                         // Log progress periodically
                         if (received % (NUM_MESSAGES / 10) == 0) {
                             logger.info("Structured sink received {}% of messages", received * 100 / NUM_MESSAGES);
                         }
-                        
+
                         // Check if all messages have been received
                         if (received >= NUM_MESSAGES) {
                             logger.info("Structured sink received all {} messages", NUM_MESSAGES);
@@ -264,7 +262,7 @@ public class ActorVsThreadsExample {
                 }
                 return null;
             });
-            
+
             // Fork the processor task
             scope.fork(() -> {
                 int processed = 0;
@@ -272,19 +270,19 @@ public class ActorVsThreadsExample {
                     try {
                         // Take a number from the input queue
                         Integer number = sourceToProcessorQueue.take();
-                        
+
                         // Process the number (increment it)
                         int processedNumber = number + 1;
-                        
+
                         // Put the processed number in the output queue
                         processorToSinkQueue.put(processedNumber);
-                        
+
                         // Track progress
                         processed++;
                         if (processed % (NUM_MESSAGES / 10) == 0) {
                             logger.info("Structured processor processed {}% of messages", processed * 100 / NUM_MESSAGES);
                         }
-                        
+
                         // Check if all messages have been processed
                         if (processed >= NUM_MESSAGES) {
                             logger.info("Structured processor completed processing all messages");
@@ -298,22 +296,22 @@ public class ActorVsThreadsExample {
                 }
                 return null;
             });
-            
+
             // Fork the source task
             scope.fork(() -> {
                 logger.info("Structured source starting to generate {} messages", NUM_MESSAGES);
-                
+
                 try {
                     // Generate messages
                     for (int i = 0; i < NUM_MESSAGES; i++) {
                         sourceToProcessorQueue.put(i);
-                        
+
                         // Log progress periodically
                         if ((i + 1) % (NUM_MESSAGES / 10) == 0) {
                             logger.info("Structured source generated {}% of messages", (i + 1) * 100 / NUM_MESSAGES);
                         }
                     }
-                    
+
                     logger.info("Structured source completed generating all messages");
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -321,20 +319,20 @@ public class ActorVsThreadsExample {
                 }
                 return null;
             });
-            
+
             // Wait for completion latch
             completionLatch.await();
-            
+
             // Join all tasks
             scope.join();
-            
+
             // Check for failures
             scope.throwIfFailed();
         }
-        
+
         // Calculate execution time
         long executionTime = System.currentTimeMillis() - startTime;
-        
+
         logger.info("Structured concurrency implementation completed in {} ms", executionTime);
         return executionTime;
     }
