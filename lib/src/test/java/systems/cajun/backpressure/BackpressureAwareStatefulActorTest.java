@@ -253,7 +253,7 @@ public class BackpressureAwareStatefulActorTest {
         Thread.sleep(100);
         
         // Get metrics
-        BackpressureMetrics metrics = actor.getBackpressureMetrics();
+        systems.cajun.backpressure.BackpressureMetrics metrics = actor.getStrategyBackpressureMetrics();
         
         // Verify metrics match
         assertEquals(0.5, metrics.getBackpressureLevel(), "Backpressure level should match");

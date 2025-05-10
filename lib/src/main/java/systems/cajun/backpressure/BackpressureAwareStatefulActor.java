@@ -249,11 +249,11 @@ public abstract class BackpressureAwareStatefulActor<State extends Serializable,
     }
     
     /**
-     * Gets the current backpressure metrics.
+     * Gets the current strategy backpressure metrics.
      *
-     * @return Current backpressure metrics
+     * @return Current backpressure metrics from the strategy
      */
-    public BackpressureMetrics getBackpressureMetrics() {
+    public systems.cajun.backpressure.BackpressureMetrics getStrategyBackpressureMetrics() {
         return backpressureStrategy.getMetrics();
     }
     

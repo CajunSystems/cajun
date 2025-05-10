@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import systems.cajun.config.ThreadPoolFactory;
+import systems.cajun.config.BackpressureConfig;
 
 /**
  * ActorSystem is the main entry point for creating and managing actors.
@@ -18,7 +19,7 @@ import systems.cajun.config.ThreadPoolFactory;
 public class ActorSystem {
 
     private static final Logger logger = LoggerFactory.getLogger(ActorSystem.class);
-
+    
     /**
      * Functional interface for receiving and processing messages.
      * 
@@ -67,12 +68,13 @@ public class ActorSystem {
     private final ExecutorService sharedExecutor;
     private final ConcurrentHashMap<String, ScheduledFuture<?>> pendingDelayedMessages;
     private final ThreadPoolFactory threadPoolConfig;
+    private final BackpressureConfig backpressureConfig;
 
     /**
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory());
+        this(new ThreadPoolFactory(), new BackpressureConfig());
     }
 
     /**
@@ -81,7 +83,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor));
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), new BackpressureConfig());
     }
 
     /**
@@ -90,8 +92,19 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
+        this(threadPoolConfig, new BackpressureConfig());
+    }
+
+    /**
+     * Creates a new ActorSystem with the specified thread pool configuration and backpressure configuration.
+     * 
+     * @param threadPoolConfig The thread pool configuration
+     * @param backpressureConfig The backpressure configuration
+     */
+    public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig) {
         this.actors = new ConcurrentHashMap<>();
         this.threadPoolConfig = threadPoolConfig;
+        this.backpressureConfig = backpressureConfig;
         
         // Create the delay scheduler based on configuration
         this.delayScheduler = threadPoolConfig.createScheduledExecutorService("actor-system");
@@ -210,24 +223,89 @@ public class ActorSystem {
     }
 
     /**
-     * Registers an actor with the specified class and ID.
+     * Registers a new actor with this system, using the default configuration.
      * 
-     * @param <T> The type of the actor
-     * @param actorClass The class of the actor
-     * @param actorId The ID for the actor
-     * @return The PID of the created actor
+     * @param <T> The type of actor to register
+     * @param actorClass The class of the actor to register
+     * @param actorId The unique ID to assign to this actor
+     * @return The PID of the registered actor
      */
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId) {
+        return register(actorClass, actorId, false);
+    }
+    
+    /**
+     * Registers a new actor with this system, with optional backpressure support.
+     * 
+     * @param <T> The type of actor to register
+     * @param actorClass The class of the actor to register
+     * @param actorId The unique ID to assign to this actor
+     * @param enableBackpressure Whether to enable backpressure support for this actor
+     * @return The PID of the registered actor
+     */
+    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure) {
+        return register(actorClass, actorId, enableBackpressure, 
+                backpressureConfig.getInitialCapacity(), 
+                backpressureConfig.getMaxCapacity());
+    }
+    
+    /**
+     * Registers a new actor with this system, with custom backpressure configuration.
+     * 
+     * @param <T> The type of actor to register
+     * @param actorClass The class of the actor to register
+     * @param actorId The unique ID to assign to this actor
+     * @param enableBackpressure Whether to enable backpressure support for this actor
+     * @param initialCapacity The initial capacity of the mailbox (only used if backpressure is enabled)
+     * @param maxCapacity The maximum capacity the mailbox can grow to (only used if backpressure is enabled)
+     * @return The PID of the registered actor
+     */
+    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure, 
+                                             int initialCapacity, int maxCapacity) {
+        if (actors.containsKey(actorId)) {
+            throw new IllegalArgumentException("Actor with ID " + actorId + " already exists");
+        }
+        
         try {
-            T actor = actorClass.getDeclaredConstructor(ActorSystem.class, String.class)
-                    .newInstance(this, actorId);
+            // Create the actor instance
+            T actor;
+            try {
+                // Try to use constructor with system, actorId, and backpressure parameters
+                actor = actorClass.getConstructor(ActorSystem.class, String.class, boolean.class, int.class, int.class)
+                        .newInstance(this, actorId, enableBackpressure, initialCapacity, maxCapacity);
+            } catch (NoSuchMethodException e1) {
+                try {
+                    // Try to use constructor with system, actorId, and backpressure
+                    actor = actorClass.getConstructor(ActorSystem.class, String.class, boolean.class)
+                            .newInstance(this, actorId, enableBackpressure);
+                } catch (NoSuchMethodException e2) {
+                    try {
+                        // Fall back to constructor with system and actorId
+                        actor = actorClass.getConstructor(ActorSystem.class, String.class)
+                                .newInstance(this, actorId);
+                    } catch (NoSuchMethodException e3) {
+                        // Last resort: try just the system constructor
+                        actor = actorClass.getConstructor(ActorSystem.class)
+                                .newInstance(this);
+                    }
+                }
+            }
+            
+            // Register the actor
+            logger.debug("Registering actor {} of type {}", actorId, actorClass.getSimpleName());
+            
+            // Store in registry
             actors.put(actorId, actor);
+            
+            // Start the actor
             actor.start();
-            return actor.self();
+            
+            return actor.getPid();
+            
         } catch (InstantiationException | IllegalAccessException | 
-                InvocationTargetException | NoSuchMethodException e) {
-            logger.error("Error registering actor {}", actorId, e);
-            throw new RuntimeException("Error registering actor: " + e.getMessage(), e);
+                 InvocationTargetException | NoSuchMethodException e) {
+            logger.error("Error creating actor of type {}", actorClass.getName(), e);
+            throw new RuntimeException("Error creating actor", e);
         }
     }
 
@@ -299,6 +377,15 @@ public class ActorSystem {
      */
     public ThreadPoolFactory getThreadPoolFactory() {
         return threadPoolConfig;
+    }
+
+    /**
+     * Gets the backpressure configuration for this actor system.
+     * 
+     * @return The backpressure configuration
+     */
+    public BackpressureConfig getBackpressureConfig() {
+        return backpressureConfig;
     }
 
     /**
