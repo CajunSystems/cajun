@@ -1,13 +1,10 @@
 package systems.cajun;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -21,9 +18,12 @@ import systems.cajun.persistence.SnapshotEntry;
 import systems.cajun.persistence.SnapshotStore;
 import systems.cajun.runtime.persistence.PersistenceFactory;
 
-import java.io.Serializable;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import systems.cajun.persistence.RetryStrategy;
+import systems.cajun.config.BackpressureConfig;
 
 /**
  * An actor that maintains and persists its state.
@@ -78,6 +78,12 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     
     // Configuration for the persistence thread pool
     private static final int DEFAULT_PERSISTENCE_THREAD_POOL_SIZE = 2;
+    
+    // Retry strategy for error recovery
+    private RetryStrategy retryStrategy = new RetryStrategy();
+    
+    // Error hook for custom error handling
+    private Consumer<Throwable> errorHook = ex -> {};
 
     /**
      * Creates a new StatefulActor with default persistence.
@@ -90,6 +96,42 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
              PersistenceFactory.createBatchedFileMessageJournal(), 
              PersistenceFactory.createFileSnapshotStore(),
              DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
+    }
+    
+    /**
+     * Creates a new StatefulActor with default persistence and optional backpressure.
+     *
+     * @param system The actor system
+     * @param initialState The initial state of the actor
+     * @param enableBackpressure Whether to enable backpressure
+     */
+    public StatefulActor(ActorSystem system, State initialState, boolean enableBackpressure) {
+        this(system, initialState,
+             PersistenceFactory.createBatchedFileMessageJournal(), 
+             PersistenceFactory.createFileSnapshotStore(),
+             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE,
+             enableBackpressure,
+             BackpressureConfig.DEFAULT_INITIAL_CAPACITY,
+             BackpressureConfig.DEFAULT_MAX_CAPACITY);
+    }
+    
+    /**
+     * Creates a new StatefulActor with default persistence and custom backpressure settings.
+     *
+     * @param system The actor system
+     * @param initialState The initial state of the actor
+     * @param enableBackpressure Whether to enable backpressure
+     * @param initialCapacity Initial capacity of the mailbox when backpressure is enabled
+     * @param maxCapacity Maximum capacity of the mailbox when backpressure is enabled
+     */
+    public StatefulActor(ActorSystem system, State initialState, boolean enableBackpressure, int initialCapacity, int maxCapacity) {
+        this(system, initialState,
+             PersistenceFactory.createBatchedFileMessageJournal(), 
+             PersistenceFactory.createFileSnapshotStore(),
+             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE,
+             enableBackpressure,
+             initialCapacity,
+             maxCapacity);
     }
 
     /**
@@ -115,6 +157,44 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
              PersistenceFactory.createBatchedFileMessageJournal(),
              PersistenceFactory.createFileSnapshotStore(),
              DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
+    }
+    
+    /**
+     * Creates a new StatefulActor with a custom actor ID, default persistence, and optional backpressure.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param initialState The initial state of the actor
+     * @param enableBackpressure Whether to enable backpressure
+     */
+    public StatefulActor(ActorSystem system, String actorId, State initialState, boolean enableBackpressure) {
+        this(system, actorId, initialState,
+             PersistenceFactory.createBatchedFileMessageJournal(),
+             PersistenceFactory.createFileSnapshotStore(),
+             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE,
+             enableBackpressure,
+             BackpressureConfig.DEFAULT_INITIAL_CAPACITY,
+             BackpressureConfig.DEFAULT_MAX_CAPACITY);
+    }
+    
+    /**
+     * Creates a new StatefulActor with a custom actor ID, default persistence, and custom backpressure settings.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param initialState The initial state of the actor
+     * @param enableBackpressure Whether to enable backpressure
+     * @param initialCapacity Initial capacity of the mailbox when backpressure is enabled
+     * @param maxCapacity Maximum capacity of the mailbox when backpressure is enabled
+     */
+    public StatefulActor(ActorSystem system, String actorId, State initialState, boolean enableBackpressure, int initialCapacity, int maxCapacity) {
+        this(system, actorId, initialState,
+             PersistenceFactory.createBatchedFileMessageJournal(),
+             PersistenceFactory.createFileSnapshotStore(),
+             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE,
+             enableBackpressure,
+             initialCapacity,
+             maxCapacity);
     }
 
     /**
@@ -181,6 +261,25 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     }
     
     /**
+     * Creates a new StatefulActor with a custom actor ID, full persistence configuration, and backpressure support.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param initialState The initial state of the actor
+     * @param messageJournal The message journal to use for message persistence
+     * @param snapshotStore The snapshot store to use for state snapshots
+     * @param enableBackpressure Whether to enable backpressure
+     */
+    public StatefulActor(ActorSystem system, String actorId, State initialState, 
+                         BatchedMessageJournal<Message> messageJournal,
+                         SnapshotStore<State> snapshotStore,
+                         boolean enableBackpressure) {
+        this(system, actorId, initialState, messageJournal, snapshotStore, 
+             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE, enableBackpressure, 
+             BackpressureConfig.DEFAULT_INITIAL_CAPACITY, BackpressureConfig.DEFAULT_MAX_CAPACITY);
+    }
+    
+    /**
      * Creates a new StatefulActor with a custom actor ID, full persistence configuration, and custom thread pool size.
      *
      * @param system The actor system
@@ -199,6 +298,64 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         this.messageJournal = messageJournal;
         this.snapshotStore = snapshotStore;
         this.actorId = actorId;
+        this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
+        this.metrics = new ActorMetrics(actorId);
+    }
+    
+    /**
+     * Creates a new StatefulActor with a custom actor ID, full persistence configuration, custom thread pool size,
+     * and backpressure support.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param initialState The initial state of the actor
+     * @param messageJournal The message journal to use for message persistence
+     * @param snapshotStore The snapshot store to use for state snapshots
+     * @param persistenceThreadPoolSize The size of the thread pool for persistence operations
+     * @param enableBackpressure Whether to enable backpressure
+     * @param initialCapacity Initial capacity of the mailbox when backpressure is enabled
+     * @param maxCapacity Maximum capacity of the mailbox when backpressure is enabled
+     */
+    public StatefulActor(ActorSystem system, String actorId, State initialState, 
+                         BatchedMessageJournal<Message> messageJournal,
+                         SnapshotStore<State> snapshotStore,
+                         int persistenceThreadPoolSize,
+                         boolean enableBackpressure,
+                         int initialCapacity,
+                         int maxCapacity) {
+        super(system, actorId, enableBackpressure, initialCapacity, maxCapacity);
+        this.initialState = initialState;
+        this.messageJournal = messageJournal;
+        this.snapshotStore = snapshotStore;
+        this.actorId = actorId;
+        this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
+        this.metrics = new ActorMetrics(actorId);
+    }
+    
+    /**
+     * Creates a new StatefulActor with full configuration and backpressure support.
+     *
+     * @param system The actor system
+     * @param initialState The initial state of the actor
+     * @param messageJournal The message journal to use for message persistence
+     * @param snapshotStore The snapshot store to use for state snapshots
+     * @param persistenceThreadPoolSize The size of the thread pool for persistence operations
+     * @param enableBackpressure Whether to enable backpressure
+     * @param initialCapacity Initial capacity of the mailbox when backpressure is enabled
+     * @param maxCapacity Maximum capacity of the mailbox when backpressure is enabled
+     */
+    public StatefulActor(ActorSystem system, State initialState, 
+                         BatchedMessageJournal<Message> messageJournal,
+                         SnapshotStore<State> snapshotStore,
+                         int persistenceThreadPoolSize,
+                         boolean enableBackpressure,
+                         int initialCapacity,
+                         int maxCapacity) {
+        super(system, UUID.randomUUID().toString(), enableBackpressure, initialCapacity, maxCapacity);
+        this.initialState = initialState;
+        this.messageJournal = messageJournal;
+        this.snapshotStore = snapshotStore;
+        this.actorId = getActorId();
         this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
         this.metrics = new ActorMetrics(actorId);
     }
@@ -361,6 +518,12 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     }
 
     @Override
+    protected void handleException(Message message, Throwable exception) {
+        errorHook.accept(exception);
+        super.handleException(message, exception);
+    }
+
+    @Override
     protected final void receive(Message message) {
         if (!stateInitialized) {
             logger.debug("Actor {} received message before state was initialized, delaying processing", getActorId());
@@ -371,6 +534,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 tell(message);
             }).exceptionally(ex -> {
                 logger.error("Error initializing state for actor {}", getActorId(), ex);
+                errorHook.accept(ex);
                 handleException(message, ex);
                 metrics.errorOccurred();
                 return null;
@@ -385,49 +549,61 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         // First, journal the message
         messageJournal.append(actorId, message)
             .thenAccept(sequenceNumber -> {
-                try {
-                    // Process the message and update the state
-                    State currentStateValue = currentState.get();
-                    State newState = processMessage(currentStateValue, message);
+                // Use retry strategy for message processing
+                executeWithRetry(() -> {
+                    CompletableFuture<Void> future = new CompletableFuture<>();
+                    try {
+                        // Process the message and update the state
+                        State currentStateValue = currentState.get();
+                        State newState = processMessage(currentStateValue, message);
 
-                    // Update the last processed sequence number
-                    lastProcessedSequence.set(sequenceNumber);
+                        // Update the last processed sequence number
+                        lastProcessedSequence.set(sequenceNumber);
 
-                    // Only update and persist if the state has changed
-                    if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
-                        currentState.set(newState);
-                        stateChanged = true;
-                        changesSinceLastSnapshot++;
-                        
-                        // Record state change in metrics
-                        metrics.stateChanged();
-                        
-                        // Take snapshots using adaptive strategy
-                        long now = System.currentTimeMillis();
-                        if (now - lastSnapshotTime > snapshotIntervalMs || 
-                            changesSinceLastSnapshot >= changesBeforeSnapshot) {
-                            takeSnapshot().thenRun(() -> {
-                                stateChanged = false;
-                                changesSinceLastSnapshot = 0;
-                                
-                                // Record snapshot in metrics
-                                metrics.snapshotTaken();
-                            });
-                            lastSnapshotTime = now;
+                        // Only update and persist if the state has changed
+                        if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
+                            currentState.set(newState);
+                            stateChanged = true;
+                            changesSinceLastSnapshot++;
+                            
+                            // Record state change in metrics
+                            metrics.stateChanged();
+                            
+                            // Take snapshots using adaptive strategy
+                            long now = System.currentTimeMillis();
+                            if (now - lastSnapshotTime > snapshotIntervalMs || 
+                                changesSinceLastSnapshot >= changesBeforeSnapshot) {
+                                takeSnapshot().thenRun(() -> {
+                                    stateChanged = false;
+                                    changesSinceLastSnapshot = 0;
+                                    
+                                    // Record snapshot in metrics
+                                    metrics.snapshotTaken();
+                                });
+                                lastSnapshotTime = now;
+                            }
                         }
+                        
+                        future.complete(null);
+                    } catch (Exception e) {
+                        future.completeExceptionally(e);
                     }
-                    
-                    // Record message processing time
-                    long processingTime = System.nanoTime() - startTime;
-                    metrics.messageProcessed(processingTime);
-                } catch (Exception e) {
-                    logger.error("Error processing message in actor {}", actorId, e);
+                    return future;
+                }).exceptionally(e -> {
+                    logger.error("Error processing message in actor {} after retries", actorId, e);
+                    errorHook.accept(e);
                     handleException(message, e);
                     metrics.errorOccurred();
-                }
+                    return null;
+                });
+                
+                // Record message processing time
+                long processingTime = System.nanoTime() - startTime;
+                metrics.messageProcessed(processingTime);
             })
             .exceptionally(e -> {
                 logger.error("Error journaling message for actor {}", actorId, e);
+                errorHook.accept(e);
                 handleException(message, new ActorException("Failed to journal message", e));
                 metrics.errorOccurred();
                 return null;
@@ -799,6 +975,39 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      */
     public ActorMetrics getMetrics() {
         return metrics;
+    }
+    
+    /**
+     * Sets a custom retry strategy for this actor.
+     *
+     * @param retryStrategy The retry strategy to use
+     * @return This actor instance for method chaining
+     */
+    public StatefulActor<State, Message> withRetryStrategy(RetryStrategy retryStrategy) {
+        this.retryStrategy = retryStrategy;
+        return this;
+    }
+    
+    /**
+     * Sets an error hook to be notified when exceptions occur.
+     *
+     * @param errorHook The error hook to invoke with exceptions
+     * @return This actor instance for method chaining
+     */
+    public StatefulActor<State, Message> withErrorHook(Consumer<Throwable> errorHook) {
+        this.errorHook = errorHook;
+        return this;
+    }
+    
+    /**
+     * Executes an operation with retry logic.
+     *
+     * @param operation The operation to execute
+     * @param <T> The return type of the operation
+     * @return A CompletableFuture that completes with the result of the operation or exceptionally if all retries fail
+     */
+    protected <T> CompletableFuture<T> executeWithRetry(Supplier<CompletableFuture<T>> operation) {
+        return retryStrategy.executeWithRetry(operation, getPersistenceExecutor());
     }
 
     /**

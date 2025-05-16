@@ -1,0 +1,229 @@
+package examples;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import systems.cajun.ActorSystem;
+import systems.cajun.Pid;
+import systems.cajun.StatefulActor;
+import systems.cajun.persistence.RetryStrategy;
+
+import java.io.Serializable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Example demonstrating the use of StatefulActor with backpressure features for high-performance
+ * scenarios with flow control and state management.
+ */
+public class BackpressureStatefulActorExample {
+    private static final Logger logger = LoggerFactory.getLogger(BackpressureStatefulActorExample.class);
+
+    public static void main(String[] args) throws Exception {
+        // Create an actor system
+        ActorSystem system = new ActorSystem();
+        
+        // Create a stateful processor actor with backpressure enabled
+        // Initial capacity of 100 and max of 10,000
+        Pid processorPid = system.register(ProcessorActor.class, "processor");
+        ProcessorActor processor = (ProcessorActor) system.getActor(processorPid);
+        
+        // Set up metrics reporting
+        final AtomicInteger messagesAccepted = new AtomicInteger(0);
+        final AtomicInteger messagesRejected = new AtomicInteger(0);
+        
+        // Register a backpressure callback to monitor metrics
+        processor.withBackpressureCallback(metrics -> {
+            logger.info("Backpressure metrics - Size: {}/{}, Rate: {} msg/s, Backpressure: {}, Fill ratio: {}", 
+                    metrics.getCurrentSize(), metrics.getCapacity(), metrics.getProcessingRate(),
+                    metrics.isBackpressureActive() ? "ACTIVE" : "inactive",
+                    String.format("%.2f", metrics.getFillRatio()));
+        });
+        
+        // Set a custom retry strategy
+        processor.withRetryStrategy(new RetryStrategy()
+                .withMaxRetries(3)
+                .withInitialDelay(50)
+                .withBackoffMultiplier(1.5));
+        
+        // Set an error hook
+        processor.withErrorHook(ex -> {
+            logger.warn("Error hook triggered: {}", ex.getMessage());
+        });
+        
+        // Completion latch
+        CountDownLatch completionLatch = new CountDownLatch(1);
+        
+        // Start a producer thread
+        Thread producerThread = new Thread(() -> {
+            try {
+                int totalMessages = 100_000;
+                int sent = 0;
+                
+                logger.info("Starting to send {} messages", totalMessages);
+                long startTime = System.currentTimeMillis();
+                
+                while (sent < totalMessages) {
+                    // Try to send with backpressure awareness
+                    if (processor.tryTell(new CounterMessage("increment"))) {
+                        messagesAccepted.incrementAndGet();
+                        sent++;
+                        
+                        // Simulate varying production rates
+                        if (sent % 10_000 == 0) {
+                            logger.info("Sent {} messages so far", sent);
+                        }
+                    } else {
+                        // Message rejected due to backpressure
+                        messagesRejected.incrementAndGet();
+                        
+                        // Adaptive backoff based on backpressure metrics
+                        if (processor.getBackpressureMetrics().isBackpressureActive()) {
+                            // Longer backoff when backpressure is active
+                            Thread.sleep(10);
+                        } else {
+                            // Short yield when no backpressure
+                            Thread.yield();
+                        }
+                    }
+                }
+                
+                long duration = System.currentTimeMillis() - startTime;
+                logger.info("Finished sending {} messages in {} ms", totalMessages, duration);
+                logger.info("Messages accepted: {}, rejected: {}", 
+                        messagesAccepted.get(), messagesRejected.get());
+                
+                // Signal completion
+                completionLatch.countDown();
+                
+            } catch (Exception e) {
+                logger.error("Producer error", e);
+            }
+        });
+        
+        // Start producer
+        producerThread.start();
+        
+        // Wait for completion
+        completionLatch.await(2, TimeUnit.MINUTES);
+        
+        // Allow time for final processing
+        Thread.sleep(5000);
+        
+        // Get final state
+        CounterState finalState = processor.getState();
+        logger.info("Final counter value: {}", finalState.getValue());
+        
+        // Shutdown
+        system.shutdown();
+        
+        logger.info("Example completed");
+    }
+    
+    /**
+     * A stateful counter message.
+     */
+    public static class CounterMessage implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private final String operation;
+        
+        public CounterMessage(String operation) {
+            this.operation = operation;
+        }
+        
+        public String getOperation() {
+            return operation;
+        }
+    }
+    
+    /**
+     * A stateful counter state.
+     */
+    public static class CounterState implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private final int value;
+        
+        public CounterState(int value) {
+            this.value = value;
+        }
+        
+        public int getValue() {
+            return value;
+        }
+        
+        public CounterState increment() {
+            return new CounterState(value + 1);
+        }
+        
+        public CounterState decrement() {
+            return new CounterState(value - 1);
+        }
+    }
+    
+    /**
+     * A stateful processor actor that demonstrates backpressure handling.
+     * This actor processes messages at a controlled rate to show
+     * how backpressure affects the system.
+     */
+    public static class ProcessorActor extends StatefulActor<CounterState, CounterMessage> {
+        private static final Logger logger = LoggerFactory.getLogger(ProcessorActor.class);
+        private final AtomicInteger processedCount = new AtomicInteger(0);
+        private long startTime = 0;
+        
+        public ProcessorActor(ActorSystem system, String actorId) {
+            // Create with backpressure enabled, initial capacity 100, max capacity 10,000
+            super(system, actorId, new CounterState(0), true, 100, 10_000);
+        }
+        
+        @Override
+        protected void preStart() {
+            super.preStart();
+            startTime = System.currentTimeMillis();
+            logger.info("ProcessorActor starting");
+        }
+        
+        @Override
+        protected CounterState processMessage(CounterState state, CounterMessage message) {
+            try {
+                // Simulate varying processing times
+                int processed = processedCount.incrementAndGet();
+                
+                if (processed % 1000 == 0) {
+                    // Every 1000th message, log progress
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    double rate = processed * 1000.0 / elapsed;
+                    logger.info("Processed {} messages at {} msg/sec", processed, String.format("%.2f", rate));
+                }
+                
+                // Simulate processing work with variable latency
+                if (processed % 100 == 0) {
+                    // Occasionally take longer to process
+                    Thread.sleep(5);
+                } else {
+                    // Normal processing time
+                    Thread.sleep(1);
+                }
+                
+                // Process the message
+                if ("increment".equals(message.getOperation())) {
+                    return state.increment();
+                } else if ("decrement".equals(message.getOperation())) {
+                    return state.decrement();
+                }
+                
+                return state;
+                
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Processing interrupted", e);
+            }
+        }
+        
+        @Override
+        protected void postStop() {
+            super.postStop();
+            logger.info("ProcessorActor stopping after processing {} messages", 
+                    processedCount.get());
+        }
+    }
+}

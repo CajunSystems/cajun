@@ -1,4 +1,4 @@
-package systems.cajun.backpressure;
+package systems.cajun.persistence;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -101,9 +101,9 @@ public class RetryStrategy implements Serializable {
     }
     
     /**
-     * Calculates the delay for a given retry attempt using exponential backoff.
+     * Calculates the delay for the next retry attempt using exponential backoff.
      *
-     * @param attempt The current retry attempt (0-based)
+     * @param attempt The current attempt number (0-based)
      * @return The delay in milliseconds
      */
     private long calculateDelay(int attempt) {
@@ -112,68 +112,77 @@ public class RetryStrategy implements Serializable {
     }
     
     /**
-     * Creates a builder for RetryStrategy.
+     * Creates a new RetryStrategy with a custom maximum number of retries.
      *
-     * @return A new builder instance
+     * @param maxRetries Maximum number of retry attempts
+     * @return A new RetryStrategy with the specified maximum retries
      */
-    public static Builder builder() {
-        return new Builder();
+    public RetryStrategy withMaxRetries(int maxRetries) {
+        return new RetryStrategy(
+                maxRetries,
+                this.initialDelayMs,
+                this.maxDelayMs,
+                this.backoffMultiplier,
+                this.retryableExceptionPredicate);
     }
     
     /**
-     * Builder for RetryStrategy.
+     * Creates a new RetryStrategy with a custom initial delay.
+     *
+     * @param initialDelayMs Initial delay between retries in milliseconds
+     * @return A new RetryStrategy with the specified initial delay
      */
-    public static class Builder {
-        private int maxRetries = 3;
-        private long initialDelayMs = 100;
-        private long maxDelayMs = 5000;
-        private double backoffMultiplier = 2.0;
-        private Predicate<Throwable> retryableExceptionPredicate = ex -> true;
-        
-        public Builder maxRetries(int maxRetries) {
-            this.maxRetries = maxRetries;
-            return this;
-        }
-        
-        public Builder initialDelayMs(long initialDelayMs) {
-            this.initialDelayMs = initialDelayMs;
-            return this;
-        }
-        
-        public Builder maxDelayMs(long maxDelayMs) {
-            this.maxDelayMs = maxDelayMs;
-            return this;
-        }
-        
-        public Builder backoffMultiplier(double backoffMultiplier) {
-            this.backoffMultiplier = backoffMultiplier;
-            return this;
-        }
-        
-        public Builder retryableExceptionPredicate(Predicate<Throwable> predicate) {
-            this.retryableExceptionPredicate = predicate;
-            return this;
-        }
-        
-        public Builder retryableExceptions(Class<?>... exceptionClasses) {
-            this.retryableExceptionPredicate = ex -> {
-                for (Class<?> exClass : exceptionClasses) {
-                    if (exClass.isInstance(ex)) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            return this;
-        }
-        
-        public RetryStrategy build() {
-            return new RetryStrategy(
-                    maxRetries,
-                    initialDelayMs,
-                    maxDelayMs,
-                    backoffMultiplier,
-                    retryableExceptionPredicate);
-        }
+    public RetryStrategy withInitialDelay(long initialDelayMs) {
+        return new RetryStrategy(
+                this.maxRetries,
+                initialDelayMs,
+                this.maxDelayMs,
+                this.backoffMultiplier,
+                this.retryableExceptionPredicate);
+    }
+    
+    /**
+     * Creates a new RetryStrategy with a custom maximum delay.
+     *
+     * @param maxDelayMs Maximum delay between retries in milliseconds
+     * @return A new RetryStrategy with the specified maximum delay
+     */
+    public RetryStrategy withMaxDelay(long maxDelayMs) {
+        return new RetryStrategy(
+                this.maxRetries,
+                this.initialDelayMs,
+                maxDelayMs,
+                this.backoffMultiplier,
+                this.retryableExceptionPredicate);
+    }
+    
+    /**
+     * Creates a new RetryStrategy with a custom backoff multiplier.
+     *
+     * @param backoffMultiplier Multiplier for exponential backoff
+     * @return A new RetryStrategy with the specified backoff multiplier
+     */
+    public RetryStrategy withBackoffMultiplier(double backoffMultiplier) {
+        return new RetryStrategy(
+                this.maxRetries,
+                this.initialDelayMs,
+                this.maxDelayMs,
+                backoffMultiplier,
+                this.retryableExceptionPredicate);
+    }
+    
+    /**
+     * Creates a new RetryStrategy with a custom predicate for determining retryable exceptions.
+     *
+     * @param retryableExceptionPredicate Predicate to determine if an exception is retryable
+     * @return A new RetryStrategy with the specified retryable exception predicate
+     */
+    public RetryStrategy withRetryableExceptionPredicate(Predicate<Throwable> retryableExceptionPredicate) {
+        return new RetryStrategy(
+                this.maxRetries,
+                this.initialDelayMs,
+                this.maxDelayMs,
+                this.backoffMultiplier,
+                retryableExceptionPredicate);
     }
 }

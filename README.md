@@ -685,86 +685,251 @@ Key snapshot features:
 - **Dedicated thread pool**: Snapshots are taken asynchronously to avoid blocking the actor
 - **Final snapshots**: A snapshot is automatically taken when the actor stops
 
-## Backpressure Aware Stateful Actors
+## Backpressure Support in Actors
 
-Cajun provides a `BackpressureAwareStatefulActor` that extends the StatefulActor with backpressure capabilities to handle high load scenarios gracefully.
+Cajun provides built-in backpressure capabilities directly in the `StatefulActor` class to handle high load scenarios gracefully. This allows actors to manage their message processing rate and apply backpressure when they're receiving messages faster than they can process them.
+
+### Using Backpressure in StatefulActor
 
 ```java
-// Create a backpressure-aware stateful actor with default strategies
-BackpressureAwareStatefulActor<MyState, MyMessage> actor = 
-    new MyBackpressureAwareActor(system, initialState);
+// Create a stateful actor with backpressure enabled (using default settings)
+StatefulActor<MyState, MyMessage> actor = 
+    new MyStatefulActor(system, initialState, true); // Enable backpressure with default settings
 
-// Or with custom strategies
-BackpressureAwareStatefulActor<MyState, MyMessage> actor = 
-    new MyBackpressureAwareActor(
+// Or with custom backpressure settings
+StatefulActor<MyState, MyMessage> actor = 
+    new MyStatefulActor(
         system,
         initialState,
-        new AdaptiveBackpressureStrategy(),
-        RetryStrategy.builder()
-            .maxRetries(5)
-            .initialDelayMs(100)
-            .build()
+        true,        // Enable backpressure
+        100,         // Initial capacity
+        10000        // Maximum capacity
     );
 
-// Add custom error handling
-actor.withErrorHook(ex -> logger.error("Error in actor processing", ex));
+// Check if a message would be accepted before sending
+if (actor.tryTell(message)) {
+    // Message was accepted
+} else {
+    // Message was rejected due to backpressure
+    // Handle rejection (e.g., retry later, drop, or apply other strategies)
+}
+
+// Get backpressure metrics
+Actor.BackpressureMetrics metrics = actor.getBackpressureMetrics();
+int currentSize = metrics.getCurrentSize();
+double fillRatio = metrics.getFillRatio();
 ```
 
-### Backpressure Strategies
+### Error Handling and Retry Strategy
 
-The BackpressureAwareStatefulActor monitors system load and can apply different strategies when under pressure:
-
-1. **Load Monitoring**:
-   - Tracks message queue size
-   - Measures message processing times
-   - Monitors persistence queue size
-
-2. **Adaptive Backpressure**:
-   - Gradually increases backpressure as load increases
-   - Can throttle, delay, or reject messages based on current load
-   - Provides metrics for monitoring backpressure levels
-
-3. **Monitoring Backpressure**:
-   ```java
-   // Get current backpressure metrics
-   BackpressureMetrics metrics = actor.getBackpressureMetrics();
-   
-   // Get current backpressure level (0.0-1.0)
-   double level = actor.getCurrentBackpressureLevel();
-   
-   // Get estimated queue size
-   int queueSize = actor.getEstimatedQueueSize();
-   ```
-
-### Retry Mechanisms
-
-BackpressureAwareStatefulActor includes built-in retry capabilities for handling transient failures:
+The `StatefulActor` also supports error handling and retry capabilities:
 
 ```java
-// Create a custom retry strategy
-RetryStrategy retryStrategy = RetryStrategy.builder()
-    .maxRetries(3)
-    .initialDelayMs(100)
-    .maxDelayMs(5000)
-    .backoffMultiplier(2.0)
-    .retryableExceptions(IOException.class, TimeoutException.class)
-    .build();
+// Add custom error handling
+actor.withErrorHook(ex -> {
+    logger.error("Error in actor processing", ex);
+    // Perform custom error handling
+});
+
+// Add retry capabilities with exponential backoff
+actor.withRetryStrategy(new RetryStrategy()
+    .withMaxRetries(5)                 // Maximum number of retries
+    .withInitialDelay(100)             // Initial delay in milliseconds
+    .withMaxDelay(5000)                // Maximum delay in milliseconds
+    .withBackoffMultiplier(2.0)        // Exponential backoff multiplier
+    .withRetryableExceptionPredicate(  // Custom predicate for retryable exceptions
+        ex -> ex instanceof TemporaryException
+    ));
 ```
 
-Key retry features:
-- **Exponential backoff**: Increasing delays between retry attempts
-- **Configurable retry count**: Set maximum number of retry attempts
-- **Exception filtering**: Specify which exceptions should trigger retries
-- **Asynchronous execution**: Retries are scheduled on a dedicated thread pool
+### Backpressure Features
 
-### Error Recovery
+The backpressure system in Cajun actors provides several key features:
 
-The BackpressureAwareStatefulActor enhances error recovery with:
+1. **Configurable Mailbox Capacity**:
+   - Set initial and maximum capacity for actor mailboxes
+   - Control when backpressure is applied based on queue size
 
-1. **Graceful degradation**: Can continue processing critical messages while under load
+2. **Message Rejection**:
+   - `tryTell()` method allows senders to handle rejection gracefully
+   - Rejected messages can be queued elsewhere, dropped, or handled with custom logic
+
+3. **Retry Strategy with Exponential Backoff**:
+   - Automatically retry failed operations with configurable policies
+   - Exponential backoff to prevent overwhelming the system during recovery
+   - Custom predicates to determine which exceptions are retryable
+
+4. **Custom Error Hooks**:
+   - Register custom error handlers to be called when exceptions occur
+   - Implement specific error handling behaviors without modifying actor code
+
+5. **Metrics and Monitoring**:
+   - Track mailbox size and fill ratio
+   - Monitor backpressure levels to detect system stress
+   
+
+### Example: Creating a Backpressure-Aware Actor
+
+Here's a complete example of creating a stateful actor with backpressure, retry, and error handling capabilities:
+
+```java
+import systems.cajun.ActorSystem;
+import systems.cajun.StatefulActor;
+import systems.cajun.persistence.RetryStrategy;
+import systems.cajun.persistence.BatchedMessageJournal;
+import systems.cajun.persistence.SnapshotStore;
+
+import java.io.Serializable;
+import java.util.concurrent.TimeUnit;
+
+// Define message type
+public class OrderMessage implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private final String orderId;
+    private final double amount;
+    
+    public OrderMessage(String orderId, double amount) {
+        this.orderId = orderId;
+        this.amount = amount;
+    }
+    
+    public String getOrderId() { return orderId; }
+    public double getAmount() { return amount; }
+}
+
+// Define state type
+public class OrderProcessorState implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private final int processedCount;
+    private final double totalAmount;
+    
+    public OrderProcessorState(int processedCount, double totalAmount) {
+        this.processedCount = processedCount;
+        this.totalAmount = totalAmount;
+    }
+    
+    public OrderProcessorState addOrder(double amount) {
+        return new OrderProcessorState(processedCount + 1, totalAmount + amount);
+    }
+    
+    public int getProcessedCount() { return processedCount; }
+    public double getTotalAmount() { return totalAmount; }
+}
+
+// Create the backpressure-aware actor
+public class OrderProcessorActor extends StatefulActor<OrderProcessorState, OrderMessage> {
+    
+    public OrderProcessorActor(
+            ActorSystem system,
+            String actorId,
+            OrderProcessorState initialState,
+            BatchedMessageJournal<OrderMessage> messageJournal,
+            SnapshotStore<OrderProcessorState> snapshotStore) {
+        // Enable backpressure with custom settings
+        super(system, actorId, initialState, messageJournal, snapshotStore, 5, true, 100, 1000);
+        
+        // Configure retry strategy
+        withRetryStrategy(new RetryStrategy()
+            .withMaxRetries(3)
+            .withInitialDelay(100)
+            .withMaxDelay(2000)
+            .withBackoffMultiplier(2.0)
+            .withRetryableExceptionPredicate(ex -> {
+                // Only retry certain types of exceptions
+                return ex instanceof TemporaryDatabaseException;
+            }));
+        
+        // Add custom error handling
+        withErrorHook(ex -> {
+            System.err.println("Error processing order: " + ex.getMessage());
+            // Could notify monitoring systems, log to special error queue, etc.
+        });
+    }
+    
+    @Override
+    protected OrderProcessorState processMessage(OrderProcessorState state, OrderMessage message) {
+        // Simulate database operation that might fail
+        try {
+            // In a real system, this would be a database call
+            if (Math.random() < 0.1) { // 10% chance of failure
+                throw new TemporaryDatabaseException("Database connection error");
+            }
+            
+            // Process the order
+            System.out.println("Processing order: " + message.getOrderId() + 
+                             " for $" + message.getAmount());
+            
+            // Update state with new order
+            return state.addOrder(message.getAmount());
+        } catch (Exception e) {
+            // This will be caught by the retry mechanism
+            throw e;
+        }
+    }
+    
+    // Custom exception for demonstration
+    private static class TemporaryDatabaseException extends RuntimeException {
+        public TemporaryDatabaseException(String message) {
+            super(message);
+        }
+    }
+}
+
+// Usage example
+public class BackpressureExample {
+    public static void main(String[] args) throws Exception {
+        ActorSystem system = new ActorSystem();
+        
+        // Create actor with initial state
+        OrderProcessorActor actor = new OrderProcessorActor(
+            system, 
+            "order-processor", 
+            new OrderProcessorState(0, 0.0),
+            null, // Use default message journal
+            null  // Use default snapshot store
+        );
+        
+        // Start the actor
+        actor.start();
+        
+        // Wait for actor to initialize
+        actor.waitForStateInitialization(1000);
+        
+        // Send messages with backpressure handling
+        for (int i = 1; i <= 1000; i++) {
+            OrderMessage order = new OrderMessage("ORD-" + i, 100.0 * i);
+            
+            // Try to send with backpressure awareness
+            if (!actor.tryTell(order)) {
+                System.out.println("Backpressure applied, order " + order.getOrderId() + " rejected");
+                
+                // Wait and retry later
+                TimeUnit.MILLISECONDS.sleep(50);
+                i--; // Retry this order
+            }
+        }
+        
+        // Get backpressure metrics
+        Actor.BackpressureMetrics metrics = actor.getBackpressureMetrics();
+        System.out.println("Current mailbox size: " + metrics.getCurrentSize());
+        System.out.println("Fill ratio: " + metrics.getFillRatio());
+        
+        // Shutdown
+        system.shutdown();
+    }
+}
+```
+
+This example demonstrates:
+
+1. Creating a stateful actor with backpressure enabled and custom capacity settings
+2. Configuring a retry strategy with exponential backoff for transient failures
+3. Adding a custom error hook for specialized error handling
+4. Using the `tryTell()` method to handle backpressure rejection
+5. Monitoring backpressure metrics
 2. **Error hooks**: Custom error handlers for specific error scenarios
 3. **Processing metrics**: Tracks and exposes processing performance metrics
-4. **Adaptive behavior**: Can adjust processing strategy based on error patterns
+4. **Retry logic**: Automatically retries failed operations with configurable policies
 
 ## Cluster Mode
 
@@ -877,11 +1042,11 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
    - [ ] RocksDB backend for state persistence
    - [ ] Segregation of runtime implementations (file store, in-memory store, etc.) from the actor system
 5. Backpressure and load management
-   - [x] BackpressureAwareStatefulActor implementation
-   - [x] Adaptive backpressure strategies
-   - [x] Load monitoring (queue size, processing times, persistence queue)
+   - [x] Integrated backpressure support in StatefulActor
+   - [x] Configurable mailbox capacity for backpressure control
+   - [x] Load monitoring (queue size, processing times)
    - [x] Configurable retry mechanisms with exponential backoff
-   - [x] Error recovery and graceful degradation
+   - [x] Error recovery with custom error hooks
    - [x] Processing metrics and backpressure level monitoring
    - [ ] Circuit breaker pattern implementation
    - [ ] Rate limiting strategies
