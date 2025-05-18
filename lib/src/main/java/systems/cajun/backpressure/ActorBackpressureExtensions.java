@@ -105,8 +105,8 @@ public class ActorBackpressureExtensions {
      */
     public static <T> boolean tellWithOptions(Actor<T> actor, T message, BackpressureSendOptions options) {
         if (!actor.isBackpressureEnabled()) {
-            // When backpressure is disabled, simply relay to the actor's tell method
-            actor.tell(message);
+            // When backpressure is disabled, send through the actor's PID instead of directly
+            actor.self().tell(message);
             return true;
         }
         
@@ -129,7 +129,8 @@ public class ActorBackpressureExtensions {
                     
                     while (System.currentTimeMillis() < endTime) {
                         if (!manager.isBackpressureActive()) {
-                            actor.tell(message);
+                            // Send through the actor's PID instead of directly
+                            actor.self().tell(message);
                             return true;
                         }
                         
@@ -147,7 +148,8 @@ public class ActorBackpressureExtensions {
         }
         
         // No backpressure or message accepted by strategy
-        actor.tell(message);
+        // Send through the actor's PID instead of directly
+        actor.self().tell(message);
         return true;
     }
 

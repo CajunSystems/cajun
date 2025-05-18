@@ -66,11 +66,8 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
                         
                         // Forward to the next actor if there is one
                         if (nextPid != null) {
-                            @SuppressWarnings("unchecked")
-                            Actor<M> nextActor = (Actor<M>) system.getActor(nextPid);
-                            if (nextActor != null) {
-                                nextActor.tell(message);
-                            }
+                            // Use the actor's PID to send message through ActorSystem
+                            nextPid.tell(message);
                         }
                         
                         return newState;

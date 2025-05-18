@@ -1016,7 +1016,7 @@ public class BackpressureManager<T> {
                     if (!enabled || !isBackpressureActive.get()) {
                         // Backpressure no longer active, send the message
                         if (actor != null) {
-                            actor.tell(retryEntry.message);
+                            actor.self().tell(retryEntry.message);
                             logger.debug("Retry successful: backpressure no longer active");
                         }
                         return;
@@ -1032,7 +1032,7 @@ public class BackpressureManager<T> {
                     if (currentEvent == null || 
                             currentEvent.getFillRatio() < retryEntry.originalEvent.getFillRatio()) {
                         if (actor != null) {
-                            actor.tell(retryEntry.message);
+                            actor.self().tell(retryEntry.message);
                             logger.debug("Retry successful: backpressure has improved");
                         }
                     } else {
