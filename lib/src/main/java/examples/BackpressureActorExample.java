@@ -140,6 +140,18 @@ public class BackpressureActorExample {
         }
         
         /**
+         * Default constructor required by ActorSystem
+         * 
+         * @param system The actor system
+         * @param actorId The actor ID
+         */
+        public ProcessorActor(ActorSystem system, String actorId) {
+            super(system, actorId, 
+                  new BackpressureConfig(), 
+                  new ResizableMailboxConfig().setInitialCapacity(100).setMaxCapacity(10_000));
+        }
+        
+        /**
          * @deprecated Use the constructor with separate BackpressureConfig and ResizableMailboxConfig instead
          */
         @Deprecated
