@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
-import systems.cajun.backpressure.ActorBackpressureExtensions;
 import systems.cajun.config.BackpressureConfig;
 import systems.cajun.backpressure.BackpressureSendOptions;
 import systems.cajun.persistence.RetryStrategy;
@@ -36,7 +35,7 @@ public class BackpressureStatefulActorExample {
         final AtomicInteger messagesRejected = new AtomicInteger(0);
         
         // Register a backpressure callback to monitor metrics
-        ActorBackpressureExtensions.setBackpressureCallback(processor, metrics -> {
+        system.setBackpressureCallback(processorPid, metrics -> {
             logger.info("Backpressure metrics - Size: {}/{}, Rate: {} msg/s, Backpressure: {}, Fill ratio: {}", 
                     metrics.getCurrentSize(), metrics.getCapacity(), metrics.getProcessingRate(),
                     metrics.isBackpressureActive() ? "ACTIVE" : "inactive",
@@ -68,7 +67,7 @@ public class BackpressureStatefulActorExample {
                 
                 while (sent < totalMessages) {
                     // Try to send with backpressure awareness
-                    if (ActorBackpressureExtensions.tellWithOptions(processor, 
+                    if (system.tellWithOptions(processorPid, 
                             new CounterMessage("increment"), 
                             new BackpressureSendOptions())) {
                         messagesAccepted.incrementAndGet();
@@ -83,7 +82,7 @@ public class BackpressureStatefulActorExample {
                         messagesRejected.incrementAndGet();
                         
                         // Adaptive backoff based on backpressure metrics
-                        if (ActorBackpressureExtensions.isBackpressureActive(processor)) {
+                        if (system.isBackpressureActive(processorPid)) {
                             // Longer backoff when backpressure is active
                             Thread.sleep(10);
                         } else {

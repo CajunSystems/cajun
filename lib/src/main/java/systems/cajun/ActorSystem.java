@@ -7,10 +7,12 @@ import java.util.concurrent.*;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.time.Duration;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import systems.cajun.backpressure.*;
 import systems.cajun.config.ThreadPoolFactory;
 import systems.cajun.config.BackpressureConfig;
 import systems.cajun.config.MailboxConfig;
@@ -72,6 +74,7 @@ public class ActorSystem {
     private final ThreadPoolFactory threadPoolConfig;
     private final BackpressureConfig backpressureConfig;
     private final MailboxConfig mailboxConfig;
+    private final SystemBackpressureMonitor backpressureMonitor;
 
     /**
      * Creates a new ActorSystem with the default configuration.
@@ -131,6 +134,9 @@ public class ActorSystem {
         } else {
             this.sharedExecutor = null;
         }
+        
+        // Initialize the backpressure monitor
+        this.backpressureMonitor = new SystemBackpressureMonitor(this);
         
         logger.debug("ActorSystem created with {} scheduler threads, thread pool type: {}", 
                 threadPoolConfig.getSchedulerThreads(), threadPoolConfig.getExecutorType());
@@ -439,6 +445,91 @@ public class ActorSystem {
      */
     public BackpressureConfig getBackpressureConfig() {
         return backpressureConfig;
+    }
+    
+    /**
+     * Gets the backpressure monitor for this actor system.
+     * The monitor provides centralized access to actor backpressure functionality.
+     * 
+     * @return The system backpressure monitor
+     */
+    public SystemBackpressureMonitor getBackpressureMonitor() {
+        return backpressureMonitor;
+    }
+    
+    /**
+     * Creates a builder for configuring backpressure on an actor identified by PID.
+     * This provides a modern, fluent API for backpressure configuration.
+     *
+     * @param <T> The type of messages processed by the actor
+     * @param pid The PID of the actor to configure
+     * @return A builder for fluent backpressure configuration
+     */
+    public <T> SystemBackpressureBuilder<T> configureBackpressure(Pid pid) {
+        return backpressureMonitor.configureBackpressure(pid);
+    }
+    
+    /**
+     * Gets comprehensive status information about an actor's backpressure system.
+     *
+     * @param pid The PID of the actor to get status for
+     * @return Detailed backpressure status information
+     */
+    public BackpressureStatus getBackpressureStatus(Pid pid) {
+        return backpressureMonitor.getBackpressureStatus(pid);
+    }
+    
+    /**
+     * Gets whether backpressure is active for an actor.
+     *
+     * @param pid The PID of the actor to check
+     * @return true if backpressure is active, false otherwise
+     */
+    public boolean isBackpressureActive(Pid pid) {
+        return backpressureMonitor.isBackpressureActive(pid);
+    }
+    
+    /**
+     * Gets the current backpressure state of an actor.
+     *
+     * @param pid The PID of the actor to get the state for
+     * @return The current backpressure state
+     */
+    public BackpressureState getCurrentBackpressureState(Pid pid) {
+        return backpressureMonitor.getCurrentBackpressureState(pid);
+    }
+    
+    /**
+     * Gets the time an actor has been in its current backpressure state.
+     *
+     * @param pid The PID of the actor to check
+     * @return The duration the actor has been in its current state
+     */
+    public Duration getTimeInCurrentBackpressureState(Pid pid) {
+        return backpressureMonitor.getTimeInCurrentBackpressureState(pid);
+    }
+    
+    /**
+     * Sends a message to an actor with customizable backpressure options.
+     *
+     * @param <T> The type of messages processed by the actor
+     * @param pid The PID of the actor to send the message to
+     * @param message The message to send
+     * @param options Options for handling backpressure
+     * @return true if the message was accepted, false otherwise
+     */
+    public <T> boolean tellWithOptions(Pid pid, T message, BackpressureSendOptions options) {
+        return backpressureMonitor.tellWithOptions(pid, message, options);
+    }
+    
+    /**
+     * Sets a callback to be notified of backpressure events for a specific actor.
+     *
+     * @param pid The PID of the actor to set the callback for
+     * @param callback The callback to invoke with event information
+     */
+    public void setBackpressureCallback(Pid pid, Consumer<BackpressureEvent> callback) {
+        backpressureMonitor.setBackpressureCallback(pid, callback);
     }
     
     /**

@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
-import systems.cajun.backpressure.ActorBackpressureExtensions;
 import systems.cajun.backpressure.BackpressureMetrics;
 import systems.cajun.backpressure.BackpressureStatus;
 import systems.cajun.backpressure.BackpressureSendOptions;
@@ -42,7 +41,7 @@ public class BackpressureActorExample {
         final AtomicInteger messagesRejected = new AtomicInteger(0);
         
         // Register a backpressure callback to monitor metrics
-        ActorBackpressureExtensions.configureBackpressure(processor)
+        system.configureBackpressure(processorPid)
             .withCallback(event -> {
                 logger.info("Backpressure metrics - Size: {}/{}, Rate: {} msg/s, Backpressure: {}, Fill ratio: {}", 
                         event.getCurrentSize(), event.getCapacity(), event.getProcessingRate(),
@@ -78,7 +77,7 @@ public class BackpressureActorExample {
                         messagesRejected.incrementAndGet();
                         
                         // Check backpressure status
-                        boolean backpressureActive = processor.isBackpressureActive();
+                        boolean backpressureActive = system.isBackpressureActive(processorPid);
                         if (backpressureActive) {
                             // Longer backoff when backpressure is active
                             Thread.sleep(10);
