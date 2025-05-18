@@ -20,6 +20,10 @@ public class ResizableBlockingQueue<E> extends AbstractQueue<E> implements Block
     private BlockingQueue<E> delegate;
     private final Object resizeLock = new Object();
     
+    // Default values for resize behavior
+    private float resizeThreshold = 0.75f; // Resize when queue is 75% full
+    private float resizeFactor = 2.0f;    // Double the size when resizing
+    
     /**
      * Creates a new resizable blocking queue with the specified initial capacity
      * and maximum capacity.
@@ -70,6 +74,50 @@ public class ResizableBlockingQueue<E> extends AbstractQueue<E> implements Block
         return delegate.remainingCapacity() + delegate.size();
     }
     
+    /**
+     * Sets the resize threshold for this queue. When the queue reaches this threshold
+     * of capacity, it will attempt to resize automatically during offer operations.
+     * 
+     * @param resizeThreshold The resize threshold as a fraction between 0 and 1
+     */
+    public void setResizeThreshold(float resizeThreshold) {
+        if (resizeThreshold <= 0 || resizeThreshold >= 1) {
+            throw new IllegalArgumentException("Resize threshold must be between 0 and 1");
+        }
+        this.resizeThreshold = resizeThreshold;
+    }
+    
+    /**
+     * Gets the resize threshold for this queue.
+     * 
+     * @return The resize threshold
+     */
+    public float getResizeThreshold() {
+        return resizeThreshold;
+    }
+    
+    /**
+     * Sets the resize factor for this queue. When the queue resizes, it will
+     * multiply its capacity by this factor.
+     * 
+     * @param resizeFactor The resize factor (must be greater than 1)
+     */
+    public void setResizeFactor(float resizeFactor) {
+        if (resizeFactor <= 1) {
+            throw new IllegalArgumentException("Resize factor must be greater than 1");
+        }
+        this.resizeFactor = resizeFactor;
+    }
+    
+    /**
+     * Gets the resize factor for this queue.
+     * 
+     * @return The resize factor
+     */
+    public float getResizeFactor() {
+        return resizeFactor;
+    }
+    
     // BlockingQueue implementation methods
     
     @Override
@@ -79,6 +127,21 @@ public class ResizableBlockingQueue<E> extends AbstractQueue<E> implements Block
     
     @Override
     public boolean offer(E e) {
+        // Check if we need to resize the queue
+        synchronized (resizeLock) {
+            int capacity = getCapacity();
+            int size = delegate.size();
+            float fillRatio = (float) size / capacity;
+            
+            // If the queue is getting full and we're not at max capacity, resize it
+            if (fillRatio >= resizeThreshold && capacity < maxCapacity) {
+                int newCapacity = Math.min(maxCapacity, (int) (capacity * resizeFactor));
+                if (newCapacity > capacity) {
+                    resize(newCapacity);
+                }
+            }
+        }
+        
         return delegate.offer(e);
     }
     

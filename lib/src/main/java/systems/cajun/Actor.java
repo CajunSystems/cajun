@@ -8,14 +8,29 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
+import systems.cajun.backpressure.BackpressureEvent;
+import systems.cajun.backpressure.BackpressureManager;
+import systems.cajun.backpressure.BackpressureSendOptions;
+import systems.cajun.backpressure.BackpressureStrategy;
+import systems.cajun.backpressure.CustomBackpressureHandler;
 import systems.cajun.config.BackpressureConfig;
+import systems.cajun.config.MailboxConfig;
+import systems.cajun.config.ResizableMailboxConfig;
+import systems.cajun.util.ResizableBlockingQueue;
 
+/**
+ * Core Actor class for the Cajun actor system.
+ * Handles message passing, lifecycle management, and backpressure.
+ *
+ * @param <Message> The type of messages this actor processes
+ */
 public abstract class Actor<Message> {
 
     private static final Logger logger = LoggerFactory.getLogger(Actor.class);
@@ -23,137 +38,168 @@ public abstract class Actor<Message> {
     private static final int DEFAULT_BATCH_SIZE = 10; // Default number of messages to process in a batch
     
     // Default values for backpressure configuration
-    private static final int DEFAULT_INITIAL_CAPACITY = BackpressureConfig.DEFAULT_INITIAL_CAPACITY;
-    private static final int DEFAULT_MAX_CAPACITY = BackpressureConfig.DEFAULT_MAX_CAPACITY;
-    private static final int DEFAULT_MIN_CAPACITY = BackpressureConfig.DEFAULT_MIN_CAPACITY;
-    private static final long DEFAULT_METRICS_UPDATE_INTERVAL_MS = BackpressureConfig.DEFAULT_METRICS_UPDATE_INTERVAL_MS;
-    private static final float DEFAULT_GROWTH_FACTOR = BackpressureConfig.DEFAULT_GROWTH_FACTOR;
-    private static final float DEFAULT_SHRINK_FACTOR = BackpressureConfig.DEFAULT_SHRINK_FACTOR;
-    private static final float DEFAULT_HIGH_WATERMARK = BackpressureConfig.DEFAULT_HIGH_WATERMARK;
-    private static final float DEFAULT_LOW_WATERMARK = BackpressureConfig.DEFAULT_LOW_WATERMARK;
+    private static final float DEFAULT_HIGH_WATERMARK = 0.8f;
+    private static final float DEFAULT_LOW_WATERMARK = 0.2f;
 
-    private final BlockingQueue<Message> mailbox;
-    private volatile boolean isRunning;
+    // Core Actor fields
     private final String actorId;
+    private Pid pid;
+    private BlockingQueue<Message> mailbox;
+    private volatile Thread mailboxThread;
+    private volatile boolean isRunning = false;
     private final ActorSystem system;
-    private final Pid pid;
-    private final ExecutorService executor;
     private SupervisionStrategy supervisionStrategy = SupervisionStrategy.RESUME;
     private Actor<?> parent;
     private final Map<String, Actor<?>> children = new ConcurrentHashMap<>();
-    private int shutdownTimeoutSeconds;
-    private int batchSize;
-    private volatile Thread mailboxThread;
+    private int shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
+    private int batchSize = DEFAULT_BATCH_SIZE;
 
     // Reusable batch buffer for message processing
     private final List<Message> batchBuffer = new ArrayList<>(DEFAULT_BATCH_SIZE);
     
     // Backpressure support
-    private final boolean backpressureEnabled;
-    private final AtomicInteger currentSize = new AtomicInteger(0);
+    private boolean backpressureEnabled = false;
+    private int maxCapacity = Integer.MAX_VALUE; // Maximum capacity of the mailbox
+    private float warningThreshold = DEFAULT_HIGH_WATERMARK;
+    private float recoveryThreshold = DEFAULT_LOW_WATERMARK;
+    private BackpressureStrategy backpressureStrategy = BackpressureStrategy.BLOCK;
+    private CustomBackpressureHandler<Message> customBackpressureHandler;
+    
+    // For tracking metrics
     private final AtomicLong messagesProcessed = new AtomicLong(0);
-    private final AtomicLong lastProcessingTimestamp = new AtomicLong(System.currentTimeMillis());
-    private final AtomicLong processingRate = new AtomicLong(0); // messages per second
+    private final AtomicLong messagesProcessedSinceLastRateCalculation = new AtomicLong(0);
     private final AtomicLong lastMetricsUpdateTime = new AtomicLong(System.currentTimeMillis());
+    private static final int METRICS_UPDATE_INTERVAL_MS = 1000; // Update metrics once per second
     
-    // Backpressure configuration (only used when backpressureEnabled is true)
-    private final int maxCapacity;
-    private final int minCapacity;
-    private final float growthFactor;
-    private final float shrinkFactor;
-    private final float highWatermark;
-    private final float lowWatermark;
-    private final long metricsUpdateIntervalMs;
+    // Enhanced backpressure management
+    private BackpressureManager<Message> backpressureManager;
+    private AtomicLong lastProcessingTimestamp = new AtomicLong(System.currentTimeMillis());
     
-    // Backpressure callbacks
-    private Consumer<BackpressureMetrics> backpressureCallback;
-    private final BackpressureMetrics metrics = new BackpressureMetrics();
-
+    /**
+     * Gets the current number of messages in the mailbox.
+     *
+     * @return The current mailbox size
+     */
+    public int getCurrentSize() {
+        return mailbox != null ? mailbox.size() : 0;
+    }
+    
+    /**
+     * Gets the current capacity of the mailbox.
+     *
+     * @return The current mailbox capacity
+     */
+    public int getCapacity() {
+        return maxCapacity;
+    }
+    
+    /**
+     * Gets the current processing rate in messages per second.
+     *
+     * @return The current processing rate
+     */
+    public long getProcessingRate() {
+        return calculateProcessingRate();
+    }
+    
+    /**
+     * Checks if backpressure is currently active.
+     *
+     * @return true if backpressure is active, false otherwise
+     */
+    public boolean isBackpressureActive() {
+        return backpressureManager != null && backpressureManager.isBackpressureActive();
+    }
+    
+    /**
+     * Checks if backpressure is enabled for this actor.
+     *
+     * @return true if backpressure is enabled, false otherwise
+     */
+    public boolean isBackpressureEnabled() {
+        return backpressureEnabled;
+    }
+    
+    /**
+     * Gets the current fill ratio of the mailbox (size/capacity).
+     *
+     * @return The current fill ratio
+     */
+    public float getFillRatio() {
+        int currentSize = getCurrentSize();
+        int capacity = getCapacity();
+        return capacity > 0 ? (float) currentSize / capacity : 0;
+    }
+    
     public Actor(ActorSystem system) {
-        this(system, UUID.randomUUID().toString());
+        this(system, generateDefaultActorId());
     }
 
+    /**
+     * Creates a new Actor with the specified system and ID.
+     * Backpressure is disabled by default.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     */
     public Actor(ActorSystem system, String actorId) {
-        this(system, actorId, false, DEFAULT_INITIAL_CAPACITY, DEFAULT_MAX_CAPACITY);
+        this(system, actorId, null, new ResizableMailboxConfig());
     }
     
     /**
-     * Creates a new Actor with optional backpressure support.
+     * Creates a new Actor with the specified system, ID, and backpressure configuration.
+     * Uses default mailbox configuration.
      *
-     * @param system The actor system this actor belongs to
-     * @param actorId The ID for this actor
-     * @param enableBackpressure Whether to enable backpressure support
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
      */
-    public Actor(ActorSystem system, String actorId, boolean enableBackpressure) {
-        this(system, actorId, enableBackpressure, DEFAULT_INITIAL_CAPACITY, DEFAULT_MAX_CAPACITY);
+    public Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig) {
+        this(system, actorId, backpressureConfig, new ResizableMailboxConfig());
     }
     
+    public Actor(ActorSystem system, String actorId, ResizableMailboxConfig mailboxConfig) {
+        this(system, actorId, null, mailboxConfig);
+    }
+
     /**
-     * Creates a new Actor with backpressure support and custom mailbox capacities.
+     * Creates a new Actor with the specified system, ID, backpressure configuration, and mailbox configuration.
      *
-     * @param system The actor system this actor belongs to
-     * @param actorId The ID for this actor
-     * @param enableBackpressure Whether to enable backpressure support
-     * @param initialCapacity The initial capacity of the mailbox (only used if backpressure is enabled)
-     * @param maxCapacity The maximum capacity the mailbox can grow to (only used if backpressure is enabled)
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig The mailbox configuration
      */
-    public Actor(ActorSystem system, String actorId, boolean enableBackpressure, int initialCapacity, int maxCapacity) {
+    public Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
         this.system = system;
-        this.actorId = actorId;
-        this.backpressureEnabled = enableBackpressure;
+        this.actorId = actorId == null ? generateDefaultActorId() : actorId;
+        this.pid = new Pid(this.actorId, system);
         
-        // Initialize backpressure configuration from system or defaults
-        BackpressureConfig config = system.getBackpressureConfig();
-        if (config != null) {
-            this.maxCapacity = maxCapacity;
-            this.minCapacity = config.getMinCapacity();
-            this.growthFactor = config.getGrowthFactor();
-            this.shrinkFactor = config.getShrinkFactor();
-            this.highWatermark = config.getHighWatermark();
-            this.lowWatermark = config.getLowWatermark();
-            this.metricsUpdateIntervalMs = config.getMetricsUpdateIntervalMs();
-        } else {
-            // Fallback to defaults if system config is not available
-            this.maxCapacity = maxCapacity;
-            this.minCapacity = DEFAULT_MIN_CAPACITY;
-            this.growthFactor = DEFAULT_GROWTH_FACTOR;
-            this.shrinkFactor = DEFAULT_SHRINK_FACTOR;
-            this.highWatermark = DEFAULT_HIGH_WATERMARK;
-            this.lowWatermark = DEFAULT_LOW_WATERMARK;
-            this.metricsUpdateIntervalMs = DEFAULT_METRICS_UPDATE_INTERVAL_MS;
+        // Handle null mailboxConfig
+        if (mailboxConfig == null) {
+            mailboxConfig = new ResizableMailboxConfig();
         }
         
-        // Create appropriate mailbox based on backpressure setting
-        if (backpressureEnabled) {
-            this.mailbox = new ResizableBlockingQueue<>(initialCapacity, maxCapacity);
-            logger.debug("Actor {} created with backpressure support (initial capacity: {}, max capacity: {})",
-                    actorId, initialCapacity, maxCapacity);
-        } else {
-            this.mailbox = new LinkedBlockingQueue<>();
-            logger.debug("Actor {} created with unbounded mailbox", actorId);
-        }
+        // Get mailbox configuration values
+        int initialCapacity = mailboxConfig.getInitialCapacity();
+        int maxCapacity = mailboxConfig.getMaxCapacity();
+        
+        // Initialize backpressure configuration
+        initializeBackpressure(backpressureConfig, null, maxCapacity);
+        
+        // Now create the mailbox based on backpressure configuration
+        createMailbox(initialCapacity, maxCapacity, mailboxConfig);
 
         // Use configuration from the actor system
         if (system.getThreadPoolFactory() != null) {
             this.shutdownTimeoutSeconds = system.getThreadPoolFactory().getActorShutdownTimeoutSeconds();
             this.batchSize = system.getThreadPoolFactory().getActorBatchSize();
-
-            // Use a shared executor from the actor system if available, otherwise create a dedicated one
-            if (system.getSharedExecutor() != null) {
-                this.executor = system.getSharedExecutor();
-            } else {
-                this.executor = system.getThreadPoolFactory().createExecutorService("actor-" + actorId);
-            }
         } else {
             // Fallback to defaults if no config is available
             this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
             this.batchSize = DEFAULT_BATCH_SIZE;
-            this.executor = system.getSharedExecutor() != null ? 
-                           system.getSharedExecutor() : 
-                           Executors.newVirtualThreadPerTaskExecutor();
         }
-
-        this.pid = new Pid(actorId, system);
+        
         logger.debug("Actor {} created with batch size {}", actorId, batchSize);
     }
 
@@ -186,6 +232,65 @@ public abstract class Actor<Message> {
     protected boolean onError(Message message, Throwable exception) {
         // Default implementation logs the error and doesn't reprocess
         return false;
+    }
+    
+    /**
+     * Updates the backpressure metrics for this actor.
+     * This is called periodically to assess the current load and adjust backpressure behavior if needed.
+     */
+    private void updateMetrics() {
+        if (backpressureManager != null && backpressureEnabled) {
+            int currentSize = mailbox.size();
+            int capacity = mailbox.remainingCapacity() + currentSize;
+            long rate = calculateProcessingRate();
+            
+            // Update metrics in the manager
+            backpressureManager.updateMetrics(currentSize, capacity, rate);
+            
+            // Update the last processing timestamp
+            lastProcessingTimestamp.set(System.currentTimeMillis());
+        }
+    }
+    
+    /**
+     * Calculates the current message processing rate (messages per second).
+     * This is used for backpressure metric updates.
+     * 
+     * @return The current processing rate
+     */
+    private long calculateProcessingRate() {
+        long now = System.currentTimeMillis();
+        long timeSinceLastCalculation = now - lastMetricsUpdateTime.get();
+        
+        // Only recalculate if enough time has passed (at least 100ms) to avoid division by very small numbers
+        if (timeSinceLastCalculation >= METRICS_UPDATE_INTERVAL_MS) {
+            long messageCount = messagesProcessedSinceLastRateCalculation.getAndSet(0);
+            long rate = timeSinceLastCalculation > 0 ? (messageCount * 1000) / timeSinceLastCalculation : 0; // Convert to per second
+            
+            // Update the timestamp
+            lastMetricsUpdateTime.set(now);
+            
+            return rate;
+        }
+        
+        // If not enough time has passed, return 0 as a safe default
+        return 0;
+    }
+
+    /**
+     * Checks if a message should be accepted based on backpressure settings and options.
+     * 
+     * @param options The backpressure send options
+     * @return true if the message should be accepted, false otherwise
+     */
+    protected boolean checkBackpressure(BackpressureSendOptions options) {
+        // Use the backpressure manager for new functionality
+        if (backpressureManager != null && backpressureEnabled) {
+            return backpressureManager.shouldAcceptMessage(options);
+        } else {
+            // No backpressure management when disabled, always accept
+            return true;
+        }
     }
 
     /**
@@ -298,26 +403,6 @@ public abstract class Actor<Message> {
             mailboxThread = null;
         }
 
-        // Only shut down the executor if it's not shared from the actor system
-        if (system.getSharedExecutor() != executor) {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(shutdownTimeoutSeconds, TimeUnit.SECONDS)) {
-                    logger.warn("Actor {} executor did not terminate in time, forcing shutdown", actorId);
-                    executor.shutdownNow();
-                    // Give it one more chance with a short timeout
-                    if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-                        logger.error("Actor {} executor could not be terminated even after forced shutdown", actorId);
-                    }
-                }
-            } catch (InterruptedException e) {
-                // This is expected during mass shutdowns, so lower the log level
-                logger.debug("Actor {} shutdown interrupted", actorId, e);
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
-
         try {
             postStop();
         } catch (Exception e) {
@@ -413,6 +498,15 @@ public abstract class Actor<Message> {
      */
     public <T extends Actor<?>> Pid createChild(Class<T> actorClass) {
         return system.registerChild(actorClass, this);
+    }
+    
+    /**
+     * Generates a default actor ID using a UUID.
+     * 
+     * @return A string representation of a generated UUID
+     */
+    protected static String generateDefaultActorId() {
+        return UUID.randomUUID().toString();
     }
 
     /**
@@ -522,6 +616,10 @@ public abstract class Actor<Message> {
         }
     }
 
+    /**
+     * Process messages from the mailbox in batches.
+     * This is the main loop that handles actor message processing.
+     */
     protected void processMailbox() {
         while (isRunning) {
             try {
@@ -544,9 +642,10 @@ public abstract class Actor<Message> {
                     try {
                         receive(message);
                         
-                        // Update processing metrics if backpressure is enabled
+                        // Update processing metrics for backpressure
                         if (backpressureEnabled) {
                             messagesProcessed.incrementAndGet();
+                            messagesProcessedSinceLastRateCalculation.incrementAndGet();
                             lastProcessingTimestamp.set(System.currentTimeMillis());
                         }
                     } catch (Exception e) {
@@ -555,7 +654,7 @@ public abstract class Actor<Message> {
                     }
                 }
                 
-                // Update metrics and potentially resize the mailbox if backpressure is enabled
+                // Update metrics and potentially adjust backpressure if enabled
                 if (backpressureEnabled) {
                     updateMetrics();
                 }
@@ -569,243 +668,111 @@ public abstract class Actor<Message> {
         }
     }
 
+/**
+ * Supervision strategies for handling actor failures.
+ */
+public enum SupervisionStrategy {
     /**
-     * Supervision strategies for handling actor failures.
+     * Resume processing the next message, ignoring the failure.
      */
-    public enum SupervisionStrategy {
-        /**
-         * Resume processing the next message, ignoring the failure.
-         */
-        RESUME,
-
-        /**
-         * Restart the actor, then continue processing messages.
-         */
-        RESTART,
-
-        /**
-         * Stop the actor.
-         */
-        STOP,
-
-        /**
-         * Escalate the failure to the parent/system.
-         */
-        ESCALATE
-    }
+    RESUME,
 
     /**
-     * Attempts to send a message to this actor with backpressure awareness.
-     * If the mailbox is full, this method will return false instead of blocking.
-     * If backpressure is not enabled, this method always returns true.
-     *
-     * @param message The message to send
-     * @return true if the message was accepted, false if backpressure is being applied
+     * Restart the actor, then continue processing messages.
      */
-    public boolean tryTell(Message message) {
-        boolean result = mailbox.offer(message);
-        
-        // Update metrics if backpressure is enabled
-        if (backpressureEnabled && result) {
-            updateMetrics();
-        }
-        
-        return result;
+    RESTART,
+
+    /**
+     * Stop the actor.
+     */
+    STOP,
+
+    /**
+     * Escalate the failure to the parent/system.
+     */
+    ESCALATE
+}
+
+/**
+ * Initialize the backpressure system with the provided configuration.
+ * 
+ * @param backpressureConfig The backpressure configuration to use
+ * @param maxCapacity The maximum capacity of the mailbox
+ */
+private void initializeBackpressure(BackpressureConfig backpressureConfig, int maxCapacity) {
+    initializeBackpressure(backpressureConfig, null, maxCapacity);
+}
+
+/**
+ * Initialize the backpressure system with the provided configuration and callback.
+ * 
+ * @param backpressureConfig The backpressure configuration to use
+ * @param callback The callback to invoke when backpressure events occur
+ */
+public void initializeBackpressure(BackpressureConfig backpressureConfig, Consumer<BackpressureEvent> callback) {
+    initializeBackpressure(backpressureConfig, callback, backpressureConfig != null ? backpressureConfig.getMaxCapacity() : Integer.MAX_VALUE);
+}
+
+/**
+ * Initialize the backpressure system with the provided configuration, callback, and capacity.
+ * 
+ * @param backpressureConfig The backpressure configuration to use
+ * @param callback The callback to invoke when backpressure events occur
+ * @param maxCapacity The maximum capacity of the mailbox
+ */
+private void initializeBackpressure(BackpressureConfig backpressureConfig, Consumer<BackpressureEvent> callback, int maxCapacity) {
+    // Handle null configuration
+    if (backpressureConfig == null) {
+        this.backpressureEnabled = false;
+        this.warningThreshold = DEFAULT_HIGH_WATERMARK;
+        this.recoveryThreshold = DEFAULT_LOW_WATERMARK;
+        this.backpressureStrategy = BackpressureStrategy.BLOCK;
+        this.customBackpressureHandler = null;
+        return;
     }
+        
+    // Set up basic backpressure fields
+    this.warningThreshold = backpressureConfig.getWarningThreshold();
+    this.recoveryThreshold = backpressureConfig.getRecoveryThreshold();
+    this.backpressureStrategy = backpressureConfig.getStrategy();
+    this.customBackpressureHandler = (CustomBackpressureHandler<Message>) backpressureConfig.getCustomHandler();
+    this.backpressureEnabled = backpressureConfig.isEnabled();
+    this.maxCapacity = maxCapacity;
     
-    /**
-     * Attempts to send a message to this actor with a timeout for backpressure.
-     * If the mailbox is full, this method will wait up to the specified timeout.
-     * If backpressure is not enabled, this method always returns true unless interrupted.
-     *
-     * @param message The message to send
-     * @param timeout The maximum time to wait
-     * @param unit The time unit of the timeout argument
-     * @return true if the message was accepted, false if the timeout elapsed
-     * @throws InterruptedException if interrupted while waiting
-     */
-    public boolean tryTell(Message message, long timeout, TimeUnit unit) throws InterruptedException {
-        boolean result = mailbox.offer(message, timeout, unit);
-        
-        // Update metrics if backpressure is enabled
-        if (backpressureEnabled && result) {
-            updateMetrics();
-        }
-        
-        return result;
-    }
-    
-    /**
-     * Sets a callback to be notified when backpressure conditions change.
-     * This can be used by producers to adapt their sending rate.
-     * The callback will only be invoked if backpressure is enabled.
-     *
-     * @param callback The callback to invoke with backpressure metrics
-     * @return This actor instance for method chaining
-     */
-    public Actor<Message> withBackpressureCallback(Consumer<BackpressureMetrics> callback) {
-        this.backpressureCallback = callback;
-        return this;
-    }
-    
-    /**
-     * Gets the current backpressure metrics for this actor.
-     * If backpressure is not enabled, the metrics will reflect an unbounded mailbox.
-     *
-     * @return The current backpressure metrics
-     */
-    public BackpressureMetrics getBackpressureMetrics() {
-        if (backpressureEnabled) {
-            updateMetrics();
-        } else {
-            // For unbounded mailboxes, just update the current size
-            metrics.update(mailbox.size(), Integer.MAX_VALUE, processingRate.get(), false);
-        }
-        return metrics;
-    }
-    
-    /**
-     * Checks if this actor has backpressure enabled.
-     *
-     * @return true if backpressure is enabled, false otherwise
-     */
-    public boolean isBackpressureEnabled() {
-        return backpressureEnabled;
-    }
+    // Create backpressure manager with the current configuration
+    BackpressureConfig config = new BackpressureConfig();
+    config.setEnabled(backpressureEnabled);
+    config.setWarningThreshold(warningThreshold);
+    config.setCriticalThreshold(warningThreshold * 1.2f); // Calculate based on warning threshold
+    config.setRecoveryThreshold(recoveryThreshold);
+    config.setStrategy(backpressureStrategy);
+    config.setCustomHandler(customBackpressureHandler);
+    config.setMaxCapacity(maxCapacity);
 
-    /**
-     * Updates the actor's metrics and potentially resizes the mailbox
-     * based on current usage patterns. This is only used when backpressure is enabled.
-     */
-    private void updateMetrics() {
-        if (!backpressureEnabled) {
-            return;
-        }
+    // Initialize the backpressure manager
+    this.backpressureManager = new BackpressureManager<Message>(this, config);
         
-        long now = System.currentTimeMillis();
-        long lastUpdate = lastMetricsUpdateTime.get();
-        
-        // Only update metrics and resize at the configured interval
-        if (now - lastUpdate >= metricsUpdateIntervalMs) {
-            if (lastMetricsUpdateTime.compareAndSet(lastUpdate, now)) {
-                // Calculate current processing rate
-                long processed = messagesProcessed.getAndSet(0);
-                long elapsedSeconds = Math.max(1, (now - lastUpdate) / 1000);
-                long rate = processed / elapsedSeconds;
-                processingRate.set(rate);
-                
-                // Update current size
-                currentSize.set(mailbox.size());
-                
-                // Check if we need to resize the mailbox
-                if (mailbox instanceof ResizableBlockingQueue) {
-                    ResizableBlockingQueue<Message> resizableMailbox = (ResizableBlockingQueue<Message>) mailbox;
-                    int capacity = resizableMailbox.getCapacity();
-                    float fillRatio = (float) currentSize.get() / capacity;
-                    
-                    if (fillRatio >= highWatermark && capacity < maxCapacity) {
-                        // Mailbox is getting full, try to grow it
-                        int newCapacity = Math.min(maxCapacity, (int) (capacity * growthFactor));
-                        if (newCapacity > capacity) {
-                            logger.debug("Growing mailbox for actor {} from {} to {}", 
-                                    actorId, capacity, newCapacity);
-                            resizableMailbox.resize(newCapacity);
-                        }
-                    } else if (fillRatio <= lowWatermark && capacity > minCapacity) {
-                        // Mailbox is mostly empty, try to shrink it
-                        int newCapacity = Math.max(minCapacity, (int) (capacity * shrinkFactor));
-                        if (newCapacity < capacity) {
-                            logger.debug("Shrinking mailbox for actor {} from {} to {}", 
-                                    actorId, capacity, newCapacity);
-                            resizableMailbox.resize(newCapacity);
-                        }
-                    }
-                    
-                    // Update metrics object for callback
-                    metrics.update(
-                        currentSize.get(),
-                        capacity,
-                        processingRate.get(),
-                        fillRatio >= highWatermark
-                    );
-                } else {
-                    // For non-resizable mailboxes, just update metrics without resize logic
-                    metrics.update(
-                        currentSize.get(),
-                        Integer.MAX_VALUE, // Unbounded capacity
-                        processingRate.get(),
-                        false // Never backpressured for unbounded queues
-                    );
-                }
-                
-                // Notify callback if registered
-                if (backpressureCallback != null) {
-                    backpressureCallback.accept(metrics);
-                }
-            }
-        }
+    // Register the callback if provided
+    if (callback != null) {
+        this.backpressureManager.setCallback(callback);
     }
+}
 
-    /**
-     * Metrics class that provides information about the actor's mailbox state
-     * and processing capabilities.
-     */
-    public static class BackpressureMetrics {
-        private int currentSize;
-        private int capacity;
-        private long processingRate;
-        private boolean backpressureActive;
-        
-        private void update(int currentSize, int capacity, long processingRate, boolean backpressureActive) {
-            this.currentSize = currentSize;
-            this.capacity = capacity;
-            this.processingRate = processingRate;
-            this.backpressureActive = backpressureActive;
-        }
-        
-        /**
-         * Gets the current number of messages in the mailbox.
-         *
-         * @return The current mailbox size
-         */
-        public int getCurrentSize() {
-            return currentSize;
-        }
-        
-        /**
-         * Gets the current capacity of the mailbox.
-         *
-         * @return The current mailbox capacity
-         */
-        public int getCapacity() {
-            return capacity;
-        }
-        
-        /**
-         * Gets the current processing rate in messages per second.
-         *
-         * @return The current processing rate
-         */
-        public long getProcessingRate() {
-            return processingRate;
-        }
-        
-        /**
-         * Checks if backpressure is currently active.
-         *
-         * @return true if backpressure is active, false otherwise
-         */
-        public boolean isBackpressureActive() {
-            return backpressureActive;
-        }
-        
-        /**
-         * Gets the current fill ratio of the mailbox (size/capacity).
-         *
-         * @return The current fill ratio
-         */
-        public float getFillRatio() {
-            return capacity > 0 ? (float) currentSize / capacity : 0;
-        }
+/**
+ * Creates the mailbox for this actor with the specified capacities and configuration.
+ * 
+ * @param initialCapacity The initial capacity of the mailbox
+ * @param maxCapacity The maximum capacity the mailbox can grow to
+ * @param mailboxConfig The mailbox configuration parameters
+ */
+private void createMailbox(int initialCapacity, int maxCapacity, MailboxConfig mailboxConfig) {
+    if (mailboxConfig != null && mailboxConfig instanceof ResizableMailboxConfig) {
+        this.mailbox = new ResizableBlockingQueue<>(initialCapacity, maxCapacity);
+    } else {
+        this.mailbox = new LinkedBlockingQueue<>(maxCapacity);
     }
+        
+    // Store capacity configuration for backpressure management
+    this.maxCapacity = maxCapacity;
+}
 }

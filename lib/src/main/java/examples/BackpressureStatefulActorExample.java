@@ -5,6 +5,9 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
+import systems.cajun.backpressure.ActorBackpressureExtensions;
+import systems.cajun.config.BackpressureConfig;
+import systems.cajun.backpressure.BackpressureSendOptions;
 import systems.cajun.persistence.RetryStrategy;
 
 import java.io.Serializable;
@@ -33,7 +36,7 @@ public class BackpressureStatefulActorExample {
         final AtomicInteger messagesRejected = new AtomicInteger(0);
         
         // Register a backpressure callback to monitor metrics
-        processor.withBackpressureCallback(metrics -> {
+        ActorBackpressureExtensions.setBackpressureCallback(processor, metrics -> {
             logger.info("Backpressure metrics - Size: {}/{}, Rate: {} msg/s, Backpressure: {}, Fill ratio: {}", 
                     metrics.getCurrentSize(), metrics.getCapacity(), metrics.getProcessingRate(),
                     metrics.isBackpressureActive() ? "ACTIVE" : "inactive",
@@ -65,7 +68,9 @@ public class BackpressureStatefulActorExample {
                 
                 while (sent < totalMessages) {
                     // Try to send with backpressure awareness
-                    if (processor.tryTell(new CounterMessage("increment"))) {
+                    if (ActorBackpressureExtensions.tellWithOptions(processor, 
+                            new CounterMessage("increment"), 
+                            new BackpressureSendOptions())) {
                         messagesAccepted.incrementAndGet();
                         sent++;
                         
@@ -78,7 +83,7 @@ public class BackpressureStatefulActorExample {
                         messagesRejected.incrementAndGet();
                         
                         // Adaptive backoff based on backpressure metrics
-                        if (processor.getBackpressureMetrics().isBackpressureActive()) {
+                        if (ActorBackpressureExtensions.isBackpressureActive(processor)) {
                             // Longer backoff when backpressure is active
                             Thread.sleep(10);
                         } else {
@@ -172,7 +177,10 @@ public class BackpressureStatefulActorExample {
         
         public ProcessorActor(ActorSystem system, String actorId) {
             // Create with backpressure enabled, initial capacity 100, max capacity 10,000
-            super(system, actorId, new CounterState(0), true, 100, 10_000);
+            super(system, actorId, new CounterState(0), 
+                  new BackpressureConfig()
+                      .setEnabled(true)
+                      .setMaxCapacity(10_000));
         }
         
         @Override

@@ -349,23 +349,54 @@ Based on a thorough analysis of the Cajun codebase, here are comprehensive recom
 
 2. **Backpressure Mechanisms**:
    ```java
-   // Add to Actor
-   private static final int MAILBOX_HIGH_WATERMARK = 10000;
-   private static final int MAILBOX_LOW_WATERMARK = 1000;
-   private volatile boolean applyingBackpressure = false;
+   // Modern backpressure implementation with BackpressureManager
+   private BackpressureManager<Message> backpressureManager;
    
-   public boolean tell(Message message) {
-       if (mailbox.size() >= MAILBOX_HIGH_WATERMARK) {
-           applyingBackpressure = true;
+   public void initializeBackpressure(BackpressureConfig config) {
+       this.backpressureManager = new BackpressureManager<>(this, config);
+       
+       // Configure thresholds for state transitions
+       backpressureManager.setThresholds(
+           0.7f,  // WARNING threshold (70% capacity)
+           0.8f,  // CRITICAL threshold (80% capacity)
+           0.5f   // RECOVERY threshold (50% capacity)
+       );
+       
+       // Set up monitoring callback
+       backpressureManager.setCallback(event -> {
+           if (event.isBackpressureActive()) {
+               // Take action when backpressure is active
+               logger.warn("Actor {} experiencing backpressure: {} fill ratio", 
+                   getActorId(), event.getFillRatio());
+           }
+       });
+   }
+   
+   public boolean tryTell(Message message, BackpressureSendOptions options) {
+       // Check if message should be accepted based on backpressure state
+       if (!backpressureManager.shouldAcceptMessage(options)) {
            return false; // Message rejected due to backpressure
        }
        
-       if (applyingBackpressure && mailbox.size() <= MAILBOX_LOW_WATERMARK) {
-           applyingBackpressure = false;
+       // Handle message according to backpressure strategy
+       if (backpressureManager.isBackpressureActive()) {
+           return backpressureManager.handleMessage(message, options);
        }
        
+       // No backpressure, accept message normally
        mailbox.offer(message);
        return true;
+   }
+   
+   // Update metrics periodically
+   private void updateBackpressureMetrics() {
+       if (backpressureManager != null) {
+           backpressureManager.updateMetrics(
+               mailbox.size(),           // Current mailbox size
+               getMailboxCapacity(),     // Mailbox capacity
+               getProcessingRate()       // Messages processed per second
+           );
+       }
    }
    ```
 

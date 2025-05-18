@@ -5,6 +5,14 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+import systems.cajun.backpressure.ActorBackpressureExtensions;
+import systems.cajun.backpressure.BackpressureMetrics;
+import systems.cajun.backpressure.BackpressureStatus;
+import systems.cajun.backpressure.BackpressureSendOptions;
+import systems.cajun.backpressure.BackpressureState;
+import systems.cajun.config.BackpressureConfig;
+import systems.cajun.config.MailboxConfig;
+import systems.cajun.config.ResizableMailboxConfig;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -21,8 +29,12 @@ public class BackpressureActorExample {
         // Create an actor system optimized for high throughput
         ActorSystem system = new ActorSystem();
         
-        // Create a processor actor with backpressure enabled, initial capacity of 100 and max of 10,000
-        Pid processorPid = system.register(ProcessorActor.class, "processor", true, 100, 10_000);
+        // Create a processor actor with backpressure enabled and custom mailbox configuration
+        BackpressureConfig backpressureConfig = new BackpressureConfig();
+        ResizableMailboxConfig mailboxConfig = new ResizableMailboxConfig()
+            .setInitialCapacity(100)
+            .setMaxCapacity(10_000);
+        Pid processorPid = system.register(ProcessorActor.class, "processor", backpressureConfig, mailboxConfig);
         ProcessorActor processor = (ProcessorActor) system.getActor(processorPid);
         
         // Set up metrics reporting
@@ -30,12 +42,13 @@ public class BackpressureActorExample {
         final AtomicInteger messagesRejected = new AtomicInteger(0);
         
         // Register a backpressure callback to monitor metrics
-        processor.withBackpressureCallback(metrics -> {
-            logger.info("Backpressure metrics - Size: {}/{}, Rate: {} msg/s, Backpressure: {}, Fill ratio: {}", 
-                    metrics.getCurrentSize(), metrics.getCapacity(), metrics.getProcessingRate(),
-                    metrics.isBackpressureActive() ? "ACTIVE" : "inactive",
-                    String.format("%.2f", metrics.getFillRatio()));
-        });
+        ActorBackpressureExtensions.configureBackpressure(processor)
+            .withCallback(event -> {
+                logger.info("Backpressure metrics - Size: {}/{}, Rate: {} msg/s, Backpressure: {}, Fill ratio: {}", 
+                        event.getCurrentSize(), event.getCapacity(), event.getProcessingRate(),
+                        event.getState().name(),
+                        String.format("%.2f", event.getFillRatio()));
+            });
         
         // Completion latch
         CountDownLatch completionLatch = new CountDownLatch(1);
@@ -50,8 +63,9 @@ public class BackpressureActorExample {
                 long startTime = System.currentTimeMillis();
                 
                 while (sent < totalMessages) {
-                    // Try to send with backpressure awareness
-                    if (processor.tryTell("Message-" + sent)) {
+                    try {
+                        // Send message directly
+                        processor.tell("Message-" + sent);
                         messagesAccepted.incrementAndGet();
                         sent++;
                         
@@ -59,13 +73,13 @@ public class BackpressureActorExample {
                         if (sent % 10_000 == 0) {
                             logger.info("Sent {} messages so far", sent);
                         }
-                    } else {
+                    } catch (Exception e) {
                         // Message rejected due to backpressure
                         messagesRejected.incrementAndGet();
                         
-                        // Adaptive backoff based on backpressure metrics
-                        Actor.BackpressureMetrics metrics = processor.getBackpressureMetrics();
-                        if (metrics.isBackpressureActive()) {
+                        // Check backpressure status
+                        boolean backpressureActive = processor.isBackpressureActive();
+                        if (backpressureActive) {
                             // Longer backoff when backpressure is active
                             Thread.sleep(10);
                         } else {
@@ -113,8 +127,35 @@ public class BackpressureActorExample {
         private final AtomicInteger processedCount = new AtomicInteger(0);
         private long startTime = 0;
         
+        /**
+         * Constructor with separate backpressure and mailbox configuration
+         * 
+         * @param system The actor system
+         * @param actorId The actor ID
+         * @param backpressureConfig The backpressure configuration
+         * @param mailboxConfig The mailbox configuration
+         */
+        public ProcessorActor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
+            super(system, actorId, backpressureConfig, mailboxConfig);
+        }
+        
+        /**
+         * @deprecated Use the constructor with separate BackpressureConfig and ResizableMailboxConfig instead
+         */
+        @Deprecated
         public ProcessorActor(ActorSystem system, String actorId, boolean enableBackpressure, int initialCapacity, int maxCapacity) {
-            super(system, actorId, enableBackpressure, initialCapacity, maxCapacity);
+            super(system, actorId, 
+                enableBackpressure ? system.getBackpressureConfig() : null, 
+                new ResizableMailboxConfig().setInitialCapacity(initialCapacity).setMaxCapacity(maxCapacity));
+        }
+        
+        /**
+         * @deprecated Use the constructor with separate BackpressureConfig and ResizableMailboxConfig instead
+         */
+        @Deprecated
+        public ProcessorActor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, int initialCapacity, int maxCapacity) {
+            super(system, actorId, backpressureConfig, 
+                new ResizableMailboxConfig().setInitialCapacity(initialCapacity).setMaxCapacity(maxCapacity));
         }
         
         @Override

@@ -1,5 +1,6 @@
 package systems.cajun;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.*;
@@ -12,6 +13,7 @@ import org.slf4j.LoggerFactory;
 
 import systems.cajun.config.ThreadPoolFactory;
 import systems.cajun.config.BackpressureConfig;
+import systems.cajun.config.MailboxConfig;
 
 /**
  * ActorSystem is the main entry point for creating and managing actors.
@@ -69,12 +71,13 @@ public class ActorSystem {
     private final ConcurrentHashMap<String, ScheduledFuture<?>> pendingDelayedMessages;
     private final ThreadPoolFactory threadPoolConfig;
     private final BackpressureConfig backpressureConfig;
+    private final MailboxConfig mailboxConfig;
 
     /**
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory(), new BackpressureConfig());
+        this(new ThreadPoolFactory(), new BackpressureConfig(), new MailboxConfig());
     }
 
     /**
@@ -83,7 +86,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), new BackpressureConfig());
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), new BackpressureConfig(), new MailboxConfig());
     }
 
     /**
@@ -92,7 +95,7 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
-        this(threadPoolConfig, new BackpressureConfig());
+        this(threadPoolConfig, new BackpressureConfig(), new MailboxConfig());
     }
 
     /**
@@ -102,9 +105,21 @@ public class ActorSystem {
      * @param backpressureConfig The backpressure configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig) {
+        this(threadPoolConfig, backpressureConfig, new MailboxConfig());
+    }
+    
+    /**
+     * Creates a new ActorSystem with the specified thread pool configuration, backpressure configuration, and mailbox configuration.
+     * 
+     * @param threadPoolConfig The thread pool configuration
+     * @param backpressureConfig The backpressure configuration
+     * @param mailboxConfig The mailbox configuration
+     */
+    public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
         this.actors = new ConcurrentHashMap<>();
         this.threadPoolConfig = threadPoolConfig;
         this.backpressureConfig = backpressureConfig;
+        this.mailboxConfig = mailboxConfig;
         
         // Create the delay scheduler based on configuration
         this.delayScheduler = threadPoolConfig.createScheduledExecutorService("actor-system");
@@ -219,7 +234,7 @@ public class ActorSystem {
      * @return The PID of the created child actor
      */
     public <T extends Actor<?>> Pid registerChild(Class<T> actorClass, Actor<?> parent) {
-        return registerChild(actorClass, UUID.randomUUID().toString(), parent);
+        return registerChild(actorClass, generateActorId(), parent);
     }
 
     /**
@@ -231,27 +246,81 @@ public class ActorSystem {
      * @return The PID of the registered actor
      */
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId) {
-        return register(actorClass, actorId, false);
+        return register(actorClass, actorId, null, this.mailboxConfig);
     }
     
     /**
      * Registers a new actor with this system, with optional backpressure support.
-     * 
+     *
      * @param <T> The type of actor to register
      * @param actorClass The class of the actor to register
      * @param actorId The unique ID to assign to this actor
      * @param enableBackpressure Whether to enable backpressure support for this actor
      * @return The PID of the registered actor
+     * @deprecated Use {@link #register(Class, String, BackpressureConfig)} instead
      */
+    @Deprecated
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure) {
-        return register(actorClass, actorId, enableBackpressure, 
-                backpressureConfig.getInitialCapacity(), 
-                backpressureConfig.getMaxCapacity());
+        // Convert boolean to BackpressureConfig for backward compatibility
+        BackpressureConfig config = enableBackpressure ? backpressureConfig : null;
+        return register(actorClass, actorId, config, this.mailboxConfig);
+    }
+    
+    /**
+     * Registers a new actor with this system, with optional backpressure support.
+     *
+     * @param <T> The type of actor to register
+     * @param actorClass The class of the actor to register
+     * @param actorId The unique ID to assign to this actor
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @return The PID of the registered actor
+     */
+    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, BackpressureConfig backpressureConfig) {
+        return register(actorClass, actorId, backpressureConfig, this.mailboxConfig);
+    }
+    
+    /**
+     * Registers a new actor with this system, with optional backpressure support and custom mailbox configuration.
+     *
+     * @param <T> The type of actor to register
+     * @param actorClass The class of the actor to register
+     * @param actorId The unique ID to assign to this actor
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig The mailbox configuration
+     * @return The PID of the registered actor
+     */
+    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
+        try {
+            // Create the actor instance using reflection
+            Constructor<T> constructor = actorClass.getConstructor(ActorSystem.class, String.class, BackpressureConfig.class, MailboxConfig.class);
+            T actor = constructor.newInstance(this, actorId, backpressureConfig, mailboxConfig);
+            
+            // Register the actor with this system
+            actors.put(actorId, actor);
+            
+            // Start the actor
+            actor.start();
+            
+            return actor.getPid();
+        } catch (NoSuchMethodException e) {
+            // Try to find a constructor that takes just the system and ID
+            try {
+                Constructor<T> constructor = actorClass.getConstructor(ActorSystem.class, String.class);
+                T actor = constructor.newInstance(this, actorId);
+                actors.put(actorId, actor);
+                actor.start();
+                return actor.getPid();
+            } catch (Exception ex) {
+                throw new RuntimeException("Failed to create actor of type " + actorClass.getName(), ex);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create actor of type " + actorClass.getName(), e);
+        }
     }
     
     /**
      * Registers a new actor with this system, with custom backpressure configuration.
-     * 
+     *
      * @param <T> The type of actor to register
      * @param actorClass The class of the actor to register
      * @param actorId The unique ID to assign to this actor
@@ -259,54 +328,38 @@ public class ActorSystem {
      * @param initialCapacity The initial capacity of the mailbox (only used if backpressure is enabled)
      * @param maxCapacity The maximum capacity the mailbox can grow to (only used if backpressure is enabled)
      * @return The PID of the registered actor
+     * @deprecated Use {@link #register(Class, String, BackpressureConfig, MailboxConfig)} instead
      */
+    @Deprecated
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure, 
                                              int initialCapacity, int maxCapacity) {
-        if (actors.containsKey(actorId)) {
-            throw new IllegalArgumentException("Actor with ID " + actorId + " already exists");
-        }
-        
-        try {
-            // Create the actor instance
-            T actor;
-            try {
-                // Try to use constructor with system, actorId, and backpressure parameters
-                actor = actorClass.getConstructor(ActorSystem.class, String.class, boolean.class, int.class, int.class)
-                        .newInstance(this, actorId, enableBackpressure, initialCapacity, maxCapacity);
-            } catch (NoSuchMethodException e1) {
-                try {
-                    // Try to use constructor with system, actorId, and backpressure
-                    actor = actorClass.getConstructor(ActorSystem.class, String.class, boolean.class)
-                            .newInstance(this, actorId, enableBackpressure);
-                } catch (NoSuchMethodException e2) {
-                    try {
-                        // Fall back to constructor with system and actorId
-                        actor = actorClass.getConstructor(ActorSystem.class, String.class)
-                                .newInstance(this, actorId);
-                    } catch (NoSuchMethodException e3) {
-                        // Last resort: try just the system constructor
-                        actor = actorClass.getConstructor(ActorSystem.class)
-                                .newInstance(this);
-                    }
-                }
-            }
-            
-            // Register the actor
-            logger.debug("Registering actor {} of type {}", actorId, actorClass.getSimpleName());
-            
-            // Store in registry
-            actors.put(actorId, actor);
-            
-            // Start the actor
-            actor.start();
-            
-            return actor.getPid();
-            
-        } catch (InstantiationException | IllegalAccessException | 
-                 InvocationTargetException | NoSuchMethodException e) {
-            logger.error("Error creating actor of type {}", actorClass.getName(), e);
-            throw new RuntimeException("Error creating actor", e);
-        }
+        // Convert boolean to BackpressureConfig for backward compatibility
+        BackpressureConfig config = enableBackpressure ? backpressureConfig : null;
+        MailboxConfig customMailboxConfig = new MailboxConfig()
+            .setInitialCapacity(initialCapacity)
+            .setMaxCapacity(maxCapacity);
+        return register(actorClass, actorId, config, customMailboxConfig);
+    }
+    
+    /**
+     * Registers a new actor with this system, with custom backpressure configuration.
+     *
+     * @param <T> The type of actor to register
+     * @param actorClass The class of the actor to register
+     * @param actorId The unique ID to assign to this actor
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param initialCapacity The initial capacity of the mailbox
+     * @param maxCapacity The maximum capacity the mailbox can grow to
+     * @return The PID of the registered actor
+     * @deprecated Use {@link #register(Class, String, BackpressureConfig, MailboxConfig)} instead
+     */
+    @Deprecated
+    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, BackpressureConfig backpressureConfig, 
+                                             int initialCapacity, int maxCapacity) {
+        MailboxConfig customMailboxConfig = new MailboxConfig()
+            .setInitialCapacity(initialCapacity)
+            .setMaxCapacity(maxCapacity);
+        return register(actorClass, actorId, backpressureConfig, customMailboxConfig);
     }
 
     /**
@@ -346,7 +399,7 @@ public class ActorSystem {
      * @return The PID of the created actor
      */
     public <T extends Actor<?>> Pid register(Class<T> actorClass) {
-        return register(actorClass, UUID.randomUUID().toString());
+        return register(actorClass, generateActorId());
     }
 
     /**
@@ -387,12 +440,30 @@ public class ActorSystem {
     public BackpressureConfig getBackpressureConfig() {
         return backpressureConfig;
     }
+    
+    /**
+     * Gets the mailbox configuration for this actor system.
+     * 
+     * @return The mailbox configuration
+     */
+    public MailboxConfig getMailboxConfig() {
+        return mailboxConfig;
+    }
 
     /**
      * Shuts down all actors in the system.
      * This method stops all actors, waits for any persistence operations to complete,
      * and then clears the actor registry and shuts down the thread pools.
      */
+    /**
+     * Generates a unique actor ID using a UUID.
+     * 
+     * @return A string representation of a UUID to be used as an actor ID
+     */
+    protected String generateActorId() {
+        return UUID.randomUUID().toString();
+    }
+    
     public void shutdown() {
         logger.info("Shutting down all actors in the system");
         
@@ -496,7 +567,7 @@ public class ActorSystem {
      * @param timeUnit The time unit for the delay
      */
     <Message> void routeMessage(String actorId, Message message, Long delay, TimeUnit timeUnit) {
-        String taskId = UUID.randomUUID().toString();
+        String taskId = generateActorId();
         ScheduledFuture<?> future = delayScheduler.schedule(() -> {
             pendingDelayedMessages.remove(taskId);
             routeMessage(actorId, message);
@@ -520,7 +591,7 @@ public class ActorSystem {
         
         CompletableFuture<ResponseMessage> result = new CompletableFuture<>();
         AtomicBoolean completed = new AtomicBoolean(false);
-        String replyActorId = "reply-" + UUID.randomUUID().toString();
+        String replyActorId = "reply-" + generateActorId();
         
         // Schedule a timeout
         ScheduledFuture<?> timeoutFuture = delayScheduler.schedule(() -> {
