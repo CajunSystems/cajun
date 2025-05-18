@@ -7,6 +7,11 @@ import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -62,6 +67,15 @@ public class BackpressureManager<T> {
     // Callbacks
     private Consumer<BackpressureEvent> callback;
 
+    // Additional fields for retry functionality
+    private final ConcurrentHashMap<Object, RetryEntry<T>> retryQueue = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService retryExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "backpressure-retry-thread");
+        t.setDaemon(true);
+        return t;
+    });
+    private long defaultRetryTimeoutMs = 1000; // Default 1 second timeout
+
     /**
      * Creates a new BackpressureManager.
      */
@@ -85,22 +99,78 @@ public class BackpressureManager<T> {
      *
      * @param config The backpressure configuration to use
      */
-    public void enable(BackpressureConfig config) {
-        this.config = config;
-        this.enabled = true;
-        this.criticalThreshold = config.getHighWatermark();
-        this.recoveryThreshold = config.getLowWatermark();
+    public synchronized void enable(BackpressureConfig config) {
+        if (config == null) {
+            logger.warn("Attempted to enable backpressure with null config, using default values");
+            this.config = new BackpressureConfig();
+        } else {
+            this.config = config;
+        }
+        
+        // Set thresholds from config
+        float highWatermark = this.config.getHighWatermark();
+        float lowWatermark = this.config.getLowWatermark();
+        
+        // Validate watermarks
+        if (highWatermark <= 0 || highWatermark > 1.0f) {
+            logger.warn("Invalid high watermark: {}, using default value of 0.8", highWatermark);
+            highWatermark = 0.8f;
+        }
+        
+        if (lowWatermark <= 0 || lowWatermark >= highWatermark) {
+            logger.warn("Invalid low watermark: {}, using default value of 0.5", lowWatermark);
+            lowWatermark = 0.5f;
+        }
+        
+        this.criticalThreshold = highWatermark;
+        this.recoveryThreshold = lowWatermark;
 
         // Default warning threshold to midpoint between normal and critical if not set
-        if (this.warningThreshold <= 0) {
-            this.warningThreshold = this.criticalThreshold * 0.75f;
+        if (this.warningThreshold <= 0 || this.warningThreshold >= this.criticalThreshold) {
+            this.warningThreshold = (this.criticalThreshold + this.recoveryThreshold) / 2;
         }
+        
+        // Reset metrics and state if needed
+        if (!this.enabled) {
+            // Only reset if we're transitioning from disabled to enabled
+            this.currentState = BackpressureState.NORMAL;
+            this.lastStateChangeTime = Instant.now();
+            this.messagesProcessedSinceLastStateChange = 0;
+            
+            synchronized (recentEvents) {
+                recentEvents.clear();
+            }
+            
+            synchronized (stateTransitions) {
+                stateTransitions.clear();
+            }
+            
+            // Log enabling of backpressure
+            String actorId = actor != null ? actor.getActorId() : "unknown";
+            logger.info("Enabled backpressure for actor {} with thresholds: warning={}, critical={}, recovery={}", 
+                    actorId, this.warningThreshold, this.criticalThreshold, this.recoveryThreshold);
+        }
+        
+        // Set enabled flag last to ensure all configuration is complete
+        this.enabled = true;
     }
 
     /**
      * Disables backpressure for the managed actor.
      */
-    public void disable() {
+    public synchronized void disable() {
+        if (this.enabled) {
+            // Only log if we're actually changing state
+            String actorId = actor != null ? actor.getActorId() : "unknown";
+            logger.info("Disabled backpressure for actor {}", actorId);
+            
+            // Reset backpressure active flag
+            isBackpressureActive.set(false);
+            
+            // Clear any pending state
+            this.currentState = BackpressureState.NORMAL;
+        }
+        
         this.enabled = false;
     }
 
@@ -110,7 +180,12 @@ public class BackpressureManager<T> {
      * @param strategy The strategy to use
      */
     public void setStrategy(BackpressureStrategy strategy) {
-        this.strategy = strategy;
+        if (strategy == null) {
+            logger.warn("Attempted to set null backpressure strategy, defaulting to BLOCK");
+            this.strategy = BackpressureStrategy.BLOCK;
+        } else {
+            this.strategy = strategy;
+        }
     }
 
     /**
@@ -134,9 +209,23 @@ public class BackpressureManager<T> {
      * @param recoveryThreshold Threshold for RECOVERY state (0.0-1.0)
      */
     public void setThresholds(float warningThreshold, float criticalThreshold, float recoveryThreshold) {
-        this.warningThreshold = warningThreshold;
-        this.criticalThreshold = criticalThreshold;
-        this.recoveryThreshold = recoveryThreshold;
+        // Validate thresholds to ensure they are within valid ranges
+        this.warningThreshold = Math.max(0.0f, Math.min(1.0f, warningThreshold));
+        this.criticalThreshold = Math.max(0.0f, Math.min(1.0f, criticalThreshold));
+        this.recoveryThreshold = Math.max(0.0f, Math.min(1.0f, recoveryThreshold));
+        
+        // Ensure logical ordering of thresholds
+        if (this.criticalThreshold < this.warningThreshold) {
+            logger.warn("Critical threshold {} is less than warning threshold {}, adjusting critical threshold",
+                    this.criticalThreshold, this.warningThreshold);
+            this.criticalThreshold = this.warningThreshold;
+        }
+        
+        if (this.recoveryThreshold > this.warningThreshold) {
+            logger.warn("Recovery threshold {} is greater than warning threshold {}, adjusting recovery threshold",
+                    this.recoveryThreshold, this.warningThreshold);
+            this.recoveryThreshold = this.warningThreshold * 0.8f;
+        }
     }
 
     /**
@@ -170,35 +259,45 @@ public class BackpressureManager<T> {
             return;
         }
 
-        currentSize.set(currentMailboxSize);
-        processingRate.set(rate);
-        messagesProcessed.incrementAndGet();
+        try {
+            currentSize.set(currentMailboxSize);
+            processingRate.set(rate);
+            messagesProcessed.incrementAndGet();
 
-        // Calculate fill ratio
-        float fillRatio = calculateFillRatio(currentMailboxSize, mailboxCapacity);
+            // Calculate fill ratio
+            float fillRatio = calculateFillRatio(currentMailboxSize, mailboxCapacity);
 
-        // Determine the new state based on thresholds
-        BackpressureState newState = determineBackpressureState(fillRatio);
+            // Determine the new state based on thresholds
+            BackpressureState newState = determineBackpressureState(fillRatio);
 
-        // Handle state transition if needed
-        if (newState != currentState) {
-            handleStateTransition(currentState, newState, fillRatio, currentMailboxSize, mailboxCapacity, rate);
-        }
+            // Handle state transition if needed
+            if (newState != currentState) {
+                handleStateTransition(currentState, newState, fillRatio, currentMailboxSize, mailboxCapacity, rate);
+            }
 
-        // Set backpressure active flag based on the current state
-        boolean isActive = newState == BackpressureState.CRITICAL;
-        isBackpressureActive.set(isActive);
+            // Set backpressure active flag based on the current state
+            boolean isActive = newState == BackpressureState.CRITICAL || newState == BackpressureState.WARNING;
+            isBackpressureActive.set(isActive);
 
-        // Create a backpressure event for the current metrics
-        BackpressureEvent event = createBackpressureEvent(
-            newState, fillRatio, currentMailboxSize, mailboxCapacity, rate, false, mailboxCapacity);
+            // Create a backpressure event for the current metrics
+            BackpressureEvent event = createBackpressureEvent(
+                newState, fillRatio, currentMailboxSize, mailboxCapacity, rate, false, mailboxCapacity);
 
-        // Add to recent events and trim if needed
-        addEventToHistory(event);
+            // Add to recent events and trim if needed
+            addEventToHistory(event);
 
-        // Notify callback if registered
-        if (callback != null) {
-            callback.accept(event);
+            // Notify callback if registered
+            if (callback != null) {
+                try {
+                    callback.accept(event);
+                } catch (Exception e) {
+                    // Catch and log any exceptions from callbacks to prevent them from affecting the actor
+                    logger.error("Exception in backpressure callback: {}", e.getMessage(), e);
+                }
+            }
+        } catch (Exception e) {
+            // Catch any unexpected exceptions to prevent the actor from crashing
+            logger.error("Exception in backpressure metrics update: {}", e.getMessage(), e);
         }
     }
 
@@ -293,7 +392,12 @@ public class BackpressureManager<T> {
      * @return The duration since the last state change
      */
     public Duration getTimeInCurrentState() {
-        return Duration.between(lastStateChangeTime, Instant.now());
+        try {
+            return Duration.between(lastStateChangeTime, Instant.now());
+        } catch (Exception e) {
+            logger.warn("Error calculating time in current state: {}", e.getMessage());
+            return Duration.ZERO;
+        }
     }
 
     /**
@@ -313,7 +417,9 @@ public class BackpressureManager<T> {
      * @return The state transitions
      */
     public List<StateTransition> getStateTransitions() {
-        return new ArrayList<>(stateTransitions);
+        synchronized (stateTransitions) {
+            return new ArrayList<>(stateTransitions);
+        }
     }
 
     /**
@@ -350,46 +456,164 @@ public class BackpressureManager<T> {
         // Get the most recent event for decision making
         BackpressureEvent latestEvent;
         synchronized (recentEvents) {
-            latestEvent = recentEvents.isEmpty() ? null : recentEvents.getFirst();
+            latestEvent = !recentEvents.isEmpty() ? recentEvents.getFirst() : null;
+        }
+
+        // If we don't have any events yet, accept the message
+        if (latestEvent == null) {
+            logger.debug("No backpressure events available yet, accepting message");
+            return true;
         }
 
         // Use custom handler if strategy is CUSTOM
-        if (strategy == BackpressureStrategy.CUSTOM && customHandler != null && latestEvent != null) {
-            CustomBackpressureHandler.BackpressureAction action = 
-                    customHandler.handleMessage(message, latestEvent);
+        if (strategy == BackpressureStrategy.CUSTOM && customHandler != null) {
+            try {
+                CustomBackpressureHandler.BackpressureAction action = 
+                        customHandler.handleMessage(message, latestEvent);
 
-            switch (action) {
-                case ACCEPT:
-                    return true;
-                case REJECT:
-                    return false;
-                case RETRY_WITH_TIMEOUT:
-                    // Would need to implement retry logic here
-                    return false;
-                case MAKE_ROOM:
-                    // Would need to implement logic to drop messages to make room
-                    // In a real implementation, we would need to access the actual queue
-                    return true;
-                default:
-                    return false;
+                switch (action) {
+                    case ACCEPT:
+                        return true;
+                    case REJECT:
+                        return false;
+                    case RETRY_WITH_TIMEOUT:
+                        // Implement retry logic with a timeout
+                        return scheduleRetry(message, options, defaultRetryTimeoutMs);
+                    case MAKE_ROOM:
+                        // Implement logic to drop messages to make room
+                        if (actor != null) {
+                            try {
+                                boolean success = makeRoomInMailbox();
+                                if (success) {
+                                    logger.debug("Successfully made room in mailbox for new message");
+                                    return true;
+                                } else {
+                                    logger.debug("Failed to make room in mailbox, rejecting message");
+                                    return false;
+                                }
+                            } catch (Exception e) {
+                                logger.error("Failed to make room in mailbox: {}", e.getMessage(), e);
+                                return false;
+                            }
+                        }
+                        logger.debug("No actor reference available to make room in mailbox");
+                        return false;
+                    default:
+                        logger.warn("Unknown backpressure action: {}, defaulting to REJECT", action);
+                        return false;
+                }
+            } catch (Exception e) {
+                // Catch any exceptions from the custom handler to prevent them from affecting the actor
+                logger.error("Exception in custom backpressure handler: {}", e.getMessage(), e);
+                return false;
             }
         }
 
         // Handle according to strategy
-        switch (strategy) {
-            case DROP_NEW:
-                // Just reject the message when under backpressure
-                return false;
+        try {
+            switch (strategy) {
+                case DROP_NEW:
+                    // Just reject the message when under backpressure
+                    logger.debug("DROP_NEW strategy active, rejecting new message");
+                    return false;
 
-            case DROP_OLDEST:
-                // In a real implementation, this would remove the oldest message
-                // from the mailbox to make room for the new one
-                return true;
+                case DROP_OLDEST:
+                    // Remove the oldest message from the mailbox to make room for the new one
+                    if (actor != null) {
+                        try {
+                            boolean success = makeRoomInMailbox();
+                            if (success) {
+                                logger.debug("Successfully dropped oldest message to make room");
+                                return true;
+                            } else {
+                                logger.debug("Failed to drop oldest message, but accepting message anyway");
+                                return true; // Still accept even if we couldn't make room
+                            }
+                        } catch (Exception e) {
+                            logger.error("Failed to drop oldest message: {}", e.getMessage(), e);
+                            // Still accept the message even if we couldn't drop the oldest
+                            return true;
+                        }
+                    }
+                    return true;
 
-            case BLOCK:
-            default:
-                // Block is handled at the caller level
+                case BLOCK:
+                default:
+                    // Block is handled at the caller level
+                    logger.debug("BLOCK strategy active, message will be blocked");
+                    return false;
+            }
+        } catch (Exception e) {
+            // Catch any unexpected exceptions to prevent the actor from crashing
+            logger.error("Exception in backpressure message handling: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+    
+    /**
+     * Attempts to make room in the mailbox by removing the oldest message.
+     * This is used by the DROP_OLDEST strategy and the MAKE_ROOM action.
+     * 
+     * @return true if room was successfully made, false otherwise
+     */
+    private boolean makeRoomInMailbox() {
+        if (actor == null) {
+            logger.warn("Cannot make room in mailbox: no actor reference");
+            return false;
+        }
+        
+        try {
+            // Try to access the mailbox field
+            java.lang.reflect.Field mailboxField = Actor.class.getDeclaredField("mailbox");
+            mailboxField.setAccessible(true);
+            Object mailbox;
+            
+            synchronized (actor) {
+                if (actor == null) { // Double-check after acquiring lock
+                    return false;
+                }
+                mailbox = mailboxField.get(actor);
+                if (mailbox == null) {
+                    logger.warn("Actor mailbox is null");
+                    return false;
+                }
+            }
+
+            // Check if it's a queue that supports removal
+            if (mailbox instanceof java.util.Queue) {
+                java.util.Queue<?> queue = (java.util.Queue<?>) mailbox;
+                synchronized (mailbox) {
+                    if (!queue.isEmpty()) {
+                        // Remove the oldest message (head of the queue)
+                        Object removed = queue.poll();
+                        if (removed != null) {
+                            logger.debug("Removed oldest message from mailbox to make room");
+                            return true;
+                        } else {
+                            logger.warn("Failed to remove message from queue, poll returned null");
+                            return false;
+                        }
+                    } else {
+                        logger.debug("Queue is empty, nothing to remove");
+                        return false;
+                    }
+                }
+            } else {
+                logger.warn("Mailbox is not a Queue, cannot remove messages");
                 return false;
+            }
+        } catch (NoSuchFieldException e) {
+            logger.error("Could not find mailbox field in Actor class: {}", e.getMessage(), e);
+            return false;
+        } catch (IllegalAccessException e) {
+            logger.error("Could not access mailbox field: {}", e.getMessage(), e);
+            return false;
+        } catch (SecurityException e) {
+            logger.error("Security exception accessing mailbox field: {}", e.getMessage(), e);
+            return false;
+        } catch (Exception e) {
+            logger.error("Unexpected exception making room in mailbox: {}", e.getMessage(), e);
+            return false;
         }
     }
 
@@ -399,26 +623,52 @@ public class BackpressureManager<T> {
      * @return The backpressure status
      */
     public BackpressureStatus getStatus() {
-        // Get the current mailbox capacity using reflection
-        int capacity = getActorCapacity();
+        try {
+            // Get the current mailbox capacity using reflection
+            int capacity = getActorCapacity();
+            String actorId = actor != null ? actor.getActorId() : "unknown";
+            
+            // Create a defensive copy of the current size to avoid race conditions
+            int currentSizeValue = currentSize.get();
+            
+            // Calculate fill ratio safely
+            float fillRatio = calculateFillRatio(currentSizeValue, capacity);
+            
+            BackpressureStatus.Builder builder = new BackpressureStatus.Builder()
+                .actorId(actorId)
+                .currentState(currentState)
+                .fillRatio(fillRatio)
+                .currentSize(currentSizeValue)
+                .capacity(capacity)
+                .processingRate(processingRate.get())
+                .enabled(enabled)
+                .timestamp(Instant.now())
+                .timeInCurrentState(getTimeInCurrentState())
+                .lastStateChangeTime(lastStateChangeTime)
+                .messagesProcessedSinceLastStateChange(messagesProcessedSinceLastStateChange)
+                .recentEvents(getRecentEvents())
+                .stateTransitions(getStateTransitions())
+                .strategy(strategy)
+                .warningThreshold(warningThreshold)
+                .criticalThreshold(criticalThreshold)
+                .recoveryThreshold(recoveryThreshold);
 
-        BackpressureStatus.Builder builder = new BackpressureStatus.Builder()
-            .actorId(actor.getActorId())
-            .currentState(currentState)
-            .fillRatio(currentSize.get() > 0 && capacity > 0 ? 
-                    (float) currentSize.get() / capacity : 0)
-            .currentSize(currentSize.get())
-            .capacity(capacity)
-            .processingRate(processingRate.get())
-            .enabled(enabled)
-            .timestamp(Instant.now())
-            .timeInCurrentState(getTimeInCurrentState())
-            .lastStateChangeTime(lastStateChangeTime)
-            .messagesProcessedSinceLastStateChange(messagesProcessedSinceLastStateChange)
-            .recentEvents(getRecentEvents())
-            .stateTransitions(getStateTransitions());
-
-        return builder.computeAverages().build();
+            return builder.computeAverages().build();
+        } catch (Exception e) {
+            // If anything goes wrong, return a minimal status object
+            logger.error("Error generating backpressure status: {}", e.getMessage(), e);
+            
+            return new BackpressureStatus.Builder()
+                .actorId(actor != null ? actor.getActorId() : "unknown")
+                .currentState(currentState)
+                .fillRatio(0.0f)
+                .currentSize(currentSize.get())
+                .capacity(Integer.MAX_VALUE)
+                .processingRate(0)
+                .enabled(enabled)
+                .timestamp(Instant.now())
+                .build();
+        }
     }
 
     /**
@@ -429,11 +679,26 @@ public class BackpressureManager<T> {
      * @return The mailbox capacity or Integer.MAX_VALUE if not available
      */
     private int getActorCapacity() {
+        if (actor == null) {
+            return Integer.MAX_VALUE;
+        }
+        
+        Object mailbox = null;
         try {
             // Try to access the mailbox field
             java.lang.reflect.Field mailboxField = Actor.class.getDeclaredField("mailbox");
             mailboxField.setAccessible(true);
-            Object mailbox = mailboxField.get(actor);
+            
+            synchronized (actor) {
+                if (actor == null) { // Double-check after acquiring lock
+                    return Integer.MAX_VALUE;
+                }
+                mailbox = mailboxField.get(actor);
+                if (mailbox == null) {
+                    logger.debug("Actor mailbox is null");
+                    return Integer.MAX_VALUE;
+                }
+            }
 
             // Check if it's a ResizableBlockingQueue
             if (mailbox instanceof java.util.concurrent.BlockingQueue) {
@@ -442,14 +707,32 @@ public class BackpressureManager<T> {
                     java.lang.reflect.Method getCapacityMethod = 
                             mailbox.getClass().getDeclaredMethod("getCapacity");
                     getCapacityMethod.setAccessible(true);
-                    return (int) getCapacityMethod.invoke(mailbox);
+                    
+                    synchronized (mailbox) {
+                        Object result = getCapacityMethod.invoke(mailbox);
+                        if (result instanceof Integer) {
+                            int capacity = (int) result;
+                            return capacity > 0 ? capacity : Integer.MAX_VALUE;
+                        }
+                    }
                 } else {
                     // For other BlockingQueue implementations, try to get remaining capacity
                     java.util.concurrent.BlockingQueue<?> queue = 
                             (java.util.concurrent.BlockingQueue<?>) mailbox;
-                    return Integer.MAX_VALUE; // Unbounded queue
+                    
+                    // Most BlockingQueue implementations don't expose their capacity directly
+                    // For bounded queues, we could estimate it, but for now we'll return MAX_VALUE
+                    return Integer.MAX_VALUE; 
                 }
             }
+        } catch (NoSuchFieldException e) {
+            logger.debug("Could not find mailbox field in Actor class: {}", e.getMessage());
+        } catch (IllegalAccessException e) {
+            logger.debug("Could not access mailbox field: {}", e.getMessage());
+        } catch (NoSuchMethodException e) {
+            logger.debug("Could not find getCapacity method: {}", e.getMessage());
+        } catch (SecurityException e) {
+            logger.debug("Security exception accessing mailbox: {}", e.getMessage());
         } catch (Exception e) {
             logger.debug("Could not get actor capacity: {}", e.getMessage());
         }
@@ -473,99 +756,345 @@ public class BackpressureManager<T> {
         if (capacity <= 0) {
             return 0;
         }
-        return (float) size / capacity;
+        try {
+            return Math.max(0.0f, Math.min(1.0f, (float) size / capacity));
+        } catch (ArithmeticException e) {
+            logger.warn("Error calculating fill ratio: {}", e.getMessage());
+            return 0.0f;
+        }
     }
 
     private BackpressureState determineBackpressureState(float fillRatio) {
-        // If currently in CRITICAL, only move to RECOVERY when below criticalThreshold
-        if (currentState == BackpressureState.CRITICAL) {
-            if (fillRatio < recoveryThreshold) {
-                return BackpressureState.RECOVERY;
-            } else {
-                return BackpressureState.CRITICAL;
+        try {
+            // Ensure fillRatio is within valid bounds
+            float safeRatio = Math.max(0.0f, Math.min(1.0f, fillRatio));
+            
+            // If currently in CRITICAL, only move to RECOVERY when below recoveryThreshold
+            if (currentState == BackpressureState.CRITICAL) {
+                if (safeRatio < recoveryThreshold) {
+                    return BackpressureState.RECOVERY;
+                } else {
+                    return BackpressureState.CRITICAL;
+                }
             }
-        }
 
-        // If currently in RECOVERY, only move to NORMAL when below recoveryThreshold
-        // or back to CRITICAL if it rises again
-        if (currentState == BackpressureState.RECOVERY) {
-            if (fillRatio < recoveryThreshold) {
+            // If currently in RECOVERY, only move to NORMAL when below recoveryThreshold
+            // or back to CRITICAL if it rises again
+            if (currentState == BackpressureState.RECOVERY) {
+                if (safeRatio < recoveryThreshold) {
+                    return BackpressureState.NORMAL;
+                } else if (safeRatio >= criticalThreshold) {
+                    return BackpressureState.CRITICAL;
+                } else {
+                    return BackpressureState.RECOVERY;
+                }
+            }
+
+            // From NORMAL or WARNING, determine based on thresholds
+            if (safeRatio >= criticalThreshold) {
+                return BackpressureState.CRITICAL;
+            } else if (safeRatio >= warningThreshold) {
+                return BackpressureState.WARNING;
+            } else {
                 return BackpressureState.NORMAL;
-            } else if (fillRatio >= criticalThreshold) {
-                return BackpressureState.CRITICAL;
-            } else {
-                return BackpressureState.RECOVERY;
             }
-        }
-
-        // From NORMAL or WARNING, determine based on thresholds
-        if (fillRatio >= criticalThreshold) {
-            return BackpressureState.CRITICAL;
-        } else if (fillRatio >= warningThreshold) {
-            return BackpressureState.WARNING;
-        } else {
-            return BackpressureState.NORMAL;
+        } catch (Exception e) {
+            logger.error("Error determining backpressure state: {}", e.getMessage(), e);
+            // Default to current state if there's an error, or NORMAL if no current state
+            return currentState != null ? currentState : BackpressureState.NORMAL;
         }
     }
 
     private void handleStateTransition(BackpressureState oldState, BackpressureState newState, 
             float fillRatio, int size, int capacity, long rate) {
 
-        // Record the time spent in the previous state
-        Duration timeInPreviousState = Duration.between(lastStateChangeTime, Instant.now());
-
-        // Update state tracking
-        lastStateChangeTime = Instant.now();
-        messagesProcessedSinceLastStateChange = messagesProcessed.getAndSet(0);
-        currentState = newState;
-
-        // Create a transition record
-        String reason = String.format("Fill ratio: %.2f, Size: %d/%d, Rate: %d msgs/sec", 
-                fillRatio, size, capacity, rate);
-        StateTransition transition = new StateTransition(oldState, newState, Instant.now(), reason);
-        stateTransitions.add(transition);
-
-        // Trim transition history if needed
-        while (stateTransitions.size() > maxEventsToKeep) {
-            stateTransitions.remove(0);
+        if (oldState == newState) {
+            return; // No transition needed
         }
 
-        // Log the transition
-        logger.info("Actor {} backpressure state changed: {} -> {} after {} ({} messages processed). {}",
-                actor.getActorId(), oldState, newState, timeInPreviousState, 
-                messagesProcessedSinceLastStateChange, reason);
+        try {
+            // Record the time spent in the previous state
+            Duration timeInPreviousState = Duration.between(lastStateChangeTime, Instant.now());
+
+            // Update state tracking
+            lastStateChangeTime = Instant.now();
+            long previousMessages = messagesProcessedSinceLastStateChange;
+            messagesProcessedSinceLastStateChange = messagesProcessed.getAndSet(0);
+            
+            // Set the current state
+            BackpressureState previousState = currentState;
+            currentState = newState;
+
+            // Create a transition record with detailed information
+            String reason = String.format("Fill ratio: %.2f, Size: %d/%d, Rate: %d msgs/sec, Time in previous state: %s, Messages processed: %d", 
+                    fillRatio, size, capacity, rate, formatDuration(timeInPreviousState), previousMessages);
+            StateTransition transition = new StateTransition(oldState, newState, Instant.now(), reason);
+            
+            synchronized (stateTransitions) {
+                stateTransitions.add(transition);
+
+                // Trim transition history if needed
+                while (stateTransitions.size() > maxEventsToKeep) {
+                    stateTransitions.remove(0);
+                }
+            }
+
+            // Update backpressure active flag based on the new state
+            boolean isActive = newState == BackpressureState.CRITICAL || newState == BackpressureState.WARNING;
+            isBackpressureActive.set(isActive);
+
+            // Log the transition with appropriate level based on severity
+            if (newState == BackpressureState.CRITICAL) {
+                logger.warn("Actor {} backpressure state changed: {} -> {} after {} ({} messages processed). {}",
+                        actor != null ? actor.getActorId() : "unknown", oldState, newState, formatDuration(timeInPreviousState), 
+                        previousMessages, reason);
+            } else if (oldState == BackpressureState.CRITICAL && newState == BackpressureState.RECOVERY) {
+                logger.info("Actor {} recovering from CRITICAL backpressure state after {} ({} messages processed). {}",
+                        actor != null ? actor.getActorId() : "unknown", formatDuration(timeInPreviousState), 
+                        previousMessages, reason);
+            } else {
+                logger.info("Actor {} backpressure state changed: {} -> {} after {} ({} messages processed). {}",
+                        actor != null ? actor.getActorId() : "unknown", oldState, newState, formatDuration(timeInPreviousState), 
+                        previousMessages, reason);
+            }
+            
+            // Create a backpressure event for the state transition
+            BackpressureEvent event = createBackpressureEvent(
+                    newState, fillRatio, size, capacity, rate, false, capacity);
+            
+            // Add to recent events
+            addEventToHistory(event);
+            
+            // Notify callback if registered
+            if (callback != null) {
+                try {
+                    callback.accept(event);
+                } catch (Exception e) {
+                    logger.error("Exception in backpressure callback during state transition: {}", e.getMessage(), e);
+                }
+            }
+        } catch (Exception e) {
+            // Catch any unexpected exceptions to prevent the actor from crashing
+            logger.error("Exception during backpressure state transition: {}", e.getMessage(), e);
+            // Ensure the state is still updated even if there's an exception
+            currentState = newState;
+            // Update backpressure active flag based on the new state
+            boolean isActive = newState == BackpressureState.CRITICAL || newState == BackpressureState.WARNING;
+            isBackpressureActive.set(isActive);
+        }
+    }
+    
+    /**
+     * Helper method to format duration in a human-readable format
+     */
+    private String formatDuration(Duration duration) {
+        long totalSeconds = duration.getSeconds();
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        long millis = duration.toMillis() % 1000;
+        
+        if (hours > 0) {
+            return String.format("%dh %dm %d.%03ds", hours, minutes, seconds, millis);
+        } else if (minutes > 0) {
+            return String.format("%dm %d.%03ds", minutes, seconds, millis);
+        } else {
+            return String.format("%d.%03ds", seconds, millis);
+        }
     }
 
     private BackpressureEvent createBackpressureEvent(BackpressureState state, float fillRatio, 
             int size, int capacity, long rate, boolean resized, int previousCapacity) {
-
-        return new BackpressureEvent(
-                actor.getActorId(),
-                state,
-                fillRatio,
-                size,
-                capacity,
-                rate,
-                resized,
-                previousCapacity);
+        try {
+            String actorId = actor != null ? actor.getActorId() : "unknown";
+            return new BackpressureEvent(
+                    actorId,
+                    state,
+                    fillRatio,
+                    size,
+                    capacity,
+                    rate,
+                    resized,
+                    previousCapacity);
+        } catch (Exception e) {
+            logger.error("Error creating backpressure event: {}", e.getMessage(), e);
+            // Create a fallback event with safe default values
+            return new BackpressureEvent(
+                    "unknown",
+                    BackpressureState.NORMAL,
+                    0.0f,
+                    0,
+                    Integer.MAX_VALUE,
+                    0,
+                    false,
+                    Integer.MAX_VALUE);
+        }
     }
 
     private void addEventToHistory(BackpressureEvent event) {
+        if (event == null) {
+            logger.warn("Attempted to add null event to history, ignoring");
+            return;
+        }
+        
         // Thread-safe operation on the recentEvents collection
         synchronized (recentEvents) {
-            // Add the new event
-            recentEvents.addFirst(event);
+            try {
+                // Add the new event
+                recentEvents.addFirst(event);
 
-            // Trim the history if needed
-            while (recentEvents.size() > maxEventsToKeep && !recentEvents.isEmpty()) {
-                try {
+                // Trim the history if needed
+                while (recentEvents.size() > maxEventsToKeep && !recentEvents.isEmpty()) {
                     recentEvents.removeLast();
-                } catch (NoSuchElementException e) {
-                    // This shouldn't happen with the size check and synchronization, but just in case
-                    logger.debug("Attempted to remove from empty event history");
-                    break;
                 }
+            } catch (NoSuchElementException e) {
+                // This shouldn't happen with the size check and synchronization, but just in case
+                logger.debug("Attempted to remove from empty event history");
+            } catch (Exception e) {
+                logger.error("Error managing event history: {}", e.getMessage(), e);
             }
+        }
+    }
+
+    /**
+     * Sets the default timeout for retry operations in milliseconds.
+     *
+     * @param timeoutMs The timeout in milliseconds
+     */
+    public void setDefaultRetryTimeoutMs(long timeoutMs) {
+        if (timeoutMs <= 0) {
+            logger.warn("Invalid retry timeout: {}, using default value of 1000ms", timeoutMs);
+            this.defaultRetryTimeoutMs = 1000;
+        } else {
+            this.defaultRetryTimeoutMs = timeoutMs;
+        }
+    }
+
+    /**
+     * Gets the default timeout for retry operations in milliseconds.
+     *
+     * @return The timeout in milliseconds
+     */
+    public long getDefaultRetryTimeoutMs() {
+        return defaultRetryTimeoutMs;
+    }
+
+    /**
+     * Schedules a message for retry after the specified timeout.
+     * 
+     * @param message The message to retry
+     * @param options The send options
+     * @param timeoutMs The timeout in milliseconds
+     * @return true if the retry was scheduled, false otherwise
+     */
+    private boolean scheduleRetry(T message, BackpressureSendOptions options, long timeoutMs) {
+        if (actor == null) {
+            logger.warn("Cannot schedule retry: no actor reference");
+            return false;
+        }
+        
+        try {
+            // Generate a unique key for this message
+            final Object messageKey = System.identityHashCode(message) + "-" + System.nanoTime();
+            
+            // Create a retry entry
+            RetryEntry<T> entry = new RetryEntry<>(message, options, timeoutMs);
+            
+            // Store in retry queue
+            retryQueue.put(messageKey, entry);
+            
+            // Schedule retry task
+            retryExecutor.schedule(() -> {
+                try {
+                    // Remove from retry queue
+                    RetryEntry<T> retryEntry = retryQueue.remove(messageKey);
+                    if (retryEntry == null) {
+                        return; // Already processed or cancelled
+                    }
+                    
+                    // Check if backpressure is still active
+                    if (!enabled || !isBackpressureActive.get()) {
+                        // Backpressure no longer active, send the message
+                        if (actor != null) {
+                            actor.tell(retryEntry.message);
+                            logger.debug("Retry successful: backpressure no longer active");
+                        }
+                        return;
+                    }
+                    
+                    // Get current backpressure state
+                    BackpressureEvent currentEvent;
+                    synchronized (recentEvents) {
+                        currentEvent = !recentEvents.isEmpty() ? recentEvents.getFirst() : null;
+                    }
+                    
+                    // If no events or backpressure has improved, send the message
+                    if (currentEvent == null || 
+                            currentEvent.getFillRatio() < retryEntry.originalEvent.getFillRatio()) {
+                        if (actor != null) {
+                            actor.tell(retryEntry.message);
+                            logger.debug("Retry successful: backpressure has improved");
+                        }
+                    } else {
+                        // Backpressure still active and hasn't improved
+                        logger.debug("Retry failed: backpressure still active");
+                    }
+                } catch (Exception e) {
+                    logger.error("Error during message retry: {}", e.getMessage(), e);
+                }
+            }, timeoutMs, TimeUnit.MILLISECONDS);
+            
+            logger.debug("Scheduled message retry in {}ms", timeoutMs);
+            return true;
+        } catch (Exception e) {
+            logger.error("Failed to schedule message retry: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+    
+    /**
+     * Class to hold information about a message scheduled for retry.
+     */
+    private class RetryEntry<M> {
+        final M message;
+        final BackpressureSendOptions options;
+        final long timeoutMs;
+        final BackpressureEvent originalEvent;
+        final Instant creationTime;
+        
+        RetryEntry(M message, BackpressureSendOptions options, long timeoutMs) {
+            this.message = message;
+            this.options = options;
+            this.timeoutMs = timeoutMs;
+            
+            // Capture current state
+            synchronized (recentEvents) {
+                this.originalEvent = !recentEvents.isEmpty() ? 
+                        recentEvents.getFirst() : 
+                        new BackpressureEvent(
+                            actor != null ? actor.getActorId() : "unknown",
+                            currentState,
+                            1.0f, // Assume worst case
+                            Integer.MAX_VALUE,
+                            Integer.MAX_VALUE,
+                            0,
+                            false,
+                            Integer.MAX_VALUE);
+            }
+            this.creationTime = Instant.now();
+        }
+    }
+    
+    /**
+     * Cleans up resources used by this BackpressureManager.
+     * Should be called when the actor is shutting down.
+     */
+    public void shutdown() {
+        try {
+            retryExecutor.shutdownNow();
+            retryQueue.clear();
+        } catch (Exception e) {
+            logger.error("Error during BackpressureManager shutdown: {}", e.getMessage(), e);
         }
     }
 }

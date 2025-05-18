@@ -1,6 +1,7 @@
 package systems.cajun.backpressure;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * Event object that provides detailed information about the backpressure state of an actor.
@@ -39,15 +40,16 @@ public class BackpressureEvent {
             long processingRate,
             boolean wasResized,
             int previousCapacity) {
-        this.actorId = actorId;
-        this.state = state;
-        this.fillRatio = fillRatio;
-        this.currentSize = currentSize;
-        this.capacity = capacity;
-        this.processingRate = processingRate;
+        // Validate inputs to prevent invalid states
+        this.actorId = actorId != null ? actorId : "unknown";
+        this.state = state != null ? state : BackpressureState.NORMAL;
+        this.fillRatio = Float.isNaN(fillRatio) || Float.isInfinite(fillRatio) ? 0.0f : fillRatio;
+        this.currentSize = Math.max(0, currentSize);
+        this.capacity = Math.max(1, capacity); // Avoid division by zero
+        this.processingRate = Math.max(0, processingRate);
         this.timestamp = Instant.now();
         this.wasResized = wasResized;
-        this.previousCapacity = previousCapacity;
+        this.previousCapacity = Math.max(0, previousCapacity);
     }
 
     /**
@@ -132,7 +134,7 @@ public class BackpressureEvent {
     }
     
     /**
-     * Calculates how long the mailbox would take to fill at the current processing rate,
+     * Calculates how long the mailbox would take to empty at the current processing rate,
      * assuming no new messages are added.
      *
      * @return The estimated time in milliseconds, or Long.MAX_VALUE if the processing rate is 0
@@ -141,7 +143,12 @@ public class BackpressureEvent {
         if (processingRate <= 0) {
             return Long.MAX_VALUE;
         }
-        return (long) (currentSize * 1000.0 / processingRate);
+        try {
+            return (long) (currentSize * 1000.0 / processingRate);
+        } catch (ArithmeticException e) {
+            // Handle potential division by zero or overflow
+            return Long.MAX_VALUE;
+        }
     }
     
     /**
@@ -173,5 +180,26 @@ public class BackpressureEvent {
                 ", rate=" + processingRate + " msgs/sec" +
                 (wasResized ? ", resized from " + previousCapacity : "") +
                 '}';
+    }
+    
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        BackpressureEvent that = (BackpressureEvent) o;
+        return Float.compare(that.fillRatio, fillRatio) == 0 &&
+                currentSize == that.currentSize &&
+                capacity == that.capacity &&
+                processingRate == that.processingRate &&
+                wasResized == that.wasResized &&
+                previousCapacity == that.previousCapacity &&
+                Objects.equals(actorId, that.actorId) &&
+                state == that.state;
+    }
+    
+    @Override
+    public int hashCode() {
+        return Objects.hash(actorId, state, fillRatio, currentSize, capacity, 
+                            processingRate, timestamp, wasResized, previousCapacity);
     }
 }
