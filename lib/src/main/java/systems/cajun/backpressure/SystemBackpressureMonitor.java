@@ -44,9 +44,10 @@ public class SystemBackpressureMonitor {
      * @return A builder for fluent backpressure configuration
      * @throws IllegalArgumentException if the actor does not exist
      */
-    public <T> SystemBackpressureBuilder<T> configureBackpressure(Pid pid) {
-        Actor<T> actor = getActorOrThrow(pid);
-        return new SystemBackpressureBuilder<>(system, pid, actor);
+    public <T> BackpressureBuilder<T> configureBackpressure(Pid pid) {
+        // Verify that the actor exists but use the PID-based builder
+        getActorOrThrow(pid);
+        return new BackpressureBuilder<>(system, pid);
     }
     
     /**

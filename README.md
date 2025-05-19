@@ -690,7 +690,7 @@ Key snapshot features:
 
 ## Backpressure Support in Actors
 
-Cajun provides a sophisticated backpressure system to help actors manage high load scenarios gracefully. The backpressure system allows actors to control their message processing rate and apply different strategies when receiving messages faster than they can process them.
+Cajun provides a sophisticated backpressure system to help actors manage high load scenarios gracefully. The system has been streamlined to improve maintainability, simplify the API, and enhance performance by reducing reflection usage and providing type-safe configuration options.
 
 ### Backpressure States
 
@@ -707,42 +707,45 @@ Cajun supports multiple strategies for handling backpressure:
 
 1. **BLOCK**: Block the sender until space is available in the mailbox (default behavior)
 2. **DROP_NEW**: Drop new messages when the mailbox is full, prioritizing older messages
-3. **DROP_OLDEST**: Drop the oldest messages when the mailbox is full, prioritizing newer messages
+3. **DROP_OLDEST**: Remove oldest messages from the mailbox using the direct Actor.dropOldestMessage method
 4. **CUSTOM**: Use a custom strategy by implementing a `CustomBackpressureHandler`
 
-### Using Backpressure in StatefulActor
+### Using the Enhanced BackpressureBuilder
 
 ```java
-// Create a stateful actor with backpressure configuration
-BackpressureConfig config = new BackpressureConfig.Builder()
-    .setEnabled(true)
-    .setHighWatermark(0.8f)  // 80% capacity triggers CRITICAL state
-    .setLowWatermark(0.5f)   // 50% capacity triggers RECOVERY state
-    .setStrategy(BackpressureStrategy.BLOCK)
-    .build();
+// Direct actor configuration with type safety
+BackpressureBuilder<MyMessage> builder = new BackpressureBuilder<>(myActor)
+    .withStrategy(BackpressureStrategy.DROP_OLDEST)
+    .withWarningThreshold(0.7f)
+    .withCriticalThreshold(0.9f)
+    .withRecoveryThreshold(0.5f);
 
-StatefulActor<MyState, MyMessage> actor = 
-    new MyStatefulActor(system, initialState, config);
+// Apply the configuration
+builder.apply();
 
-// Or with custom backpressure settings and mailbox configuration
-ResizableMailboxConfig mailboxConfig = new ResizableMailboxConfig.Builder()
-    .setInitialCapacity(100)
-    .setMaxCapacity(10000)
-    .build();
+// PID-based configuration through ActorSystem
+BackpressureBuilder<MyMessage> builder = system.getBackpressureMonitor()
+    .configureBackpressure(actorPid)
+    .withStrategy(BackpressureStrategy.DROP_OLDEST)
+    .withWarningThreshold(0.7f)
+    .withCriticalThreshold(0.9f);
 
-StatefulActor<MyState, MyMessage> actor = 
-    new MyStatefulActor(system, initialState, config, mailboxConfig);
+builder.apply();
 
-// Check if a message would be accepted before sending
-BackpressureSendOptions options = BackpressureSendOptions.DEFAULT;
-if (actor.tryTell(message, options)) {
-    // Message was accepted
-} else {
-    // Message was rejected due to backpressure
-    // Handle rejection (e.g., retry later, drop, or apply other strategies)
-}
+// Using preset configurations for common scenarios
+BackpressureBuilder<MyMessage> timeCriticalBuilder = new BackpressureBuilder<>(myActor)
+    .presetTimeCritical()
+    .apply();
 
-// Get backpressure status
+BackpressureBuilder<MyMessage> reliableBuilder = new BackpressureBuilder<>(myActor)
+    .presetReliable()
+    .apply();
+
+BackpressureBuilder<MyMessage> highThroughputBuilder = new BackpressureBuilder<>(myActor)
+    .presetHighThroughput()
+    .apply();
+
+// Check backpressure status
 BackpressureStatus status = actor.getBackpressureStatus();
 BackpressureState currentState = status.getCurrentState();
 float fillRatio = status.getFillRatio();
@@ -750,44 +753,54 @@ float fillRatio = status.getFillRatio();
 
 ### Custom Backpressure Handlers
 
-For advanced backpressure control, you can implement a custom handler:
+For advanced backpressure control, you can implement a custom handler and apply it using the BackpressureBuilder:
 
 ```java
-actor.getBackpressureManager().setCustomHandler(new CustomBackpressureHandler<MyMessage>() {
+CustomBackpressureHandler<MyMessage> handler = new CustomBackpressureHandler<>() {
     @Override
-    public boolean shouldAccept(int currentSize, int capacity, BackpressureSendOptions options) {
-        // Custom logic to decide if message should be accepted
-        return currentSize < capacity * 0.9;
+    public boolean handleMessage(Actor<MyMessage> actor, MyMessage message, BackpressureSendOptions options) {
+        // Custom logic to decide whether to accept the message
+        if (message.isPriority()) {
+            return true; // Always accept priority messages
+        }
+        return actor.getCurrentSize() < actor.getCapacity() * 0.9;
     }
     
     @Override
-    public BackpressureAction handleMessage(MyMessage message, BackpressureEvent event) {
-        // Custom handling based on message content and current backpressure event
-        if (message.isPriority()) {
-            return BackpressureAction.ACCEPT;
-        } else if (event.getFillRatio() > 0.95) {
-            return BackpressureAction.REJECT;
-        }
-        return BackpressureAction.ACCEPT;
+    public boolean makeRoom(Actor<MyMessage> actor) {
+        // Custom logic to make room in the mailbox
+        // Return true if room was successfully made
+        return actor.dropOldestMessage();
     }
-});
+};
+
+// Configure with custom handler
+new BackpressureBuilder<>(myActor)
+    .withStrategy(BackpressureStrategy.CUSTOM)
+    .withCustomHandler(handler)
+    .apply();
 ```
 
 ### Backpressure Monitoring and Callbacks
 
-The backpressure system provides monitoring capabilities and callback notifications:
+The backpressure system provides monitoring capabilities and callback notifications through the BackpressureBuilder:
 
 ```java
-// Register for backpressure event notifications
-actor.getBackpressureManager().setCallback(event -> {
-    logger.info("Backpressure event: {} state, fill ratio: {}", 
-                event.getState(), event.getFillRatio());
-    
-    // Take action based on backpressure events
-    if (event.isBackpressureActive()) {
-        // Notify monitoring system, scale resources, etc.
-    }
-});
+// Register for backpressure event notifications using the builder
+new BackpressureBuilder<>(myActor)
+    .withStrategy(BackpressureStrategy.DROP_OLDEST)
+    .withWarningThreshold(0.7f)
+    .withCriticalThreshold(0.9f)
+    .withCallback(event -> {
+        logger.info("Backpressure event: {} state, fill ratio: {}", 
+                    event.getState(), event.getFillRatio());
+        
+        // Take action based on backpressure events
+        if (event.isBackpressureActive()) {
+            // Notify monitoring system, scale resources, etc.
+        }
+    })
+    .apply();
 
 // Access detailed backpressure metrics and history
 BackpressureStatus status = actor.getBackpressureStatus();
@@ -810,18 +823,20 @@ You can send messages with special options to control backpressure behavior:
 
 ```java
 // Create options for high priority messages that bypass backpressure
-BackpressureSendOptions highPriority = BackpressureSendOptions.highPriority();
+BackpressureSendOptions highPriority = new BackpressureSendOptions()
+    .setHighPriority(true)
+    .setTimeout(Duration.ofSeconds(5));
 
 // Send with high priority
 actor.tell(urgentMessage, highPriority);
 
-// Create custom options
-BackpressureSendOptions customOptions = new BackpressureSendOptions.Builder()
-    .setHighPriority(true)
-    .setMaxRetries(3)
-    .setRetryDelayMs(100)
-    .setFallbackStrategy(BackpressureStrategy.DROP_NEW)
-    .build();
+// Or use the system to send with options
+boolean accepted = system.tellWithOptions(actorPid, message, highPriority);
+
+// Block until message is accepted or timeout occurs
+BackpressureSendOptions blockingOptions = new BackpressureSendOptions()
+    .setBlockUntilAccepted(true)
+    .setTimeout(Duration.ofSeconds(3));
 ```
 
 ## Cluster Mode

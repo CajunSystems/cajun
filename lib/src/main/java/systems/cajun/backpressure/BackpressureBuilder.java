@@ -1,6 +1,8 @@
 package systems.cajun.backpressure;
 
 import systems.cajun.Actor;
+import systems.cajun.ActorSystem;
+import systems.cajun.Pid;
 import systems.cajun.config.BackpressureConfig;
 
 import java.time.Duration;
@@ -10,13 +12,16 @@ import java.util.function.Consumer;
 /**
  * Builder for configuring backpressure settings on an actor.
  * This provides a fluent API for backpressure configuration.
+ * Supports both direct Actor configuration and PID-based configuration through the ActorSystem.
  *
  * @param <T> The message type of the actor
  */
 public class BackpressureBuilder<T> {
     private final Actor<T> actor;
+    private final Pid pid;
     private final BackpressureConfig backpressureConfig;
     private Consumer<BackpressureEvent> eventCallback;
+    private BackpressureManager<T> manager;
     
     /**
      * Creates a new builder for the specified actor.
@@ -25,7 +30,21 @@ public class BackpressureBuilder<T> {
      */
     public BackpressureBuilder(Actor<T> actor) {
         this.actor = actor;
+        this.pid = null;
         this.backpressureConfig = new BackpressureConfig();
+    }
+    
+    /**
+     * Creates a new builder for the actor identified by the specified PID.
+     *
+     * @param system The actor system
+     * @param pid The PID of the actor to configure
+     */
+    public BackpressureBuilder(ActorSystem system, Pid pid) {
+        this.actor = null;
+        this.pid = pid;
+        this.backpressureConfig = new BackpressureConfig();
+        this.manager = system.getBackpressureMonitor().getBackpressureManager(pid);
     }
     
     /**
@@ -288,12 +307,71 @@ public class BackpressureBuilder<T> {
      * Applies the configuration to the actor and returns the actor.
      * This method finalizes the backpressure configuration.
      *
-     * @return The configured actor
+     * @return The configured actor or null if using PID-based configuration
      */
     public Actor<T> apply() {
-        // Configure the actor with our backpressure settings
-        actor.initializeBackpressure(backpressureConfig, eventCallback);
+        if (actor != null) {
+            // Direct actor configuration
+            actor.initializeBackpressure(backpressureConfig, eventCallback);
+            return actor;
+        } else if (manager != null) {
+            // PID-based configuration through ActorSystem
+            if (backpressureConfig.isEnabled()) {
+                manager.enable(backpressureConfig);
+            } else {
+                manager.disable();
+            }
+            
+            // Apply strategy if set
+            if (backpressureConfig.getStrategy() != null) {
+                manager.setStrategy(backpressureConfig.getStrategy());
+            }
+            
+            // Apply custom handler if set
+            if (backpressureConfig.getStrategy() == BackpressureStrategy.CUSTOM && 
+                backpressureConfig.getCustomHandler() != null) {
+                // We need to use raw types here because of Java's generic type erasure
+                // The CustomBackpressureHandler interface is parameterized but we can't check
+                // the actual type parameter at runtime
+                @SuppressWarnings("unchecked") // This is actually necessary here
+                CustomBackpressureHandler<T> handler = 
+                    (CustomBackpressureHandler<T>) backpressureConfig.getCustomHandler();
+                manager.setCustomHandler(handler);
+            }
+            
+            // Apply callback if set
+            if (eventCallback != null) {
+                manager.setCallback(eventCallback);
+            }
+            
+            // Apply max events to keep if set
+            if (backpressureConfig.getMaxEventsToKeep() > 0) {
+                manager.setMaxEventsToKeep(backpressureConfig.getMaxEventsToKeep());
+            }
+            
+            return null;
+        }
         
-        return actor;
+        return null;
+    }
+    
+    /**
+     * Gets the current backpressure status for the actor.
+     * Only available when using PID-based configuration.
+     *
+     * @return The current backpressure status, or null if not using PID-based configuration
+     */
+    public BackpressureStatus getStatus() {
+        return manager != null ? manager.getStatus() : null;
+    }
+    
+    /**
+     * Gets the PID of the actor being configured.
+     * Only available when using PID-based configuration.
+     *
+     * @return The actor's PID, or null if not using PID-based configuration
+     */
+    public Pid getPid() {
+        return pid;
     }
 }

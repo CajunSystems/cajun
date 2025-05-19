@@ -8,7 +8,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -21,7 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import systems.cajun.Actor;
-import systems.cajun.ResizableBlockingQueue;
 import systems.cajun.backpressure.BackpressureStatus.StateTransition;
 import systems.cajun.config.BackpressureConfig;
 
@@ -481,23 +479,7 @@ public class BackpressureManager<T> {
                         return scheduleRetry(message, options, defaultRetryTimeoutMs);
                     case MAKE_ROOM:
                         // Implement logic to drop messages to make room
-                        if (actor != null) {
-                            try {
-                                boolean success = makeRoomInMailbox();
-                                if (success) {
-                                    logger.debug("Successfully made room in mailbox for new message");
-                                    return true;
-                                } else {
-                                    logger.debug("Failed to make room in mailbox, rejecting message");
-                                    return false;
-                                }
-                            } catch (Exception e) {
-                                logger.error("Failed to make room in mailbox: {}", e.getMessage(), e);
-                                return false;
-                            }
-                        }
-                        logger.debug("No actor reference available to make room in mailbox");
-                        return false;
+                        return makeRoomInMailbox();
                     default:
                         logger.warn("Unknown backpressure action: {}, defaulting to REJECT", action);
                         return false;
@@ -524,11 +506,11 @@ public class BackpressureManager<T> {
                             boolean success = makeRoomInMailbox();
                             if (success) {
                                 logger.debug("Successfully dropped oldest message to make room");
-                                return true;
                             } else {
                                 logger.debug("Failed to drop oldest message, but accepting message anyway");
-                                return true; // Still accept even if we couldn't make room
                             }
+                            // Still accept the message even if we couldn't drop the oldest
+                            return true;
                         } catch (Exception e) {
                             logger.error("Failed to drop oldest message: {}", e.getMessage(), e);
                             // Still accept the message even if we couldn't drop the oldest
@@ -536,7 +518,7 @@ public class BackpressureManager<T> {
                         }
                     }
                     return true;
-
+                    
                 case BLOCK:
                 default:
                     // Block is handled at the caller level
@@ -554,6 +536,8 @@ public class BackpressureManager<T> {
      * Attempts to make room in the mailbox by removing the oldest message.
      * This is used by the DROP_OLDEST strategy and the MAKE_ROOM action.
      * 
+     * Uses the actor's dropOldestMessage method if available, otherwise returns false.
+     *
      * @return true if room was successfully made, false otherwise
      */
     private boolean makeRoomInMailbox() {
@@ -563,54 +547,8 @@ public class BackpressureManager<T> {
         }
         
         try {
-            // Try to access the mailbox field
-            java.lang.reflect.Field mailboxField = Actor.class.getDeclaredField("mailbox");
-            mailboxField.setAccessible(true);
-            Object mailbox;
-            
-            synchronized (actor) {
-                if (actor == null) { // Double-check after acquiring lock
-                    return false;
-                }
-                mailbox = mailboxField.get(actor);
-                if (mailbox == null) {
-                    logger.warn("Actor mailbox is null");
-                    return false;
-                }
-            }
-
-            // Check if it's a queue that supports removal
-            if (mailbox instanceof java.util.Queue) {
-                java.util.Queue<?> queue = (java.util.Queue<?>) mailbox;
-                synchronized (mailbox) {
-                    if (!queue.isEmpty()) {
-                        // Remove the oldest message (head of the queue)
-                        Object removed = queue.poll();
-                        if (removed != null) {
-                            logger.debug("Removed oldest message from mailbox to make room");
-                            return true;
-                        } else {
-                            logger.warn("Failed to remove message from queue, poll returned null");
-                            return false;
-                        }
-                    } else {
-                        logger.debug("Queue is empty, nothing to remove");
-                        return false;
-                    }
-                }
-            } else {
-                logger.warn("Mailbox is not a Queue, cannot remove messages");
-                return false;
-            }
-        } catch (NoSuchFieldException e) {
-            logger.error("Could not find mailbox field in Actor class: {}", e.getMessage(), e);
-            return false;
-        } catch (IllegalAccessException e) {
-            logger.error("Could not access mailbox field: {}", e.getMessage(), e);
-            return false;
-        } catch (SecurityException e) {
-            logger.error("Security exception accessing mailbox field: {}", e.getMessage(), e);
-            return false;
+            // Call the actor's method to drop the oldest message
+            return actor.dropOldestMessage();
         } catch (Exception e) {
             logger.error("Unexpected exception making room in mailbox: {}", e.getMessage(), e);
             return false;
@@ -672,9 +610,8 @@ public class BackpressureManager<T> {
     }
 
     /**
-     * Gets the capacity of the actor's mailbox using reflection.
-     * This is a workaround to access the mailbox capacity until
-     * a proper API is exposed in the Actor class.
+     * Gets the capacity of the actor's mailbox.
+     * Uses the actor's getCapacity method directly instead of reflection.
      *
      * @return The mailbox capacity or Integer.MAX_VALUE if not available
      */
@@ -683,62 +620,12 @@ public class BackpressureManager<T> {
             return Integer.MAX_VALUE;
         }
         
-        Object mailbox = null;
         try {
-            // Try to access the mailbox field
-            java.lang.reflect.Field mailboxField = Actor.class.getDeclaredField("mailbox");
-            mailboxField.setAccessible(true);
-            
-            synchronized (actor) {
-                if (actor == null) { // Double-check after acquiring lock
-                    return Integer.MAX_VALUE;
-                }
-                mailbox = mailboxField.get(actor);
-                if (mailbox == null) {
-                    logger.debug("Actor mailbox is null");
-                    return Integer.MAX_VALUE;
-                }
-            }
-
-            // Check if it's a ResizableBlockingQueue
-            if (mailbox instanceof java.util.concurrent.BlockingQueue) {
-                if (mailbox.getClass().getSimpleName().equals("ResizableBlockingQueue")) {
-                    // Get the capacity using reflection
-                    java.lang.reflect.Method getCapacityMethod = 
-                            mailbox.getClass().getDeclaredMethod("getCapacity");
-                    getCapacityMethod.setAccessible(true);
-                    
-                    synchronized (mailbox) {
-                        Object result = getCapacityMethod.invoke(mailbox);
-                        if (result instanceof Integer) {
-                            int capacity = (int) result;
-                            return capacity > 0 ? capacity : Integer.MAX_VALUE;
-                        }
-                    }
-                } else {
-                    // For other BlockingQueue implementations, try to get remaining capacity
-                    java.util.concurrent.BlockingQueue<?> queue = 
-                            (java.util.concurrent.BlockingQueue<?>) mailbox;
-                    
-                    // Most BlockingQueue implementations don't expose their capacity directly
-                    // For bounded queues, we could estimate it, but for now we'll return MAX_VALUE
-                    return Integer.MAX_VALUE; 
-                }
-            }
-        } catch (NoSuchFieldException e) {
-            logger.debug("Could not find mailbox field in Actor class: {}", e.getMessage());
-        } catch (IllegalAccessException e) {
-            logger.debug("Could not access mailbox field: {}", e.getMessage());
-        } catch (NoSuchMethodException e) {
-            logger.debug("Could not find getCapacity method: {}", e.getMessage());
-        } catch (SecurityException e) {
-            logger.debug("Security exception accessing mailbox: {}", e.getMessage());
+            return actor.getCapacity();
         } catch (Exception e) {
             logger.debug("Could not get actor capacity: {}", e.getMessage());
+            return Integer.MAX_VALUE;
         }
-
-        // Default to max value if we couldn't get the actual capacity
-        return Integer.MAX_VALUE;
     }
 
     /**
@@ -822,7 +709,6 @@ public class BackpressureManager<T> {
             messagesProcessedSinceLastStateChange = messagesProcessed.getAndSet(0);
             
             // Set the current state
-            BackpressureState previousState = currentState;
             currentState = newState;
 
             // Create a transition record with detailed information
@@ -979,6 +865,8 @@ public class BackpressureManager<T> {
         return defaultRetryTimeoutMs;
     }
 
+
+    
     /**
      * Schedules a message for retry after the specified timeout.
      * 
@@ -998,7 +886,7 @@ public class BackpressureManager<T> {
             final Object messageKey = System.identityHashCode(message) + "-" + System.nanoTime();
             
             // Create a retry entry
-            RetryEntry<T> entry = new RetryEntry<>(message, options, timeoutMs);
+            RetryEntry<T> entry = new RetryEntry<>(message, options, timeoutMs, getCurrentEvent());
             
             // Store in retry queue
             retryQueue.put(messageKey, entry);
@@ -1016,23 +904,20 @@ public class BackpressureManager<T> {
                     if (!enabled || !isBackpressureActive.get()) {
                         // Backpressure no longer active, send the message
                         if (actor != null) {
-                            actor.self().tell(retryEntry.message);
+                            actor.self().tell(retryEntry.getMessage());
                             logger.debug("Retry successful: backpressure no longer active");
                         }
                         return;
                     }
                     
                     // Get current backpressure state
-                    BackpressureEvent currentEvent;
-                    synchronized (recentEvents) {
-                        currentEvent = !recentEvents.isEmpty() ? recentEvents.getFirst() : null;
-                    }
+                    BackpressureEvent currentEvent = getCurrentEvent();
                     
                     // If no events or backpressure has improved, send the message
                     if (currentEvent == null || 
-                            currentEvent.getFillRatio() < retryEntry.originalEvent.getFillRatio()) {
+                            currentEvent.getFillRatio() < retryEntry.getOriginalEvent().getFillRatio()) {
                         if (actor != null) {
-                            actor.self().tell(retryEntry.message);
+                            actor.self().tell(retryEntry.getMessage());
                             logger.debug("Retry successful: backpressure has improved");
                         }
                     } else {
@@ -1053,35 +938,23 @@ public class BackpressureManager<T> {
     }
     
     /**
-     * Class to hold information about a message scheduled for retry.
+     * Gets the current backpressure event, or creates a default one if none exists.
+     * 
+     * @return The current backpressure event
      */
-    private class RetryEntry<M> {
-        final M message;
-        final BackpressureSendOptions options;
-        final long timeoutMs;
-        final BackpressureEvent originalEvent;
-        final Instant creationTime;
-        
-        RetryEntry(M message, BackpressureSendOptions options, long timeoutMs) {
-            this.message = message;
-            this.options = options;
-            this.timeoutMs = timeoutMs;
-            
-            // Capture current state
-            synchronized (recentEvents) {
-                this.originalEvent = !recentEvents.isEmpty() ? 
-                        recentEvents.getFirst() : 
-                        new BackpressureEvent(
-                            actor != null ? actor.getActorId() : "unknown",
-                            currentState,
-                            1.0f, // Assume worst case
-                            Integer.MAX_VALUE,
-                            Integer.MAX_VALUE,
-                            0,
-                            false,
-                            Integer.MAX_VALUE);
-            }
-            this.creationTime = Instant.now();
+    private BackpressureEvent getCurrentEvent() {
+        synchronized (recentEvents) {
+            return !recentEvents.isEmpty() ? 
+                    recentEvents.getFirst() : 
+                    new BackpressureEvent(
+                        actor != null ? actor.getActorId() : "unknown",
+                        currentState,
+                        1.0f, // Assume worst case
+                        Integer.MAX_VALUE,
+                        Integer.MAX_VALUE,
+                        0,
+                        false,
+                        Integer.MAX_VALUE);
         }
     }
     

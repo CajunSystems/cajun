@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
-import systems.cajun.backpressure.BackpressureMetrics;
 import systems.cajun.backpressure.BackpressureStatus;
 import systems.cajun.backpressure.BackpressureSendOptions;
 import systems.cajun.backpressure.BackpressureState;

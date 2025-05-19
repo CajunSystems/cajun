@@ -1,0 +1,23 @@
+State Access Performance Comparison Results:
+Total operations: 1000000 (across 10 workers, 100000 operations each)
+
+Actor-based implementation (isolated state):
+  Total time: 14 ms
+  Throughput: 71428571.43 operations/second
+
+Thread-based implementation with synchronized methods (shared state):
+  Total time: 82 ms
+  Throughput: 12195121.95 operations/second
+
+Thread-based implementation with explicit locks (shared state):
+  Total time: 37 ms
+  Throughput: 27027027.03 operations/second
+
+Thread-based implementation without synchronization (unsafe, shared state):
+  Total time: 14 ms
+  Throughput: 71428571.43 operations/second
+
+Performance ratios:
+  Synchronized/Actor: 5.86
+  Lock/Actor: 2.64
+  Unsafe/Actor: 1.00

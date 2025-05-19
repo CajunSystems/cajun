@@ -465,7 +465,7 @@ public class ActorSystem {
      * @param pid The PID of the actor to configure
      * @return A builder for fluent backpressure configuration
      */
-    public <T> SystemBackpressureBuilder<T> configureBackpressure(Pid pid) {
+    public <T> BackpressureBuilder<T> configureBackpressure(Pid pid) {
         return backpressureMonitor.configureBackpressure(pid);
     }
     

@@ -775,4 +775,29 @@ private void createMailbox(int initialCapacity, int maxCapacity, MailboxConfig m
     // Store capacity configuration for backpressure management
     this.maxCapacity = maxCapacity;
 }
+
+/**
+ * Drops the oldest message from the mailbox to make room for new messages.
+ * This is used by the backpressure system when using the DROP_OLDEST strategy.
+ * 
+ * @return true if a message was successfully dropped, false otherwise
+ */
+public boolean dropOldestMessage() {
+    if (mailbox == null || mailbox.isEmpty()) {
+        return false;
+    }
+    
+    try {
+        // Remove the oldest message (head of the queue)
+        Object removed = mailbox.poll();
+        if (removed != null) {
+            logger.debug("Actor {} dropped oldest message to make room", actorId);
+            return true;
+        }
+    } catch (Exception e) {
+        logger.error("Error dropping oldest message: {}", e.getMessage(), e);
+    }
+    
+    return false;
+}
 }

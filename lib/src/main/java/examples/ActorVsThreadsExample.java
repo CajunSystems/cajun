@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+import systems.cajun.config.BackpressureConfig;
+import systems.cajun.backpressure.BackpressureStrategy;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -13,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.StructuredTaskScope;
 
 /**
  * Example demonstrating the differences between actors and pure threads.
@@ -34,6 +37,7 @@ public class ActorVsThreadsExample {
     private static final int NUM_MESSAGES = 1_000_000;
     private static final int BATCH_SIZE = 1000;
     private static final String RESULTS_FILE = "performance_results.txt";
+    private static final Integer POISON_PILL = Integer.MIN_VALUE;
 
     public static void main(String[] args) throws Exception {
         logger.info("Starting Actor vs Threads performance comparison");
@@ -43,8 +47,11 @@ public class ActorVsThreadsExample {
         Files.deleteIfExists(resultsPath);
         Files.createFile(resultsPath);
 
-        // Run actor-based implementation
-        long actorTime = runActorImplementation();
+        // Run actor-based implementation without backpressure
+        long actorTimeWithoutBP = runActorImplementation(false);
+
+        // Run actor-based implementation with backpressure
+        long actorTimeWithBP = runActorImplementation(true);
 
         // Run thread-based implementation
         long threadTime = runThreadImplementation();
@@ -53,14 +60,18 @@ public class ActorVsThreadsExample {
         long structuredTime = runStructuredConcurrencyImplementation();
 
         // Log and save results
-        double actorThroughput = NUM_MESSAGES / (actorTime / 1000.0);
+        double actorThroughputWithoutBP = NUM_MESSAGES / (actorTimeWithoutBP / 1000.0);
+        double actorThroughputWithBP = NUM_MESSAGES / (actorTimeWithBP / 1000.0);
         double threadThroughput = NUM_MESSAGES / (threadTime / 1000.0);
         double structuredThroughput = NUM_MESSAGES / (structuredTime / 1000.0);
 
         String results = String.format(
                 "Performance Results:\n" +
                         "Total messages processed: %d\n\n" +
-                        "Actor-based implementation:\n" +
+                        "Actor-based implementation (without backpressure):\n" +
+                        "  Total time: %d ms\n" +
+                        "  Throughput: %.2f messages/second\n\n" +
+                        "Actor-based implementation (with backpressure):\n" +
                         "  Total time: %d ms\n" +
                         "  Throughput: %.2f messages/second\n\n" +
                         "Thread-based implementation:\n" +
@@ -69,16 +80,24 @@ public class ActorVsThreadsExample {
                         "Structured Concurrency implementation:\n" +
                         "  Total time: %d ms\n" +
                         "  Throughput: %.2f messages/second\n\n" +
-                        "Performance ratio (Thread/Actor): %.2f\n" +
-                        "Performance ratio (Structured/Actor): %.2f\n" +
-                        "Performance ratio (Structured/Thread): %.2f\n",
+                        "Performance ratios:\n" +
+                        "  Thread/Actor(no BP): %.2f\n" +
+                        "  Thread/Actor(with BP): %.2f\n" +
+                        "  Structured/Actor(no BP): %.2f\n" +
+                        "  Structured/Actor(with BP): %.2f\n" +
+                        "  Structured/Thread: %.2f\n" +
+                        "  Actor(with BP)/Actor(no BP): %.2f\n",
                 NUM_MESSAGES,
-                actorTime, actorThroughput,
+                actorTimeWithoutBP, actorThroughputWithoutBP,
+                actorTimeWithBP, actorThroughputWithBP,
                 threadTime, threadThroughput,
                 structuredTime, structuredThroughput,
-                (double) threadTime / actorTime,
-                (double) structuredTime / actorTime,
-                (double) structuredTime / threadTime);
+                (double) threadTime / actorTimeWithoutBP,
+                (double) threadTime / actorTimeWithBP,
+                (double) structuredTime / actorTimeWithoutBP,
+                (double) structuredTime / actorTimeWithBP,
+                (double) structuredTime / threadTime,
+                (double) actorTimeWithBP / actorTimeWithoutBP);
 
         logger.info(results);
 
@@ -92,9 +111,13 @@ public class ActorVsThreadsExample {
 
     /**
      * Runs the actor-based implementation and returns the execution time in milliseconds.
+     * 
+     * @param enableBackpressure Whether to enable backpressure for the actors
+     * @return The execution time in milliseconds
      */
-    private static long runActorImplementation() throws Exception {
-        logger.info("Running actor-based implementation...");
+    private static long runActorImplementation(boolean enableBackpressure) throws Exception {
+        logger.info("Running actor-based implementation with backpressure {}...", 
+                    enableBackpressure ? "enabled" : "disabled");
 
         // Create actor system
         ActorSystem system = new ActorSystem();
@@ -102,27 +125,56 @@ public class ActorVsThreadsExample {
         // Create completion latch
         CountDownLatch completionLatch = new CountDownLatch(1);
 
-        // Create atomic counter for processed messages
-        AtomicInteger processedCount = new AtomicInteger(0);
+        // Create backpressure configuration if needed
+        BackpressureConfig backpressureConfig = null;
+        if (enableBackpressure) {
+            // Configure with a small mailbox to trigger backpressure
+            backpressureConfig = new BackpressureConfig.Builder()
+                .warningThreshold(0.7f)
+                .recoveryThreshold(0.3f)
+                .strategy(BackpressureStrategy.BLOCK)
+                .maxCapacity(1000) // Set a relatively small mailbox capacity to demonstrate backpressure
+                .build();
+        }
 
-        // Create and register actors with the system
-        // First create the sink actor
-        SinkActor sink = new SinkActor(system, "sink", completionLatch);
-        registerActor(system, "sink", sink);
+        // Register the SinkActor class with the system
+        Pid sinkPid;
+        if (enableBackpressure) {
+            sinkPid = system.register(SinkActor.class, "sink", backpressureConfig);
+        } else {
+            sinkPid = system.register(SinkActor.class, "sink");
+        }
+        
+        // Initialize the SinkActor with our completionLatch
+        sinkPid.tell(new InitSinkMessage(completionLatch));
 
-        // Create processor actor
-        ProcessorActor processor = new ProcessorActor(system, "processor", sink.self());
-        registerActor(system, "processor", processor);
+        // Register the ProcessorActor class with the system
+        Pid processorPid;
+        if (enableBackpressure) {
+            processorPid = system.register(ProcessorActor.class, "processor", backpressureConfig);
+        } else {
+            processorPid = system.register(ProcessorActor.class, "processor");
+        }
+        
+        // Initialize the ProcessorActor with the sink's PID
+        processorPid.tell(new InitProcessorMessage(sinkPid));
 
-        // Create source actor
-        SourceActor source = new SourceActor(system, "source", processor.self(), NUM_MESSAGES);
-        registerActor(system, "source", source);
+        // Register the SourceActor class with the system
+        Pid sourcePid;
+        if (enableBackpressure) {
+            sourcePid = system.register(SourceActor.class, "source", backpressureConfig);
+        } else {
+            sourcePid = system.register(SourceActor.class, "source");
+        }
+        
+        // Initialize the SourceActor with the processor's PID and message count
+        sourcePid.tell(new InitSourceMessage(processorPid, NUM_MESSAGES));
 
         // Start timing
         long startTime = System.currentTimeMillis();
 
         // Start message generation
-        source.tell(new StartMessage());
+        sourcePid.tell(new StartMessage());
 
         // Wait for completion
         completionLatch.await();
@@ -133,32 +185,9 @@ public class ActorVsThreadsExample {
         // Shutdown actor system
         system.shutdown();
 
-        logger.info("Actor-based implementation completed in {} ms", executionTime);
+        logger.info("Actor-based implementation with backpressure {} completed in {} ms", 
+                   enableBackpressure ? "enabled" : "disabled", executionTime);
         return executionTime;
-    }
-
-    /**
-     * Helper method to register an actor with the system and start it.
-     */
-    private static <T extends Actor<?>> void registerActor(ActorSystem system, String actorId, T actor) {
-        try {
-            // Use reflection to access the private actors map in ActorSystem
-            java.lang.reflect.Field actorsField = ActorSystem.class.getDeclaredField("actors");
-            actorsField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            ConcurrentHashMap<String, Actor<?>> actors =
-                    (ConcurrentHashMap<String, Actor<?>>) actorsField.get(system);
-
-            // Register the actor
-            actors.put(actorId, actor);
-
-            // Start the actor
-            actor.start();
-
-            logger.debug("Registered and started actor: {}", actorId);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to register actor: " + actorId, e);
-        }
     }
 
     /**
@@ -168,8 +197,8 @@ public class ActorVsThreadsExample {
         logger.info("Running thread-based implementation...");
 
         // Create queues for communication between threads
-        BlockingQueue<Integer> sourceToProcessorQueue = new LinkedBlockingQueue<>();
-        BlockingQueue<Integer> processorToSinkQueue = new LinkedBlockingQueue<>();
+        BlockingQueue<Integer> sourceToProcessorQueue = new ArrayBlockingQueue<>(10000);
+        BlockingQueue<Integer> processorToSinkQueue = new ArrayBlockingQueue<>(10000);
 
         // Create completion latch
         CountDownLatch completionLatch = new CountDownLatch(1);
@@ -181,15 +210,15 @@ public class ActorVsThreadsExample {
         AtomicInteger processedCount = new AtomicInteger(0);
 
         // Create and start sink thread
-        SinkThread sink = new SinkThread(processorToSinkQueue, completionLatch, NUM_MESSAGES);
+        SinkThread sink = new SinkThread(processorToSinkQueue, completionLatch, NUM_MESSAGES, POISON_PILL);
         executor.submit(sink);
 
         // Create and start processor thread
-        ProcessorThread processor = new ProcessorThread(sourceToProcessorQueue, processorToSinkQueue);
+        ProcessorThread processor = new ProcessorThread(sourceToProcessorQueue, processorToSinkQueue, NUM_MESSAGES, POISON_PILL);
         executor.submit(processor);
 
         // Create and start source thread
-        SourceThread source = new SourceThread(sourceToProcessorQueue, NUM_MESSAGES);
+        SourceThread source = new SourceThread(sourceToProcessorQueue, NUM_MESSAGES, POISON_PILL);
 
         // Start timing
         long startTime = System.currentTimeMillis();
@@ -212,123 +241,98 @@ public class ActorVsThreadsExample {
     }
 
     /**
-     * Runs the implementation using structured concurrency and returns the execution time in milliseconds.
+     * Runs the structured concurrency implementation and returns the execution time in milliseconds.
      */
     private static long runStructuredConcurrencyImplementation() throws Exception {
         logger.info("Running structured concurrency implementation...");
 
+        // Create queues for communication between tasks
+        BlockingQueue<Integer> sourceToProcessorQueue = new ArrayBlockingQueue<>(10000);
+        BlockingQueue<Integer> processorToSinkQueue = new ArrayBlockingQueue<>(10000);
+
         // Create completion latch
         CountDownLatch completionLatch = new CountDownLatch(1);
-
-        // Create queues for communication between stages
-        BlockingQueue<Integer> sourceToProcessorQueue = new LinkedBlockingQueue<>();
-        BlockingQueue<Integer> processorToSinkQueue = new LinkedBlockingQueue<>();
-
-        // Create atomic counter for tracking progress
-        AtomicInteger processedCount = new AtomicInteger(0);
 
         // Start timing
         long startTime = System.currentTimeMillis();
 
-        // Use structured concurrency to manage the pipeline
+        // Use structured concurrency to manage the tasks
         try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
             // Fork the sink task
             scope.fork(() -> {
                 int received = 0;
-                while (received < NUM_MESSAGES) {
-                    try {
-                        // Take a processed number from the input queue
-                        Integer number = processorToSinkQueue.take();
-
-                        // Count the received number
-                        received++;
-
-                        // Log progress periodically
-                        if (received % (NUM_MESSAGES / 10) == 0) {
-                            logger.info("Structured sink received {}% of messages", received * 100 / NUM_MESSAGES);
-                        }
-
-                        // Check if all messages have been received
-                        if (received >= NUM_MESSAGES) {
-                            logger.info("Structured sink received all {} messages", NUM_MESSAGES);
-                            completionLatch.countDown();
-                            break;
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        logger.error("Structured sink interrupted", e);
+                while (true) {
+                    Integer number = processorToSinkQueue.take();
+                    if (number.equals(POISON_PILL)) {
                         break;
                     }
+                    received++;
+                    if (received % (NUM_MESSAGES / 10) == 0) {
+                        logger.info("Sink task received {}% of messages", received * 100 / NUM_MESSAGES);
+                    }
                 }
+                logger.info("Sink task received all messages");
+                completionLatch.countDown();
                 return null;
             });
 
             // Fork the processor task
             scope.fork(() -> {
                 int processed = 0;
-                while (processed < NUM_MESSAGES) {
-                    try {
-                        // Take a number from the input queue
-                        Integer number = sourceToProcessorQueue.take();
-
-                        // Process the number (increment it)
-                        int processedNumber = number + 1;
-
-                        // Put the processed number in the output queue
-                        processorToSinkQueue.put(processedNumber);
-
-                        // Track progress
-                        processed++;
-                        if (processed % (NUM_MESSAGES / 10) == 0) {
-                            logger.info("Structured processor processed {}% of messages", processed * 100 / NUM_MESSAGES);
-                        }
-
-                        // Check if all messages have been processed
-                        if (processed >= NUM_MESSAGES) {
-                            logger.info("Structured processor completed processing all messages");
-                            break;
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        logger.error("Structured processor interrupted", e);
+                while (true) {
+                    Integer number = sourceToProcessorQueue.take();
+                    if (number.equals(POISON_PILL)) {
+                        processorToSinkQueue.put(POISON_PILL);
                         break;
                     }
+                    int processedNumber = number + 1;
+                    processorToSinkQueue.put(processedNumber);
+                    processed++;
+                    if (processed % (NUM_MESSAGES / 10) == 0) {
+                        logger.info("Processor task processed {}% of messages", processed * 100 / NUM_MESSAGES);
+                    }
                 }
+                logger.info("Processor task completed");
                 return null;
             });
 
             // Fork the source task
             scope.fork(() -> {
-                logger.info("Structured source starting to generate {} messages", NUM_MESSAGES);
-
-                try {
-                    // Generate messages
-                    for (int i = 0; i < NUM_MESSAGES; i++) {
-                        sourceToProcessorQueue.put(i);
-
-                        // Log progress periodically
-                        if ((i + 1) % (NUM_MESSAGES / 10) == 0) {
-                            logger.info("Structured source generated {}% of messages", (i + 1) * 100 / NUM_MESSAGES);
-                        }
+                logger.info("Source task starting to generate {} messages", NUM_MESSAGES);
+                
+                // Generate messages in batches for better performance
+                for (int i = 0; i < NUM_MESSAGES; i += BATCH_SIZE) {
+                    int batchEnd = Math.min(i + BATCH_SIZE, NUM_MESSAGES);
+                    
+                    // Send a batch of messages
+                    for (int j = i; j < batchEnd; j++) {
+                        sourceToProcessorQueue.put(j);
                     }
-
-                    logger.info("Structured source completed generating all messages");
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    logger.error("Structured source interrupted", e);
+                    
+                    // Log progress periodically
+                    if ((i + BATCH_SIZE) % (NUM_MESSAGES / 10) <= BATCH_SIZE) {
+                        int percentage = Math.min((i + BATCH_SIZE) * 100 / NUM_MESSAGES, 100);
+                        logger.info("Source task generated {}% of messages", percentage);
+                    }
+                    
+                    // Small delay between batches to prevent overwhelming the queue
+                    Thread.sleep(1);
                 }
+                
+                // Send poison pill to signal end of processing
+                sourceToProcessorQueue.put(POISON_PILL);
+                logger.info("Source task completed generating all messages");
                 return null;
             });
 
-            // Wait for completion latch
-            completionLatch.await();
-
-            // Join all tasks
+            // Wait for all tasks to complete or fail
             scope.join();
-
-            // Check for failures
+            // Propagate any exceptions
             scope.throwIfFailed();
         }
+
+        // Wait for completion
+        completionLatch.await();
 
         // Calculate execution time
         long executionTime = System.currentTimeMillis() - startTime;
@@ -337,7 +341,56 @@ public class ActorVsThreadsExample {
         return executionTime;
     }
 
-    // ===== Actor-based implementation =====
+    /**
+     * Message to initialize the SinkActor with a completion latch.
+     */
+    private static class InitSinkMessage {
+        private final CountDownLatch completionLatch;
+
+        public InitSinkMessage(CountDownLatch completionLatch) {
+            this.completionLatch = completionLatch;
+        }
+
+        public CountDownLatch getCompletionLatch() {
+            return completionLatch;
+        }
+    }
+
+    /**
+     * Message to initialize the ProcessorActor with a sink PID.
+     */
+    private static class InitProcessorMessage {
+        private final Pid sinkPid;
+
+        public InitProcessorMessage(Pid sinkPid) {
+            this.sinkPid = sinkPid;
+        }
+
+        public Pid getSinkPid() {
+            return sinkPid;
+        }
+    }
+
+    /**
+     * Message to initialize the SourceActor with a processor PID and message count.
+     */
+    private static class InitSourceMessage {
+        private final Pid processorPid;
+        private final int numMessages;
+
+        public InitSourceMessage(Pid processorPid, int numMessages) {
+            this.processorPid = processorPid;
+            this.numMessages = numMessages;
+        }
+
+        public Pid getProcessorPid() {
+            return processorPid;
+        }
+
+        public int getNumMessages() {
+            return numMessages;
+        }
+    }
 
     /**
      * Message to start processing.
@@ -370,31 +423,57 @@ public class ActorVsThreadsExample {
      * Source actor that generates numbers and sends them to the processor.
      */
     public static class SourceActor extends Actor<Object> {
-        private final Pid processorPid;
-        private final int numMessages;
+        private Pid processorPid;
+        private int numMessages;
 
-        public SourceActor(ActorSystem system, String actorId, Pid processorPid, int numMessages) {
+        // Add a constructor that takes only system and actorId
+        public SourceActor(ActorSystem system, String actorId) {
             super(system, actorId);
-            this.processorPid = processorPid;
-            this.numMessages = numMessages;
+            this.processorPid = null;
+            this.numMessages = 0;
         }
 
         @Override
         protected void receive(Object message) {
-            if (message instanceof StartMessage) {
+            if (message instanceof InitSourceMessage initMessage) {
+                this.processorPid = initMessage.getProcessorPid();
+                this.numMessages = initMessage.getNumMessages();
+            } else if (message instanceof StartMessage) {
+                // Only proceed if processorPid is available
+                if (processorPid == null) {
+                    logger.warn("Source actor cannot generate messages: processor PID is null");
+                    return;
+                }
+                
                 logger.info("Source actor starting to generate {} messages", numMessages);
 
-                // Generate messages in batches for better performance
-                for (int i = 0; i < numMessages; i++) {
-                    processorPid.tell(new NumberMessage(i));
-
+                // Generate messages in batches for better performance and to prevent mailbox overflow
+                for (int i = 0; i < numMessages; i += BATCH_SIZE) {
+                    int batchEnd = Math.min(i + BATCH_SIZE, numMessages);
+                    
+                    // Send a batch of messages
+                    for (int j = i; j < batchEnd; j++) {
+                        processorPid.tell(new NumberMessage(j));
+                    }
+                    
                     // Log progress periodically
-                    if ((i + 1) % (numMessages / 10) == 0) {
-                        logger.info("Source actor generated {}% of messages", (i + 1) * 100 / numMessages);
+                    if ((i + BATCH_SIZE) % (numMessages / 10) <= BATCH_SIZE) {
+                        int percentage = Math.min((i + BATCH_SIZE) * 100 / numMessages, 100);
+                        logger.info("Source actor generated {}% of messages", percentage);
+                    }
+                    
+                    // Small delay between batches to prevent overwhelming the processor
+                    try {
+                        Thread.sleep(1);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                     }
                 }
 
                 logger.info("Source actor completed generating all messages");
+                
+                // Send completion message to processor to signal end of data
+                processorPid.tell(new CompletionMessage());
             }
         }
     }
@@ -402,27 +481,40 @@ public class ActorVsThreadsExample {
     /**
      * Processor actor that increments numbers and forwards them to the sink.
      */
-    public static class ProcessorActor extends Actor<NumberMessage> {
-        private final Pid sinkPid;
+    public static class ProcessorActor extends Actor<Object> {
+        private Pid sinkPid;
         private int processedCount = 0;
 
-        public ProcessorActor(ActorSystem system, String actorId, Pid sinkPid) {
+        // Add a constructor that takes only system and actorId
+        public ProcessorActor(ActorSystem system, String actorId) {
             super(system, actorId);
-            this.sinkPid = sinkPid;
+            this.sinkPid = null; // Default value when created by the system
         }
 
         @Override
-        protected void receive(NumberMessage message) {
-            // Process the message (increment the number)
-            int processedNumber = message.getNumber() + 1;
+        protected void receive(Object message) {
+            if (message instanceof InitProcessorMessage initMessage) {
+                this.sinkPid = initMessage.getSinkPid();
+            } else if (message instanceof NumberMessage numberMessage) {
+                // Process the message (increment the number)
+                int processedNumber = numberMessage.getNumber() + 1;
 
-            // Forward to sink
-            sinkPid.tell(new NumberMessage(processedNumber));
-
-            // Track progress
-            processedCount++;
-            if (processedCount % (NUM_MESSAGES / 10) == 0) {
-                logger.info("Processor actor processed {}% of messages", processedCount * 100 / NUM_MESSAGES);
+                // Forward to sink if sinkPid is available
+                if (sinkPid != null) {
+                    sinkPid.tell(new NumberMessage(processedNumber));
+                }
+                
+                // Track progress
+                processedCount++;
+                if (processedCount % (NUM_MESSAGES / 10) == 0) {
+                    logger.info("Processor actor processed {}% of messages", processedCount * 100 / NUM_MESSAGES);
+                }
+            } else if (message instanceof CompletionMessage) {
+                // Forward completion message to sink if sinkPid is available
+                logger.info("Processor actor completed processing all messages");
+                if (sinkPid != null) {
+                    sinkPid.tell(new CompletionMessage());
+                }
             }
         }
     }
@@ -430,26 +522,34 @@ public class ActorVsThreadsExample {
     /**
      * Sink actor that receives processed numbers and counts them.
      */
-    public static class SinkActor extends Actor<NumberMessage> {
-        private final CountDownLatch completionLatch;
+    public static class SinkActor extends Actor<Object> {
+        private CountDownLatch completionLatch;
         private int receivedCount = 0;
 
-        public SinkActor(ActorSystem system, String actorId, CountDownLatch completionLatch) {
+        // Add a constructor that takes only system and actorId
+        public SinkActor(ActorSystem system, String actorId) {
             super(system, actorId);
-            this.completionLatch = completionLatch;
+            this.completionLatch = null; // Default value when created by the system
         }
 
         @Override
-        protected void receive(NumberMessage message) {
-            // Process the received number (just count it)
-            receivedCount++;
+        protected void receive(Object message) {
+            if (message instanceof InitSinkMessage initMessage) {
+                this.completionLatch = initMessage.getCompletionLatch();
+            } else if (message instanceof NumberMessage) {
+                // Process the received number (just count it)
+                receivedCount++;
 
-            // Check if all messages have been received
-            if (receivedCount == NUM_MESSAGES) {
-                logger.info("Sink actor received all {} messages", NUM_MESSAGES);
-                completionLatch.countDown();
-            } else if (receivedCount % (NUM_MESSAGES / 10) == 0) {
-                logger.info("Sink actor received {}% of messages", receivedCount * 100 / NUM_MESSAGES);
+                // Log progress periodically
+                if (receivedCount % (NUM_MESSAGES / 10) == 0) {
+                    logger.info("Sink actor received {}% of messages", receivedCount * 100 / NUM_MESSAGES);
+                }
+            } else if (message instanceof CompletionMessage) {
+                // Signal completion
+                logger.info("Sink actor received completion message. Processed {} messages.", receivedCount);
+                if (completionLatch != null) {
+                    completionLatch.countDown();
+                }
             }
         }
     }
@@ -462,10 +562,12 @@ public class ActorVsThreadsExample {
     private static class SourceThread implements Runnable {
         private final BlockingQueue<Integer> outputQueue;
         private final int numMessages;
+        private final Integer poisonPill;
 
-        public SourceThread(BlockingQueue<Integer> outputQueue, int numMessages) {
+        public SourceThread(BlockingQueue<Integer> outputQueue, int numMessages, Integer poisonPill) {
             this.outputQueue = outputQueue;
             this.numMessages = numMessages;
+            this.poisonPill = poisonPill;
         }
 
         @Override
@@ -473,19 +575,39 @@ public class ActorVsThreadsExample {
             try {
                 logger.info("Source thread starting to generate {} messages", numMessages);
 
-                for (int i = 0; i < numMessages; i++) {
-                    outputQueue.put(i);
-
-                    // Log progress periodically
-                    if ((i + 1) % (numMessages / 10) == 0) {
-                        logger.info("Source thread generated {}% of messages", (i + 1) * 100 / numMessages);
+                // Generate messages in batches for better performance
+                for (int i = 0; i < numMessages; i += BATCH_SIZE) {
+                    int batchEnd = Math.min(i + BATCH_SIZE, numMessages);
+                    
+                    // Send a batch of messages
+                    for (int j = i; j < batchEnd; j++) {
+                        outputQueue.put(j);
                     }
+                    
+                    // Log progress periodically
+                    if ((i + BATCH_SIZE) % (numMessages / 10) <= BATCH_SIZE) {
+                        int percentage = Math.min((i + BATCH_SIZE) * 100 / numMessages, 100);
+                        logger.info("Source thread generated {}% of messages", percentage);
+                    }
+                    
+                    // Small delay between batches to prevent overwhelming the queue
+                    Thread.sleep(1);
                 }
 
+                // Send poison pill to signal end of processing
+                outputQueue.put(poisonPill);
+                
                 logger.info("Source thread completed generating all messages");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 logger.error("Source thread interrupted", e);
+                
+                // Ensure poison pill is sent even on error
+                try {
+                    outputQueue.put(poisonPill);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -496,11 +618,16 @@ public class ActorVsThreadsExample {
     private static class ProcessorThread implements Runnable {
         private final BlockingQueue<Integer> inputQueue;
         private final BlockingQueue<Integer> outputQueue;
+        private final int expectedMessages;
+        private final Integer poisonPill;
         private int processedCount = 0;
 
-        public ProcessorThread(BlockingQueue<Integer> inputQueue, BlockingQueue<Integer> outputQueue) {
+        public ProcessorThread(BlockingQueue<Integer> inputQueue, BlockingQueue<Integer> outputQueue, 
+                              int expectedMessages, Integer poisonPill) {
             this.inputQueue = inputQueue;
             this.outputQueue = outputQueue;
+            this.expectedMessages = expectedMessages;
+            this.poisonPill = poisonPill;
         }
 
         @Override
@@ -511,6 +638,14 @@ public class ActorVsThreadsExample {
                 while (true) {
                     // Take a number from the input queue
                     Integer number = inputQueue.take();
+                    
+                    // Check for poison pill
+                    if (number.equals(poisonPill)) {
+                        logger.info("Processor thread received end signal");
+                        // Forward poison pill to sink
+                        outputQueue.put(poisonPill);
+                        break;
+                    }
 
                     // Process the number (increment it)
                     int processedNumber = number + 1;
@@ -520,19 +655,22 @@ public class ActorVsThreadsExample {
 
                     // Track progress
                     processedCount++;
-                    if (processedCount % (NUM_MESSAGES / 10) == 0) {
-                        logger.info("Processor thread processed {}% of messages", processedCount * 100 / NUM_MESSAGES);
-                    }
-
-                    // Check if all messages have been processed
-                    if (processedCount >= NUM_MESSAGES) {
-                        logger.info("Processor thread completed processing all messages");
-                        break;
+                    if (processedCount % (expectedMessages / 10) == 0) {
+                        logger.info("Processor thread processed {}% of messages", processedCount * 100 / expectedMessages);
                     }
                 }
+                
+                logger.info("Processor thread completed processing all messages");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 logger.error("Processor thread interrupted", e);
+                
+                // Ensure poison pill is forwarded even on error
+                try {
+                    outputQueue.put(poisonPill);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -544,12 +682,15 @@ public class ActorVsThreadsExample {
         private final BlockingQueue<Integer> inputQueue;
         private final CountDownLatch completionLatch;
         private final int expectedMessages;
+        private final Integer poisonPill;
         private int receivedCount = 0;
 
-        public SinkThread(BlockingQueue<Integer> inputQueue, CountDownLatch completionLatch, int expectedMessages) {
+        public SinkThread(BlockingQueue<Integer> inputQueue, CountDownLatch completionLatch, 
+                         int expectedMessages, Integer poisonPill) {
             this.inputQueue = inputQueue;
             this.completionLatch = completionLatch;
             this.expectedMessages = expectedMessages;
+            this.poisonPill = poisonPill;
         }
 
         @Override
@@ -559,23 +700,31 @@ public class ActorVsThreadsExample {
 
                 while (true) {
                     // Take a processed number from the input queue
-                    inputQueue.take();
+                    Integer value = inputQueue.take();
+                    
+                    // Check for poison pill
+                    if (value.equals(poisonPill)) {
+                        logger.info("Sink thread received end signal");
+                        break;
+                    }
 
                     // Count the received number
                     receivedCount++;
 
-                    // Check if all messages have been received
-                    if (receivedCount >= expectedMessages) {
-                        logger.info("Sink thread received all {} messages", expectedMessages);
-                        completionLatch.countDown();
-                        break;
-                    } else if (receivedCount % (expectedMessages / 10) == 0) {
+                    // Log progress periodically
+                    if (receivedCount % (expectedMessages / 10) == 0) {
                         logger.info("Sink thread received {}% of messages", receivedCount * 100 / expectedMessages);
                     }
                 }
+                
+                // Signal completion regardless of count to prevent deadlock
+                logger.info("Sink thread received {} of {} expected messages", receivedCount, expectedMessages);
+                completionLatch.countDown();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 logger.error("Sink thread interrupted", e);
+                // Signal completion even on error to prevent deadlock
+                completionLatch.countDown();
             }
         }
     }
