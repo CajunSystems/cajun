@@ -259,8 +259,6 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param actorId The actor ID
      * @param initialState The initial state of the actor
      * @param enableBackpressure Whether to enable backpressure
-     * @param initialCapacity Initial capacity of the mailbox when backpressure is enabled
-     * @param maxCapacity Maximum capacity of the mailbox when backpressure is enabled
      * @deprecated Use {@link #StatefulActor(ActorSystem, String, State, BackpressureConfig, ResizableMailboxConfig)} instead
      */
     // Removed deprecated constructor with boolean flag for backpressure and mailbox capacities
@@ -273,7 +271,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param actorId The actor ID
      * @param initialState The initial state of the actor
      * @param messageJournal The message journal to use for message persistence
+     * @deprecated Use {@link #StatefulActor(ActorSystem, String, State, BatchedMessageJournal, SnapshotStore, int, BackpressureConfig, ResizableMailboxConfig)} instead
      */
+    @Deprecated
     public StatefulActor(ActorSystem system, String actorId, State initialState, 
                          BatchedMessageJournal<Message> messageJournal) {
         this(system, actorId, initialState, 
@@ -916,20 +916,33 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     // Process each message in sequence
                     long lastSeq = -1;
                     boolean stateWasChanged = false;
+                    int processedCount = 0;
+                    int errorCount = 0;
                     
                     for (JournalEntry<Message> entry : entries) {
                         try {
                             State currentStateValue = currentState.get();
-                            State newState = processMessage(currentStateValue, entry.getMessage());
+                            long seqNum = entry.getSequenceNumber();
+                            Message msg = entry.getMessage();
+                            
+                            logger.debug("Replaying message with sequence {} for actor {}: {}", 
+                                    seqNum, actorId, msg.getClass().getSimpleName());
+                            
+                            State newState = processMessage(currentStateValue, msg);
                             
                             // Only update if state has changed
                             if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
                                 currentState.set(newState);
                                 stateWasChanged = true;
+                                changesSinceLastSnapshot++;
+                                logger.debug("State changed during replay for actor {} at sequence {}", 
+                                        actorId, seqNum);
                             }
                             
-                            lastSeq = entry.getSequenceNumber();
+                            lastSeq = seqNum;
+                            processedCount++;
                         } catch (Exception e) {
+                            errorCount++;
                             logger.error("Error replaying message with sequence {} for actor {}", 
                                     entry.getSequenceNumber(), actorId, e);
                             // Continue with next message
@@ -938,18 +951,25 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                     
                     if (lastSeq >= 0) {
                         lastProcessedSequence.set(lastSeq);
+                        logger.debug("Updated last processed sequence to {} for actor {}", 
+                                lastSeq, actorId);
                     }
+                    
+                    logger.debug("Completed replaying {} messages for actor {} (processed: {}, errors: {}, state changed: {})", 
+                            entries.size(), actorId, processedCount, errorCount, stateWasChanged);
                     
                     // If state changed during replay, take a snapshot
                     if (stateWasChanged) {
                         stateChanged = true;
                         lastSnapshotTime = System.currentTimeMillis();
-                        changesSinceLastSnapshot = 0; // Reset changes counter after snapshot
-                        return takeSnapshot();
+                        
+                        logger.debug("Taking snapshot after message replay for actor {}", actorId);
+                        return takeSnapshot().thenApply(v -> {
+                            changesSinceLastSnapshot = 0; // Reset changes counter after snapshot
+                            return null;
+                        });
                     }
                     
-                    logger.debug("Completed replaying messages for actor {} up to sequence {}", 
-                            actorId, lastSeq);
                     return CompletableFuture.completedFuture(null);
                 });
     }
