@@ -16,6 +16,7 @@ import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
+import systems.cajun.SupervisionStrategy;
 
 /**
  * Example demonstrating the use of stateful actors in a shopping cart scenario.
@@ -326,7 +327,7 @@ public class StatefulShoppingCartExample {
 
         public ProductActor(ActorSystem system, String actorId, ProductState initialState) {
             super(system, actorId, initialState);
-            withSupervisionStrategy(Actor.SupervisionStrategy.RESTART);
+            withSupervisionStrategy(SupervisionStrategy.RESTART);
         }
 
         @Override
@@ -437,7 +438,7 @@ public class StatefulShoppingCartExample {
 
         public VariantActor(ActorSystem system, String actorId, VariantState initialState) {
             super(system, actorId, initialState);
-            withSupervisionStrategy(Actor.SupervisionStrategy.RESTART);
+            withSupervisionStrategy(SupervisionStrategy.RESTART);
         }
 
         @Override
@@ -565,7 +566,7 @@ public class StatefulShoppingCartExample {
         
         public StockActor(ActorSystem system, String actorId, StockState initialState) {
             super(system, actorId, initialState);
-            withSupervisionStrategy(Actor.SupervisionStrategy.RESTART);
+            withSupervisionStrategy(SupervisionStrategy.RESTART);
         }
         
         @Override

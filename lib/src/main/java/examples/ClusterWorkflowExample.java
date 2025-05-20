@@ -3,6 +3,7 @@ package examples;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+import systems.cajun.SupervisionStrategy;
 import systems.cajun.cluster.*;
 import systems.cajun.runtime.cluster.ClusterFactory;
 

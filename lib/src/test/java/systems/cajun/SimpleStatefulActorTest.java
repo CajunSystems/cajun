@@ -9,17 +9,18 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 import systems.cajun.mocks.MockActorSystem;
 import systems.cajun.persistence.BatchedMessageJournal;
@@ -196,14 +197,16 @@ class SimpleStatefulActorTest {
      */
     @Test
     void testMessageProcessingThroughActorSystem() throws Exception {
-        // Create a spy on the actor to verify method calls
+        // Create a direct test that doesn't rely on spying
         TestCounterActor actor = new TestCounterActor(mockActorSystem, "counter-5", 0,
                 mockMessageJournal, mockSnapshotStore);
-        TestCounterActor spyActor = Mockito.spy(actor);
         
         // Register the actor with the mock actor system
-        mockActorSystem.registerActor(spyActor);
-        spyActor.start();
+        mockActorSystem.registerActor(actor);
+        actor.start();
+        
+        // Explicitly wait for state initialization to complete
+        actor.forceInitializeState().get(5, TimeUnit.SECONDS);
         
         // Set synchronous message delivery for deterministic testing
         mockActorSystem.setSynchronousMessageDelivery(true);
@@ -211,11 +214,14 @@ class SimpleStatefulActorTest {
         // Send a message through the actor system
         mockActorSystem.sendMessage("counter-5", new TestCounterMessage.Increment(5));
         
-        // Verify the message was processed
-        verify(spyActor).processMessage(eq(0), any(TestCounterMessage.Increment.class));
-        
-        // Verify message was journaled
+        // Verify message was journaled (this should work because we're mocking the journal)
         verify(mockMessageJournal).append(eq("counter-5"), any(TestCounterMessage.Increment.class));
+        
+        // Wait a bit to ensure message processing completes
+        Thread.sleep(100);
+        
+        // Verify the state was updated correctly (this is a more reliable test than method verification)
+        assertEquals(5, actor.getState(), "State should be incremented to 5");
     }
     
     /**
@@ -226,9 +232,7 @@ class SimpleStatefulActorTest {
         public TestCounterActor(MockActorSystem mockSystem, String actorId, Integer initialState,
                 BatchedMessageJournal<TestCounterMessage> messageJournal,
                 SnapshotStore<Integer> snapshotStore) {
-            // We need to pass a real ActorSystem to the parent constructor
-            super(new ActorSystem(), actorId, initialState, messageJournal, snapshotStore);
-            // Register with mock system
+            super(mockSystem, actorId, initialState, messageJournal, snapshotStore);
             mockSystem.registerActor(this);
         }
 

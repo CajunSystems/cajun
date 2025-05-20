@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import systems.cajun.SupervisionStrategy;
 
 class HierarchicalSupervisionTest {
 
@@ -175,7 +176,7 @@ class HierarchicalSupervisionTest {
         // Create parent actor with STOP strategy
         Pid parentPid = system.register(ParentActor.class, "parent-actor");
         ParentActor parent = (ParentActor) system.getActor(parentPid);
-        parent.withSupervisionStrategy(Actor.SupervisionStrategy.STOP);
+        parent.withSupervisionStrategy(SupervisionStrategy.STOP);
 
         // Tell parent to create a child with ESCALATE strategy
         parent.tell(new NormalMessage("create-child"));
@@ -186,7 +187,7 @@ class HierarchicalSupervisionTest {
         // Get the child actor and set its strategy to ESCALATE
         ChildActor child = (ChildActor) parent.getChildren().get("child-actor");
         assertNotNull(child, "Child actor should not be null");
-        child.withSupervisionStrategy(Actor.SupervisionStrategy.ESCALATE);
+        child.withSupervisionStrategy(SupervisionStrategy.ESCALATE);
 
         // Send a normal message to the child
         child.tell(new NormalMessage("test"));

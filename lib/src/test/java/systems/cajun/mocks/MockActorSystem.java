@@ -2,6 +2,7 @@ package systems.cajun.mocks;
 
 import org.mockito.Mockito;
 import systems.cajun.Actor;
+import systems.cajun.ActorSystem;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,7 +18,7 @@ import java.util.concurrent.TimeUnit;
  * this class provides a custom implementation that tracks actors and can deliver messages
  * synchronously for deterministic testing.
  */
-public class MockActorSystem {
+public class MockActorSystem extends ActorSystem {
     
     private final Map<String, Actor<?>> actors = new ConcurrentHashMap<>();
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);

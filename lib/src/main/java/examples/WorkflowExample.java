@@ -3,6 +3,7 @@ package examples;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+import systems.cajun.SupervisionStrategy;
 
 import java.util.ArrayList;
 import java.util.List;

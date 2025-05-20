@@ -16,6 +16,7 @@ import systems.cajun.ActorSystem;
 import systems.cajun.FunctionalStatefulActor;
 import systems.cajun.Pid;
 import systems.cajun.StatefulActor;
+import systems.cajun.SupervisionStrategy;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 // No unused imports

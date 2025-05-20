@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import systems.cajun.SupervisionStrategy;
 
 class ActorErrorHandlingTest {
 
@@ -136,7 +137,7 @@ class ActorErrorHandlingTest {
     @Test
     void testResumeStrategy() throws InterruptedException {
         currentActor = new TestActor(system, false);
-        currentActor.withSupervisionStrategy(Actor.SupervisionStrategy.RESUME);
+        currentActor.withSupervisionStrategy(SupervisionStrategy.RESUME);
         currentActor.start();
 
         // Send a normal message
@@ -166,7 +167,7 @@ class ActorErrorHandlingTest {
     @Test
     void testStopStrategy() throws InterruptedException {
         currentActor = new TestActor(system, false);
-        currentActor.withSupervisionStrategy(Actor.SupervisionStrategy.STOP);
+        currentActor.withSupervisionStrategy(SupervisionStrategy.STOP);
         currentActor.start();
 
         // Send a normal message
@@ -205,7 +206,7 @@ class ActorErrorHandlingTest {
     @Test
     void testRestartStrategy() throws InterruptedException {
         currentActor = new TestActor(system, true); // true = reprocess message on error
-        currentActor.withSupervisionStrategy(Actor.SupervisionStrategy.RESTART);
+        currentActor.withSupervisionStrategy(SupervisionStrategy.RESTART);
         currentActor.start();
 
         // Send a normal message
@@ -261,7 +262,7 @@ class ActorErrorHandlingTest {
     @Test
     void testEscalateStrategy() throws InterruptedException {
         currentActor = new TestActor(system, false);
-        currentActor.withSupervisionStrategy(Actor.SupervisionStrategy.ESCALATE);
+        currentActor.withSupervisionStrategy(SupervisionStrategy.ESCALATE);
         currentActor.start();
 
         // Send a normal message
