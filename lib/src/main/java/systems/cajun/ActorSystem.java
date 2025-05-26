@@ -13,6 +13,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import systems.cajun.backpressure.*;
+import systems.cajun.builder.ActorBuilder;
+import systems.cajun.builder.StatefulActorBuilder;
+import systems.cajun.handler.Handler;
+import systems.cajun.handler.StatefulHandler;
 import systems.cajun.config.ThreadPoolFactory;
 import systems.cajun.config.BackpressureConfig;
 import systems.cajun.config.MailboxConfig;
@@ -407,6 +411,80 @@ public class ActorSystem {
     public <T extends Actor<?>> Pid register(Class<T> actorClass) {
         return register(actorClass, generateActorId());
     }
+    
+    /**
+     * Creates a builder for a new actor with the specified handler class.
+     * This is the preferred way to create actors using the new interface-based approach.
+     * 
+     * @param <Message> The type of messages the actor will handle
+     * @param handlerClass The class of the handler to use
+     * @return A builder for configuring and creating the actor
+     */
+    public <Message> ActorBuilder<Message> actorOf(Class<? extends Handler<Message>> handlerClass) {
+        try {
+            Handler<Message> handler = handlerClass.getDeclaredConstructor().newInstance();
+            return new ActorBuilder<Message>(this, handler);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
+        }
+    }
+    
+    /**
+     * Creates a builder for a new actor with the specified handler instance.
+     * 
+     * @param <Message> The type of messages the actor will handle
+     * @param handler The handler instance to use
+     * @return A builder for configuring and creating the actor
+     */
+    public <Message> ActorBuilder<Message> actorOf(Handler<Message> handler) {
+        return new ActorBuilder<Message>(this, handler);
+    }
+    
+    /**
+     * Creates a builder for a new stateful actor with the specified handler class and initial state.
+     * This is the preferred way to create stateful actors using the new interface-based approach.
+     * 
+     * @param <State> The type of the actor's state
+     * @param <Message> The type of messages the actor will handle
+     * @param handlerClass The class of the handler to use
+     * @param initialState The initial state for the actor
+     * @return A builder for configuring and creating the stateful actor
+     */
+    public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
+            Class<? extends StatefulHandler<State, Message>> handlerClass, 
+            State initialState) {
+        try {
+            StatefulHandler<State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
+            return new StatefulActorBuilder<State, Message>(this, handler, initialState);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
+        }
+    }
+    
+    /**
+     * Creates a builder for a new stateful actor with the specified handler instance and initial state.
+     * 
+     * @param <State> The type of the actor's state
+     * @param <Message> The type of messages the actor will handle
+     * @param handler The handler instance to use
+     * @param initialState The initial state for the actor
+     * @return A builder for configuring and creating the stateful actor
+     */
+    public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
+            StatefulHandler<State, Message> handler, 
+            State initialState) {
+        return new StatefulActorBuilder<State, Message>(this, handler, initialState);
+    }
+    
+    /**
+     * Registers an actor with this system.
+     * This method is used by the builder classes.
+     * 
+     * @param actor The actor to register
+     */
+    public void registerActor(Actor<?> actor) {
+        actors.put(actor.getActorId(), actor);
+    }
 
     /**
      * Shuts down and removes the actor with the specified ID.
@@ -551,7 +629,7 @@ public class ActorSystem {
      * 
      * @return A string representation of a UUID to be used as an actor ID
      */
-    protected String generateActorId() {
+    public String generateActorId() {
         return UUID.randomUUID().toString();
     }
     
@@ -646,6 +724,30 @@ public class ActorSystem {
         } else {
             logger.warn("Failed to route message to actor {}: Actor not found", actorId);
         }
+    }
+    
+    /**
+     * Sends a message to an actor.
+     * 
+     * @param <T> The type of the message
+     * @param pid The PID of the actor to send the message to
+     * @param message The message to send
+     */
+    public <T> void tell(Pid pid, T message) {
+        routeMessage(pid.actorId(), message);
+    }
+    
+    /**
+     * Sends a message to an actor after a delay.
+     * 
+     * @param <T> The type of the message
+     * @param pid The PID of the actor to send the message to
+     * @param message The message to send
+     * @param delay The delay amount
+     * @param timeUnit The time unit for the delay
+     */
+    public <T> void tell(Pid pid, T message, long delay, TimeUnit timeUnit) {
+        routeMessage(pid.actorId(), message, delay, timeUnit);
     }
 
     /**

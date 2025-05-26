@@ -77,12 +77,11 @@ Or with Maven:
 
 ### Creating Actors
 
-There are multiple styles of creating actors in Cajun:
+Cajun provides a clean, interface-based approach for creating actors. This approach separates the message handling logic from the actor lifecycle management, making your code more maintainable and testable.
 
-1. Object-oriented style
+#### 1. Stateless Actors with Handler Interface
 
-This is the default way of creating actors, we extend from the `Actor<M>` class and we implement the `receive` method
-where we add logic to handle the message and state mutations.
+For stateless actors, implement the `Handler<Message>` interface:
 
 ```java
 public sealed interface GreetingMessage permits HelloMessage, ByeMessage, GetHelloCount, Shutdown {
@@ -100,127 +99,172 @@ public record Shutdown() implements GreetingMessage {
 public record GetHelloCount(Pid replyTo) implements GreetingMessage {
 }
 
-public class GreetingActor extends Actor<GreetingMessage> {
+public record HelloCount(int count) {
+}
 
-    private int helloCount;
-
-    public GreetingActor(ActorSystem system, String actorId) {
-        super(system, actorId);
-        this.helloCount = 0;
-    }
-
+public class GreetingHandler implements Handler<GreetingMessage> {
+    private int helloCount = 0;
+    
     @Override
-    public void receive(GreetingMessage message) {
+    public void receive(GreetingMessage message, ActorContext context) {
         switch (message) {
             case HelloMessage ignored -> {
-                // Updating state of the actor
+                // Updating state of the handler
                 helloCount++;
             }
             case GetHelloCount ghc -> {
                 // Replying back to calling actor
-                ghc.replyTo().tell(new HelloCount(helloCount));
+                context.tell(ghc.replyTo(), new HelloCount(helloCount));
             }
             case ByeMessage ignored -> {
                 // Sending a message to self
-                self().tell(new Shutdown());
+                context.tellSelf(new Shutdown());
             }
             case Shutdown ignored -> {
-                // Stopping actor after processing all messages
-                stop();
+                // Stopping actor
+                context.stop();
             }
         }
     }
-}
-```
-
-2. Workflow Chaining with ChainedActor
-
-For creating workflow-style actors that process messages in a chain, use the `ChainedActor<M>` class. This provides methods for connecting actors in a sequence and forwarding messages to the next actor in the chain.
-
-```java
-public class ProcessorActor extends ChainedActor<WorkflowMessage> {
     
-    public ProcessorActor(ActorSystem system, String actorId) {
-        super(system, actorId);
+    // Optional lifecycle methods
+    @Override
+    public void preStart(ActorContext context) {
+        // Initialization logic
     }
     
     @Override
-    protected void receive(WorkflowMessage message) {
-        // Process the message
-        WorkflowMessage processedMessage = processMessage(message);
-        
-        // Forward to the next actor in the chain
-        forward(processedMessage);
+    public void postStop(ActorContext context) {
+        // Cleanup logic
     }
     
-    private WorkflowMessage processMessage(WorkflowMessage message) {
-        // Your processing logic here
-        return message;
+    @Override
+    public boolean onError(GreetingMessage message, Throwable exception, ActorContext context) {
+        // Custom error handling
+        return false; // Return true to reprocess the message
     }
 }
 ```
 
-To set up a chain of actors:
+Create and start the actor:
 
 ```java
-// Create a chain of processor actors
-Pid firstProcessorPid = system.createActorChain(ProcessorActor.class, "processor", 3);
+// Create an actor with a handler class (instantiated automatically)
+Pid actorPid = system.actorOf(GreetingHandler.class)
+    .withId("greeter-1")  // Optional: specify ID (otherwise auto-generated)
+    .spawn();
 
-// Create source and sink actors
-Pid sourcePid = system.register(SourceActor.class, "source");
-Pid sinkPid = system.register(SinkActor.class, "sink");
+// Or create with a handler instance
+GreetingHandler handler = new GreetingHandler();
+Pid actorPid = system.actorOf(handler).spawn();
 
-// Connect source to the first processor
-ChainedActor<?> sourceActor = (ChainedActor<?>) system.getActor(sourcePid);
-sourceActor.withNext(firstProcessorPid);
-
-// Connect the last processor to the sink
-ChainedActor<?> lastProcessor = (ChainedActor<?>) system.getActor(new Pid("processor-3", system));
-lastProcessor.withNext(sinkPid);
+// Send messages
+actorPid.tell(new HelloMessage());
 ```
 
-The `ActorSystem` provides a convenient method to create chains of actors:
+#### 2. Stateful Actors with StatefulHandler Interface
+
+For actors that need to maintain and persist state, implement the `StatefulHandler<State, Message>` interface:
 
 ```java
-// Creates 5 processor actors and connects them in sequence
-Pid firstActorPid = system.createActorChain(ProcessorActor.class, "processor", 5);
-```
-
-3. Functional style actor
-
-When creating a `FunctionalActor` we need to know the State and Message that the actor is going to be using,
-then we define call `receiveMessage` on the `FunctionalActor` to program the state changes and message handling logic.
-```java
-sealed interface CounterProtocol {
-
-    record CountUp() implements CounterProtocol {
-    }
-
-    record GetCount(Pid replyTo) implements CounterProtocol {
-    }
-}
-
-public static void main(String[] args) {
-    var counterActor = new FunctionalActor<Integer, CounterProtocol>();
-    var counter = actorSystem.register(counterActor.receiveMessage((state, message) -> {
-        switch (message) {
-            case CounterProtocol.CountUp ignored -> {
-                return state + 1;
+public class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+    
+    @Override
+    public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+        return switch (message) {
+            case Increment ignored -> state + 1;
+            case Decrement ignored -> state - 1;
+            case Reset ignored -> 0;
+            case GetCount gc -> {
+                context.tell(gc.replyTo(), new CountResult(state));
+                yield state; // Return unchanged state
             }
-            case CounterProtocol.GetCount gc -> gc.replyTo().tell(new HelloCount(i));
-        }
+        };
+    }
+    
+    @Override
+    public Integer preStart(Integer state, ActorContext context) {
+        // Optional initialization logic
         return state;
-    }, 0), "Counter-Actor");
-    var receiverActor = actorSystem.register(CountReceiver.class, "count-receiver-1");
-    counter.tell(new CounterProtocol.CountUp());
-    counter.tell(new CounterProtocol.CountUp());
-    counter.tell(new CounterProtocol.CountUp());
-    counter.tell(new CounterProtocol.CountUp());
-    counter.tell(new CounterProtocol.GetCount(receiverActor));
+    }
+    
+    @Override
+    public void postStop(Integer state, ActorContext context) {
+        // Optional cleanup logic
+    }
+    
+    @Override
+    public boolean onError(CounterMessage message, Integer state, Throwable exception, ActorContext context) {
+        // Custom error handling
+        return false; // Return true to reprocess the message
+    }
 }
 ```
 
-#### Key Features of StatefulActor
+Create and start the stateful actor:
+
+```java
+// Create a stateful actor with a handler class and initial state
+Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+    .withId("counter-1")  // Optional: specify ID (otherwise auto-generated)
+    .spawn();
+
+// Or create with a handler instance
+CounterHandler handler = new CounterHandler();
+Pid counterPid = system.statefulActorOf(handler, 0).spawn();
+
+// Send messages
+counterPid.tell(new Increment());
+```
+
+#### 3. Advanced Configuration
+
+Both actor builders support additional configuration options:
+
+```java
+// Configure backpressure, mailbox, and persistence
+Pid actorPid = system.actorOf(GreetingHandler.class)
+    .withBackpressureConfig(new BackpressureConfig())
+    .withMailboxConfig(new ResizableMailboxConfig())
+    .spawn();
+
+// Configure stateful actor with persistence
+Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+    .withPersistence(
+        PersistenceFactory.createBatchedFileMessageJournal(),
+        PersistenceFactory.createFileSnapshotStore()
+    )
+    .spawn();
+```
+
+#### 4. Creating Actor Hierarchies
+
+You can create parent-child relationships between actors:
+
+```java
+// Create a parent actor
+Pid parentPid = system.actorOf(ParentHandler.class).spawn();
+
+// Create a child actor through the parent
+Pid childPid = system.actorOf(ChildHandler.class)
+    .withParent(system.getActor(parentPid))
+    .spawn();
+
+// Or create a child directly from another handler
+public class ParentHandler implements Handler<ParentMessage> {
+    @Override
+    public void receive(ParentMessage message, ActorContext context) {
+        if (message instanceof CreateChild) {
+            // Create a child actor
+            Pid childPid = context.createChild(ChildHandler.class, "child-1");
+            // Send message to the child
+            context.tell(childPid, new ChildMessage());
+        }
+    }
+}
+```
+
+#### Key Features of Stateful Actors
 
 - **Persistent State**: State is automatically persisted using configurable storage backends
 - **State Recovery**: Automatically recovers state when an actor restarts
@@ -230,100 +274,81 @@ public static void main(String[] args) {
   - File-based storage
   - Custom storage implementations
 
-#### Using StatefulActor
+#### Advanced Stateful Actor Features
 
-1. **Creating a StatefulActor**
+1. **Configuring State Persistence**
 
 ```java
-// Create with default in-memory persistence
-CounterActor counterActor = new CounterActor(system, "counter", 0);
-counterActor.start();
-
-// Create with file-based persistence
-StateStore<String, Integer> stateStore = StateStoreFactory.createFileStore("/path/to/state/dir");
-CounterActor persistentActor = new CounterActor(system, "persistent-counter", 0, stateStore);
-persistentActor.start();
+// Create a stateful actor with file-based persistence
+Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+    .withPersistence(
+        PersistenceFactory.createFileSnapshotStore("/path/to/snapshots"),
+        PersistenceFactory.createBatchedFileMessageJournal("/path/to/journal")
+    )
+    .spawn();
 ```
 
-2. **Functional Style StatefulActor**
-
-You can also create stateful actors using a functional style:
+2. **State Recovery Options**
 
 ```java
-// Create a stateful actor with functional style
-Pid counterPid = FunctionalStatefulActor.createStatefulActor(
-    system,                  // Actor system
-    "counter",               // Actor ID
-    0,                       // Initial state
-    (state, message) -> {    // Message handler function
-        if (message instanceof CounterMessage.Increment) {
-            return state + 1;
-        } else if (message instanceof CounterMessage.Reset) {
-            return 0;
-        }
-        return state;
-    }
-);
+// Configure recovery options
+Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+    .withRecoveryConfig(RecoveryConfig.builder()
+        .withRecoveryStrategy(RecoveryStrategy.SNAPSHOT_THEN_JOURNAL)
+        .withMaxMessagesToRecover(1000)
+        .build())
+    .spawn();
 ```
 
-3. **Creating Chains of StatefulActors**
-
-The `FunctionalStatefulActor` utility allows creating chains of stateful actors that process messages in sequence:
+3. **Snapshot Strategies**
 
 ```java
-// Create a chain of stateful actors
-Pid firstActorPid = FunctionalStatefulActor.createChain(
-    system,                  // Actor system
-    "counter-chain",         // Base name for the chain
-    3,                       // Number of actors in the chain
-    new Integer[]{0, 0, 0},  // Initial states for each actor
-    new BiFunction[]{        // Message handlers for each actor
-        (state, msg) -> { /* Actor 1 logic */ },
-        (state, msg) -> { /* Actor 2 logic */ },
-        (state, msg) -> { /* Actor 3 logic */ }
-    }
-);
+// Configure snapshot strategy
+Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+    .withSnapshotStrategy(SnapshotStrategy.builder()
+        .withInterval(Duration.ofMinutes(5))
+        .withThreshold(100) // Take snapshot every 100 state changes
+        .build())
+    .spawn();
 ```
 
-#### State Management Methods
+#### Lifecycle Methods
 
-StatefulActor provides several methods for working with state:
+The `StatefulHandler` interface provides lifecycle methods:
 
-- `getState()`: Get the current state value
-- `updateState(State newState)`: Update the state with a new value
-- `updateState(Function<State, State> updateFunction)`: Update the state using a function
+- `preStart(State state, ActorContext context)`: Called when the actor starts, returns the initial state
+- `postStop(State state, ActorContext context)`: Called when the actor stops
+- `onError(Message message, State state, Throwable exception, ActorContext context)`: Called when message processing fails
 
-#### Lifecycle Hooks
+### Using the Actor System
 
-StatefulActor overrides the standard Actor lifecycle hooks:
-
-- `preStart()`: Initializes the actor's state from the state store
-- `postStop()`: Ensures the final state is persisted before stopping
-
-### Using the actor system
-
-After creating the actor we have to use the actor system to spawn them and send messages.
+After creating your handlers, use the actor system to spawn actors and send messages:
 
 ```java
-
-class CountReceiver extends Actor<HelloCount> {
-
-    public CountReceiver(ActorSystem system, String actorId) {
-        super(system, actorId);
-    }
-
+public class CountResultHandler implements Handler<HelloCount> {
     @Override
-    protected void receive(HelloCount helloCount) {
-        System.out.println("Count" + helloCount);
+    public void receive(HelloCount message, ActorContext context) {
+        System.out.println("Count: " + message.count());
     }
 }
 
 public static void main(String[] args) {
+    // Create the actor system
     var actorSystem = new ActorSystem();
-    var pid1 = actorSystem.register(GreetingActor.class, "greeting-actor-1");
-    var receiverActor = actorSystem.register(CountReceiver.class, "count-receiver");
-    pid1.tell(new HelloMessage());
-    pid1.tell(new GetHelloCount(receiverActor)); // Count: 1
+    
+    // Create a greeting actor
+    var greetingPid = actorSystem.actorOf(GreetingHandler.class)
+        .withId("greeting-actor-1")
+        .spawn();
+    
+    // Create a receiver actor
+    var receiverPid = actorSystem.actorOf(CountResultHandler.class)
+        .withId("count-receiver")
+        .spawn();
+    
+    // Send messages
+    greetingPid.tell(new HelloMessage());
+    greetingPid.tell(new GetHelloCount(receiverPid)); // Will print "Count: 1"
 }
 ```
 
@@ -967,153 +992,3 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
    - [x] Actor reassignment on node failure
    - [x] Pluggable messaging system
    - [x] Configurable message delivery guarantees (EXACTLY_ONCE, AT_LEAST_ONCE, AT_MOST_ONCE)
-
-```
-
-```java
-// Example: Creating a Backpressure-Aware Actor
-
-import systems.cajun.ActorSystem;
-import systems.cajun.StatefulActor;
-import systems.cajun.persistence.RetryStrategy;
-import systems.cajun.persistence.BatchedMessageJournal;
-import systems.cajun.persistence.SnapshotStore;
-
-import java.io.Serializable;
-import java.util.concurrent.TimeUnit;
-
-// Define message type
-public class OrderMessage implements Serializable {
-    private static final long serialVersionUID = 1L;
-    private final String orderId;
-    private final double amount;
-    
-    public OrderMessage(String orderId, double amount) {
-        this.orderId = orderId;
-        this.amount = amount;
-    }
-    
-    public String getOrderId() { return orderId; }
-    public double getAmount() { return amount; }
-}
-
-// Define state type
-public class OrderProcessorState implements Serializable {
-    private static final long serialVersionUID = 1L;
-    private final int processedCount;
-    private final double totalAmount;
-    
-    public OrderProcessorState(int processedCount, double totalAmount) {
-        this.processedCount = processedCount;
-        this.totalAmount = totalAmount;
-    }
-    
-    public OrderProcessorState addOrder(double amount) {
-        return new OrderProcessorState(processedCount + 1, totalAmount + amount);
-    }
-    
-    public int getProcessedCount() { return processedCount; }
-    public double getTotalAmount() { return totalAmount; }
-}
-
-// Create the backpressure-aware actor
-public class OrderProcessorActor extends StatefulActor<OrderProcessorState, OrderMessage> {
-    
-    public OrderProcessorActor(
-            ActorSystem system,
-            String actorId,
-            OrderProcessorState initialState,
-            BatchedMessageJournal<OrderMessage> messageJournal,
-            SnapshotStore<OrderProcessorState> snapshotStore) {
-        // Enable backpressure with custom settings
-        super(system, actorId, initialState, messageJournal, snapshotStore, 5, true, 100, 1000);
-        
-        // Configure retry strategy
-        withRetryStrategy(new RetryStrategy()
-            .withMaxRetries(3)
-            .withInitialDelay(100)
-            .withMaxDelay(2000)
-            .withBackoffMultiplier(2.0)
-            .withRetryableExceptionPredicate(  // Custom predicate for retryable exceptions
-                ex -> ex instanceof TemporaryDatabaseException
-            ));
-        
-        // Add custom error handling
-        withErrorHook(ex -> {
-            System.err.println("Error processing order: " + ex.getMessage());
-            // Could notify monitoring systems, log to special error queue, etc.
-        });
-    }
-    
-    @Override
-    protected OrderProcessorState processMessage(OrderProcessorState state, OrderMessage message) {
-        // Simulate database operation that might fail
-        try {
-            // In a real system, this would be a database call
-            if (Math.random() < 0.1) { // 10% chance of failure
-                throw new TemporaryDatabaseException("Database connection error");
-            }
-            
-            // Process the order
-            System.out.println("Processing order: " + message.getOrderId() + 
-                             " for $" + message.getAmount());
-            
-            // Update state with new order
-            return state.addOrder(message.getAmount());
-        } catch (Exception e) {
-            // This will be caught by the retry mechanism
-            throw e;
-        }
-    }
-    
-    // Custom exception for demonstration
-    private static class TemporaryDatabaseException extends RuntimeException {
-        public TemporaryDatabaseException(String message) {
-            super(message);
-        }
-    }
-}
-
-// Usage example
-public class BackpressureExample {
-    public static void main(String[] args) throws Exception {
-        ActorSystem system = new ActorSystem();
-        
-        // Create actor with initial state
-        OrderProcessorActor actor = new OrderProcessorActor(
-            system, 
-            "order-processor", 
-            new OrderProcessorState(0, 0.0),
-            null, // Use default message journal
-            null  // Use default snapshot store
-        );
-        
-        // Start the actor
-        actor.start();
-        
-        // Wait for actor to initialize
-        actor.waitForStateInitialization(1000);
-        
-        // Send messages with backpressure handling
-        for (int i = 1; i <= 1000; i++) {
-            OrderMessage order = new OrderMessage("ORD-" + i, 100.0 * i);
-            
-            // Try to send with backpressure awareness
-            if (!actor.tryTell(order)) {
-                System.out.println("Backpressure applied, order " + order.getOrderId() + " rejected");
-                
-                // Wait and retry later
-                TimeUnit.MILLISECONDS.sleep(50);
-                i--; // Retry this order
-            }
-        }
-        
-        // Get backpressure metrics
-        Actor.BackpressureMetrics metrics = actor.getBackpressureMetrics();
-        System.out.println("Current mailbox size: " + metrics.getCurrentSize());
-        System.out.println("Fill ratio: " + metrics.getFillRatio());
-        
-        // Shutdown
-        system.shutdown();
-    }
-}

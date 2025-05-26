@@ -330,6 +330,15 @@ public abstract class Actor<Message> {
     public String getActorId() {
         return actorId;
     }
+    
+    /**
+     * Gets the actor system this actor belongs to.
+     *
+     * @return The actor system
+     */
+    public ActorSystem getSystem() {
+        return system;
+    }
 
     public void tell(Message message) {
         mailboxProcessor.tell(message);
@@ -403,7 +412,7 @@ public abstract class Actor<Message> {
      *
      * @param parent The parent actor
      */
-    void setParent(Actor<?> parent) {
+    public void setParent(Actor<?> parent) {
         this.parent = parent;
     }
 
@@ -421,9 +430,8 @@ public abstract class Actor<Message> {
      *
      * @param child The child actor to add
      */
-    void addChild(Actor<?> child) {
+    public void addChild(Actor<?> child) {
         children.put(child.getActorId(), child);
-        child.setParent(this);
     }
 
     /**
