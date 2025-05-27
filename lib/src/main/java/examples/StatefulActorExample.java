@@ -12,18 +12,18 @@ import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import systems.cajun.ActorContext;
 import systems.cajun.ActorSystem;
-import systems.cajun.FunctionalStatefulActor;
 import systems.cajun.Pid;
-import systems.cajun.StatefulActor;
 import systems.cajun.SupervisionStrategy;
+import systems.cajun.handler.StatefulHandler;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 // No unused imports
 import systems.cajun.runtime.persistence.PersistenceFactory;
 
 /**
- * Example demonstrating the use of stateful actors.
+ * Example demonstrating the use of stateful actors with the interface-based approach.
  * This example shows:
  * 1. Creating and using a stateful actor with in-memory persistence
  * 2. Creating and using a stateful actor with file-based persistence
@@ -32,7 +32,7 @@ import systems.cajun.runtime.persistence.PersistenceFactory;
  * 5. Error handling with supervision strategies
  * 
  * IMPORTANT SERIALIZATION REQUIREMENTS:
- * For persistence to work correctly with StatefulActor, both the State and Message types 
+ * For persistence to work correctly, both the State and Message types 
  * MUST be serializable:
  * - Both State and Message classes must implement java.io.Serializable
  * - All fields in these classes must also be serializable, or marked as transient
@@ -87,17 +87,16 @@ public class StatefulActorExample {
     private static void simpleCounterExample(ActorSystem system) throws Exception {
         logger.info("Starting simple counter example with in-memory persistence");
 
-        // Create a counter actor with default persistence
-        CounterActor counter = new CounterActor(system, "counter-1", 0, PersistenceFactory.createBatchedFileMessageJournal());
+        // Create a counter actor with default persistence using the interface-based approach
+        Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+            .withId("counter-1")
+            .spawn();
         
-        // Start the actor and wait for state initialization to complete
-        counter.start();
-        counter.forceInitializeState().join();
-        logger.info("Counter actor state initialized");
+        logger.info("Counter actor created and started");
 
         // Send increment messages
-        counter.tell(new CounterMessage.Increment(5));
-        counter.tell(new CounterMessage.Increment(10));
+        counterPid.tell(new CounterMessage.Increment(5));
+        counterPid.tell(new CounterMessage.Increment(10));
 
         // Wait for the messages to be processed - using a more deterministic approach
         Thread.sleep(100);
@@ -105,105 +104,91 @@ public class StatefulActorExample {
         // Get the current count
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger result = new AtomicInteger();
-        counter.tell(new CounterMessage.GetCount(count -> {
+        counterPid.tell(new CounterMessage.GetCount(count -> {
             result.set(count);
             latch.countDown();
         }));
-
-        // Wait for the response
+        
         latch.await(1, TimeUnit.SECONDS);
         int count = result.get();
         logger.info("Counter value: {}", count);
-
+        
         // Reset the counter
-        counter.tell(new CounterMessage.Reset());
-
-        // Wait for the reset to be processed
-        Thread.sleep(100);
-
-        // Get the count again
+        counterPid.tell(new CounterMessage.Reset());
+        
+        // Get the current count after reset
         CountDownLatch latch2 = new CountDownLatch(1);
         AtomicInteger result2 = new AtomicInteger();
-        counter.tell(new CounterMessage.GetCount(count2 -> {
+        counterPid.tell(new CounterMessage.GetCount(count2 -> {
             result2.set(count2);
             latch2.countDown();
         }));
-
-        // Wait for the response
+        
         latch2.await(1, TimeUnit.SECONDS);
         int count2 = result2.get();
         logger.info("Counter value after reset: {}", count2);
 
         // Shutdown the actor
-        system.shutdown(counter.getActorId());
+        system.shutdown(counterPid.actorId());
     }
 
     /**
      * Example of a counter actor with file-based persistence.
      */
-    private static void fileBasedCounterExample(ActorSystem system, String stateDir) throws Exception {
-        logger.info("Starting counter example with file-based persistence");
-
-        // Create message journal and snapshot store for persistence
-        BatchedMessageJournal<CounterMessage> messageJournal = PersistenceFactory.createBatchedFileMessageJournal(stateDir);
-        SnapshotStore<Integer> snapshotStore = PersistenceFactory.createFileSnapshotStore(stateDir);
-
-        // Create a counter actor with initial state 0 and file-based persistence
-        CounterActor counter = new CounterActor(system, "file-counter", 0, messageJournal, snapshotStore);
-        counter.start();
+    private static void fileBasedCounterExample(ActorSystem system, String persistenceDir) throws Exception {
+        logger.info("Starting file-based counter example");
         
-        // Wait for state initialization to complete
-        counter.forceInitializeState().join();
-        logger.info("File-based counter actor state initialized");
+        // Create a file-based message journal and snapshot store
+        BatchedMessageJournal<CounterMessage> messageJournal = 
+                PersistenceFactory.createBatchedFileMessageJournal(persistenceDir + "/journal");
+        SnapshotStore<Integer> snapshotStore = 
+                PersistenceFactory.createFileSnapshotStore(persistenceDir + "/snapshots");
+        
+        // Create a counter actor with file-based persistence using the interface-based approach
+        Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+            .withId("file-counter")
+            .withPersistence(messageJournal, snapshotStore)
+            .spawn();
+            
+        logger.info("File-based counter actor created and started");
 
         // Send increment messages
-        counter.tell(new CounterMessage.Increment(3));
-        counter.tell(new CounterMessage.Increment(7));
-
-        // Wait for the messages to be processed
-        Thread.sleep(100);
+        counterPid.tell(new CounterMessage.Increment(3));
+        counterPid.tell(new CounterMessage.Increment(7));
         
-        // Force a snapshot to ensure state is persisted
-        counter.forceSnapshot().join();
-
         // Get the current count
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger result = new AtomicInteger();
-        counter.tell(new CounterMessage.GetCount(count -> {
+        counterPid.tell(new CounterMessage.GetCount(count -> {
             result.set(count);
             latch.countDown();
         }));
-
-        // Wait for the result
+        
         latch.await(1, TimeUnit.SECONDS);
         logger.info("File-based counter value: {}", result.get());
-
-        // Shutdown the actor
-        system.shutdown(counter.getActorId());
-
-        // Create a new actor with the same ID to demonstrate state recovery
-        // Using null initial state to force recovery from persistence
-        logger.info("Creating a new actor with the same ID to demonstrate state recovery");
-        CounterActor newCounter = new CounterActor(system, "file-counter", null, messageJournal, snapshotStore);
-        newCounter.start();
         
-        // Wait for state initialization and recovery to complete
-        newCounter.forceInitializeState().join();
-
+        // Stop the actor
+        system.shutdown(counterPid.actorId());
+        logger.info("File-based counter actor stopped");
+        
+        // Create a new actor with the same ID to demonstrate state recovery
+        Pid recoveredCounterPid = system.statefulActorOf(CounterHandler.class, 0)
+            .withId("file-counter")
+            .withPersistence(messageJournal, snapshotStore)
+            .spawn();
+            
+        logger.info("Recovered counter actor created and started");
+        
         // Get the recovered count
         CountDownLatch latch2 = new CountDownLatch(1);
-        AtomicInteger result2 = new AtomicInteger();
-        newCounter.tell(new CounterMessage.GetCount(count -> {
-            result2.set(count);
+        AtomicInteger recoveredResult = new AtomicInteger();
+        recoveredCounterPid.tell(new CounterMessage.GetCount(count -> {
+            recoveredResult.set(count);
             latch2.countDown();
         }));
-
-        // Wait for the result
+        
         latch2.await(1, TimeUnit.SECONDS);
-        logger.info("Recovered counter value: {}", result2.get());
-
-        // Shutdown the actor
-        system.shutdown(newCounter.getActorId());
+        logger.info("Recovered counter value: {}", recoveredResult.get());
     }
 
     /**
@@ -211,103 +196,48 @@ public class StatefulActorExample {
      */
     private static void statefulActorChainExample(ActorSystem system) throws Exception {
         logger.info("Starting stateful actor chain example");
-
-        // Create initial states for the chain
-        Integer[] initialStates = {0, 0, 0};
-
-        // Create action functions for the chain
-        @SuppressWarnings("unchecked")
-        BiFunction<Integer, CounterMessage, Integer>[] actions = new BiFunction[3];
-
-        // First actor: Increment by 1
-        actions[0] = (state, message) -> {
-            if (message instanceof CounterMessage.Increment) {
-                return state + 1;
-            } else if (message instanceof CounterMessage.Reset) {
-                return 0;
-            } else if (message instanceof CounterMessage.GetCount getCount) {
-                getCount.callback().accept(state);
-            }
-            return state;
-        };
-
-        // Second actor: Increment by 2
-        actions[1] = (state, message) -> {
-            if (message instanceof CounterMessage.Increment) {
-                return state + 2;
-            } else if (message instanceof CounterMessage.Reset) {
-                return 0;
-            } else if (message instanceof CounterMessage.GetCount getCount) {
-                getCount.callback().accept(state);
-            }
-            return state;
-        };
-
-        // Third actor: Increment by 3
-        actions[2] = (state, message) -> {
-            if (message instanceof CounterMessage.Increment) {
-                return state + 3;
-            } else if (message instanceof CounterMessage.Reset) {
-                return 0;
-            } else if (message instanceof CounterMessage.GetCount getCount) {
-                getCount.callback().accept(state);
-            }
-            return state;
-        };
-
-        // Create individual actors instead of a chain to avoid UnsupportedOperationException
-        String[] actorIds = new String[3];
-        @SuppressWarnings("unchecked") // Suppressing the unchecked cast warning
-        StatefulActor<Integer, CounterMessage>[] actors = new StatefulActor[3];
         
-        for (int i = 0; i < 3; i++) {
-            String actorId = "counter-chain-" + (i + 1);
-            actorIds[i] = actorId;
+        // Create three different handlers for the chain
+        CounterHandlerMultiplier handler1 = new CounterHandlerMultiplier(1);
+        CounterHandlerMultiplier handler2 = new CounterHandlerMultiplier(2);
+        CounterHandlerMultiplier handler3 = new CounterHandlerMultiplier(3);
+        
+        // Create three actors with the handlers
+        Pid actor1Pid = system.statefulActorOf(handler1, 0)
+            .withId("counter-chain-1")
+            .spawn();
             
-            // Create a stateful actor using the static method
-            actors[i] = FunctionalStatefulActor.createStatefulActor(
-                system, 
-                actorId, 
-                initialStates[i], 
-                actions[i],
-                PersistenceFactory.createBatchedFileMessageJournal(),
-                PersistenceFactory.createFileSnapshotStore()
-            );
+        Pid actor2Pid = system.statefulActorOf(handler2, 0)
+            .withId("counter-chain-2")
+            .spawn();
             
-            // Start the actor
-            actors[i].start();
-            
-            // Wait for initialization to complete
-            actors[i].forceInitializeState().join();
-        }
-
-        // Send messages to the first actor
-        Pid firstActorPid = new Pid(actorIds[0], system);
-        firstActorPid.tell(new CounterMessage.Increment(1));
-
-        // Wait for the message to be processed
-        Thread.sleep(100);
-
-        // Get the counts from each actor - using the direct actor references
-        for (int i = 0; i < 3; i++) {
-            String actorId = actorIds[i];
-            CountDownLatch latch = new CountDownLatch(1);
-            int[] result = new int[1];
-
-            // Use the direct actor reference instead of looking it up
-            actors[i].tell(new CounterMessage.GetCount(count -> {
-                result[0] = count;
-                latch.countDown();
-            }));
-
-            latch.await(1, TimeUnit.SECONDS);
-            logger.info("Actor {} count: {}", actorId, result[0]);
-        }
-
-        // Shutdown the actors
-        for (String actorId : actorIds) {
-            system.shutdown(actorId);
-        }
+        Pid actor3Pid = system.statefulActorOf(handler3, 0)
+            .withId("counter-chain-3")
+            .spawn();
+        
+        // Connect the actors in a chain by setting up message forwarding
+        handler1.setNextActor(actor2Pid);
+        handler2.setNextActor(actor3Pid);
+        
+        logger.info("Stateful actor chain created");
+        
+        // Send a message to the first actor in the chain
+        // It will be processed by all actors in the chain
+        actor1Pid.tell(new CounterMessage.Increment(1));
+        
+        // Wait for processing to complete
+        Thread.sleep(500);
+        
+        // Get the final count from the last actor in the chain
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger result = new AtomicInteger();
+        actor3Pid.tell(new CounterMessage.GetCount(count -> {
+            result.set(count);
+            latch.countDown();
+        }));
+        
+        latch.await(1, TimeUnit.SECONDS);
+        logger.info("Final count from chain: {}", result.get());
     }
 
     /**
@@ -406,49 +336,14 @@ public class StatefulActorExample {
     /**
      * A stateful actor that maintains a counter.
      */
-    public static class CounterActor extends StatefulActor<Integer, CounterMessage> {
-
-        public CounterActor(ActorSystem system, String actorId, Integer initialState) {
-            super(system, actorId, initialState);
-            // Configure error handling strategy
-            withSupervisionStrategy(SupervisionStrategy.RESTART);
-        }
-
-        public CounterActor(ActorSystem system, String actorId, Integer initialState, 
-                            BatchedMessageJournal<CounterMessage> messageJournal) {
-            super(system, actorId, initialState, messageJournal);
-            // Configure error handling strategy
-            withSupervisionStrategy(SupervisionStrategy.RESTART);
-        }
-        
-        public CounterActor(ActorSystem system, String actorId, Integer initialState, 
-                            BatchedMessageJournal<CounterMessage> messageJournal,
-                            SnapshotStore<Integer> snapshotStore) {
-            super(system, actorId, initialState, messageJournal, snapshotStore);
-            // Configure error handling strategy
-            withSupervisionStrategy(SupervisionStrategy.RESTART);
-        }
+    /**
+     * Handler implementation for the counter actor using the new interface-based approach.
+     */
+    public static class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+        private static final Logger logger = LoggerFactory.getLogger(CounterHandler.class);
         
         @Override
-        protected void preStart() {
-            super.preStart();
-            logger.debug("CounterActor {} starting", getActorId());
-        }
-        
-        @Override
-        protected void postStop() {
-            super.postStop();
-            logger.debug("CounterActor {} stopping", getActorId());
-        }
-        
-        @Override
-        protected boolean onError(CounterMessage message, Throwable error) {
-            logger.error("Error in CounterActor {}: {}", getActorId(), error.getMessage());
-            return super.onError(message, error);
-        }
-
-        @Override
-        protected Integer processMessage(Integer state, CounterMessage message) {
+        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
             // Handle null state (could happen during recovery)
             if (state == null) {
                 state = 0;
@@ -471,11 +366,68 @@ public class StatefulActorExample {
             }
         }
         
-        /**
-         * Forces a snapshot to be taken immediately.
-         */
-        public CompletableFuture<Void> forceSnapshot() {
-            return super.forceSnapshot();
+        @Override
+        public Integer preStart(Integer state, ActorContext context) {
+            logger.debug("CounterHandler for actor {} starting", context.getActorId());
+            return state;
+        }
+        
+        @Override
+        public void postStop(Integer state, ActorContext context) {
+            logger.debug("CounterHandler for actor {} stopping", context.getActorId());
+        }
+        
+        @Override
+        public boolean onError(CounterMessage message, Integer state, Throwable exception, ActorContext context) {
+            logger.error("Error in CounterHandler for actor {}: {}", context.getActorId(), exception.getMessage());
+            return false; // Let the supervision strategy handle it
+        }
+    }
+    
+    /**
+     * A specialized counter handler that multiplies the increment amount by a factor.
+     * Used for the actor chain example.
+     */
+    public static class CounterHandlerMultiplier implements StatefulHandler<Integer, CounterMessage> {
+        private static final Logger logger = LoggerFactory.getLogger(CounterHandlerMultiplier.class);
+        private final int multiplier;
+        private Pid nextActor;
+        
+        public CounterHandlerMultiplier(int multiplier) {
+            this.multiplier = multiplier;
+        }
+        
+        public void setNextActor(Pid nextActor) {
+            this.nextActor = nextActor;
+        }
+        
+        @Override
+        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+            // Handle null state (could happen during recovery)
+            if (state == null) {
+                state = 0;
+            }
+            
+            try {
+                if (message instanceof CounterMessage.Increment increment) {
+                    logger.info("Actor {} incrementing by {}", context.getActorId(), increment.amount() * multiplier);
+                    Integer newState = state + (increment.amount() * multiplier);
+                    
+                    // Forward the message to the next actor in the chain if set
+                    if (nextActor != null) {
+                        context.tell(nextActor, message);
+                    }
+                    
+                    return newState;
+                } else if (message instanceof CounterMessage.Reset) {
+                    return 0;
+                } else if (message instanceof CounterMessage.GetCount getCount) {
+                    getCount.callback().accept(state);
+                }
+                return state;
+            } catch (Exception e) {
+                throw e;
+            }
         }
     }
     
@@ -486,18 +438,21 @@ public class StatefulActorExample {
         logger.info("Starting error handling example");
         
         // Create a counter actor with error handling strategy
-        CounterActor counter = new CounterActor(system, "error-counter", 0);
-        counter.start();
-        counter.forceInitializeState().join();
+        Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
+            .withId("error-counter")
+            .withSupervisionStrategy(SupervisionStrategy.RESTART)
+            .spawn();
+        
+        logger.info("Counter actor created and started");
         
         // Increment the counter
-        counter.tell(new CounterMessage.Increment(5));
+        counterPid.tell(new CounterMessage.Increment(5));
         Thread.sleep(100);
         
         // Get the current count
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger result = new AtomicInteger();
-        counter.tell(new CounterMessage.GetCount(count -> {
+        counterPid.tell(new CounterMessage.GetCount(count -> {
             result.set(count);
             latch.countDown();
         }));
@@ -508,7 +463,7 @@ public class StatefulActorExample {
         
         // Send a message that will cause an error
         logger.info("Sending message that will cause an error");
-        counter.tell(new CounterMessage.ThrowError());
+        counterPid.tell(new CounterMessage.ThrowError());
         
         // Wait for error handling to complete
         Thread.sleep(500);
@@ -516,7 +471,7 @@ public class StatefulActorExample {
         // Verify the actor is still responsive after error
         CountDownLatch latch2 = new CountDownLatch(1);
         AtomicInteger result2 = new AtomicInteger();
-        counter.tell(new CounterMessage.GetCount(count -> {
+        counterPid.tell(new CounterMessage.GetCount(count -> {
             result2.set(count);
             latch2.countDown();
         }));
@@ -526,6 +481,6 @@ public class StatefulActorExample {
         logger.info("Counter value after error: {}", result2.get());
         
         // Shutdown the actor
-        system.shutdown(counter.getActorId());
+        system.shutdown(counterPid.actorId());
     }
 }

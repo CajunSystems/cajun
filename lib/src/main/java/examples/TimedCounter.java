@@ -1,7 +1,8 @@
 package examples;
 
-import systems.cajun.Actor;
+import systems.cajun.ActorContext;
 import systems.cajun.ActorSystem;
+import systems.cajun.handler.Handler;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -13,22 +14,25 @@ public class TimedCounter {
 
         record CountUp() implements CountProtocol {
         }
+        
+        record CountDown() implements CountProtocol {
+        }
     }
 
-    public static class CountReceiver extends Actor<CountProtocol> {
+    public static class CountReceiver implements Handler<CountProtocol> {
 
         private int count = 0;
 
-        public CountReceiver(ActorSystem system, String actorId) {
-            super(system, actorId);
-        }
-
         @Override
-        protected void receive(CountProtocol countMessage) {
+        public void receive(CountProtocol countMessage, ActorContext context) {
             switch (countMessage) {
                 case CountProtocol.CountUp ignored -> {
                     count++;
-                    System.out.println(STR."Current Count: \{count}");
+                    System.out.println("Current Count: " + count);
+                }
+                case CountProtocol.CountDown ignored -> {
+                    count--;
+                    System.out.println("Current Count: " + count);
                 }
             }
         }
@@ -58,11 +62,27 @@ public class TimedCounter {
 
     public static void main(String[] args) {
         var actorSystem = new ActorSystem();
-        var receiverActor = actorSystem.register(CountReceiver.class, "count-receiver");
+        
+        // Use the new interface-based approach to create the actor
+        var receiverActor = actorSystem.actorOf(new Handler<CountProtocol>() {
+            private int count = 0;
+            
+            @Override
+            public void receive(CountProtocol message, ActorContext context) {
+                if (message instanceof CountProtocol.CountUp) {
+                    count++;
+                    System.out.println("Count: " + count);
+                } else if (message instanceof CountProtocol.CountDown) {
+                    count--;
+                    System.out.println("Count: " + count);
+                }
+            }
+        }).withId("count-receiver").spawn();
+        
         receiverActor.tell(new CountProtocol.CountUp()); // Count: 1
         var runner = new TimedCounter();
         runner.startPeriodicTask(() -> {
-            receiverActor.tell(new CountProtocol.CountUp()); // Count: 1
+            receiverActor.tell(new CountProtocol.CountUp()); // Count: 2, 3, 4, etc.
         });
     }
 }

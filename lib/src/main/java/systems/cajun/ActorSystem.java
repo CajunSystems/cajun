@@ -220,7 +220,7 @@ public class ActorSystem {
      * @param parent The parent actor
      * @return The PID of the created child actor
      */
-    public <T extends Actor<?>> Pid registerChild(Class<T> actorClass, String actorId, Actor<?> parent) {
+    /* package */ <T extends Actor<?>> Pid registerChild(Class<T> actorClass, String actorId, Actor<?> parent) {
         try {
             T actor = actorClass.getDeclaredConstructor(ActorSystem.class, String.class)
                     .newInstance(this, actorId);
@@ -243,7 +243,7 @@ public class ActorSystem {
      * @param parent The parent actor
      * @return The PID of the created child actor
      */
-    public <T extends Actor<?>> Pid registerChild(Class<T> actorClass, Actor<?> parent) {
+    /* package */ <T extends Actor<?>> Pid registerChild(Class<T> actorClass, Actor<?> parent) {
         return registerChild(actorClass, generateActorId(), parent);
     }
 
@@ -270,7 +270,7 @@ public class ActorSystem {
      * @deprecated Use {@link #register(Class, String, BackpressureConfig)} instead
      */
     @Deprecated
-    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure) {
+    /* package */ <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure) {
         // Convert boolean to BackpressureConfig for backward compatibility
         BackpressureConfig config = enableBackpressure ? backpressureConfig : null;
         return register(actorClass, actorId, config, this.mailboxConfig);
@@ -341,7 +341,7 @@ public class ActorSystem {
      * @deprecated Use {@link #register(Class, String, BackpressureConfig, MailboxConfig)} instead
      */
     @Deprecated
-    public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure, 
+    /* package */ <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, boolean enableBackpressure, 
                                              int initialCapacity, int maxCapacity) {
         // Convert boolean to BackpressureConfig for backward compatibility
         BackpressureConfig config = enableBackpressure ? backpressureConfig : null;
@@ -381,7 +381,7 @@ public class ActorSystem {
      * @param actorId The ID for the actor
      * @return The PID of the created actor
      */
-    public <Message> Pid register(Receiver<Message> receiver, String actorId) {
+    protected <Message> Pid register(Receiver<Message> receiver, String actorId) {
         Actor<Message> actor = new FunctionalActor<>(this, actorId, receiver);
         actors.put(actorId, actor);
         actor.start();
@@ -397,7 +397,7 @@ public class ActorSystem {
      * @param actorId The ID for the actor
      * @return The PID of the created actor
      */
-    public <Message> Pid register(systems.cajun.Receiver<Message> cajunReceiver, String actorId) {
+    protected <Message> Pid register(systems.cajun.Receiver<Message> cajunReceiver, String actorId) {
         return register(adaptReceiver(cajunReceiver), actorId);
     }
 
@@ -408,7 +408,7 @@ public class ActorSystem {
      * @param actorClass The class of the actor
      * @return The PID of the created actor
      */
-    public <T extends Actor<?>> Pid register(Class<T> actorClass) {
+    protected <T extends Actor<?>> Pid register(Class<T> actorClass) {
         return register(actorClass, generateActorId());
     }
     
@@ -494,6 +494,18 @@ public class ActorSystem {
     public void shutdown(String actorId) {
         Actor<?> actor = actors.remove(actorId);
         if (actor != null && actor.isRunning()) {
+            actor.stop();
+        }
+    }
+
+    /**
+     * Stops an actor identified by its Pid.
+     * 
+     * @param pid The Pid of the actor to stop
+     */
+    public void stopActor(Pid pid) {
+        Actor<?> actor = getActor(pid);
+        if (actor != null) {
             actor.stop();
         }
     }

@@ -1,17 +1,15 @@
 package examples;
 
-import systems.cajun.Actor;
+import systems.cajun.ActorContext;
 import systems.cajun.ActorSystem;
-import systems.cajun.ChainedActor;
-import systems.cajun.FunctionalActor;
 import systems.cajun.Pid;
+import systems.cajun.handler.Handler;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiFunction;
 
 /**
  * Example demonstrating a workflow execution system using Functional Actors.
@@ -49,22 +47,13 @@ public class FunctionalWorkflowExample {
     }
 
     /**
-     * State for the source actor
-     */
-    private record SourceState(Pid nextActor) {}
-
-    /**
-     * State for the processor actor
-     */
-    private record ProcessorState(int processorNumber, Pid nextActor) {}
-
-    /**
      * Creates a workflow with the specified number of processors using functional actors
      */
     private static void setupFunctionalWorkflow(ActorSystem system, int processorCount) {
-        // Create sink actor
-        FunctionalActor<Void, WorkflowMessage> sinkActor = new FunctionalActor<>();
-        Pid sinkPid = system.register(sinkActor.receiveMessage((state, message) -> {
+        // Create sink actor using the new interface-based approach
+        Pid sinkPid = system.actorOf(new Handler<WorkflowMessage>() {
+            @Override
+            public void receive(WorkflowMessage message, ActorContext context) {
             if (message instanceof WorkflowMessage.ProcessData processMsg) {
                 System.out.println("Sink: Received final result for workflow " + 
                                   processMsg.workflowId() + ": " + processMsg.data());
@@ -79,73 +68,61 @@ public class FunctionalWorkflowExample {
             } else {
                 System.out.println("Sink: Unexpected message type: " + message);
             }
-            return null;
-        }, null), "sink");
+        }
+        }).withId("sink").spawn();
 
-        // Create processor actors
-        @SuppressWarnings("unchecked")
-        BiFunction<ProcessorState, WorkflowMessage, ProcessorState>[] processorActions = new BiFunction[processorCount];
-        @SuppressWarnings("unchecked")
-        ProcessorState[] processorStates = new ProcessorState[processorCount];
-
-        // Initialize processor actions and states
-        for (int i = 0; i < processorCount; i++) {
-            final int processorNumber = i + 1;
-            processorStates[i] = new ProcessorState(processorNumber, null);
-
-            processorActions[i] = (state, message) -> {
+        // Create processor actors in a chain using the new interface-based approach
+        Pid lastProcessorPid = sinkPid;
+        for (int i = processorCount; i > 0; i--) {
+            final int processorNumber = i;
+            final Pid nextActor = lastProcessorPid;
+            
+            Pid processorPid = system.actorOf(new Handler<WorkflowMessage>() {
+                @Override
+                public void receive(WorkflowMessage message, ActorContext context) {
                 if (message instanceof WorkflowMessage.ProcessData processMsg) {
                     // Check if this is the right step for this processor
-                    if (processMsg.step() == state.processorNumber()) {
-                        System.out.println("Processor " + state.processorNumber() + 
-                                          ": Processing workflow " + processMsg.workflowId());
+                    if (processMsg.step() == processorNumber) {
+                        System.out.println("Processor " + processorNumber + 
+                                           ": Processing workflow " + processMsg.workflowId());
 
                         // Simulate processing by transforming the data
-                        String processedData = processMsg.data() + "-P" + state.processorNumber();
+                        String processedData = processMsg.data() + "-P" + processorNumber;
 
                         // Forward to next actor
-                        if (state.nextActor() != null) {
-                            state.nextActor().tell(new WorkflowMessage.ProcessData(
+                        if (nextActor != null) {
+                            nextActor.tell(new WorkflowMessage.ProcessData(
                                 processMsg.workflowId(),
                                 processedData,
                                 processMsg.step() + 1
                             ));
                         }
                     } else {
-                        System.out.println("Processor " + state.processorNumber() + 
-                                          ": Skipping message for step " + processMsg.step());
+                        System.out.println("Processor " + processorNumber + 
+                                           ": Skipping message for step " + processMsg.step());
                     }
                 } else {
-                    System.out.println("Processor " + state.processorNumber() + 
+                    System.out.println("Processor " + processorNumber + 
                                      ": Unexpected message type: " + message);
                 }
-                return state;
-            };
+            }
+            }).withId("processor-" + processorNumber).spawn();
+            
+            lastProcessorPid = processorPid;
         }
 
-        // Create the processor chain
-        Pid firstProcessorPid = FunctionalActor.createChain(
-            system, 
-            "processor", 
-            processorCount, 
-            processorStates, 
-            processorActions
-        );
+        // First processor is the last one we created
+        Pid firstProcessorPid = lastProcessorPid;
 
-        // Connect the last processor to the sink
-        Actor<?> lastProcessor = system.getActor(new Pid("processor-" + processorCount, system));
-        if (lastProcessor != null && lastProcessor instanceof ChainedActor) {
-            ((ChainedActor<?>) lastProcessor).withNext(sinkPid);
-        }
-
-        // Create source actor
-        FunctionalActor<SourceState, WorkflowMessage> sourceActor = new FunctionalActor<>();
-        Pid sourcePid = system.register(sourceActor.receiveMessage((state, message) -> {
+        // Create source actor using the new interface-based approach
+        system.actorOf(new Handler<WorkflowMessage>() {
+            @Override
+            public void receive(WorkflowMessage message, ActorContext context) {
             if (message instanceof WorkflowMessage.StartWorkflow startMsg) {
                 System.out.println("Source: Starting workflow " + startMsg.workflowId());
 
                 // Forward to first processor
-                state.nextActor().tell(new WorkflowMessage.ProcessData(
+                firstProcessorPid.tell(new WorkflowMessage.ProcessData(
                     startMsg.workflowId(), 
                     startMsg.data(),
                     1
@@ -153,8 +130,8 @@ public class FunctionalWorkflowExample {
             } else {
                 System.out.println("Source: Unexpected message type: " + message);
             }
-            return state;
-        }, new SourceState(firstProcessorPid)), "source");
+        }
+        }).withId("source").spawn();
     }
 
     /**

@@ -10,6 +10,7 @@ import systems.cajun.internal.StatefulHandlerActor;
 import systems.cajun.persistence.BatchedMessageJournal;
 import systems.cajun.persistence.SnapshotStore;
 import systems.cajun.runtime.persistence.PersistenceFactory;
+import systems.cajun.SupervisionStrategy;
 
 import java.util.UUID;
 
@@ -31,6 +32,7 @@ public class StatefulActorBuilder<State, Message> {
     private BatchedMessageJournal<Message> messageJournal;
     private SnapshotStore<State> snapshotStore;
     private boolean customPersistence = false;
+    private SupervisionStrategy supervisionStrategy;
     
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -108,6 +110,17 @@ public class StatefulActorBuilder<State, Message> {
     }
     
     /**
+     * Sets the supervision strategy for the actor.
+     * 
+     * @param strategy The supervision strategy to use
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withSupervisionStrategy(SupervisionStrategy strategy) {
+        this.supervisionStrategy = strategy;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
@@ -138,6 +151,10 @@ public class StatefulActorBuilder<State, Message> {
         if (parent != null) {
             parent.addChild(actor);
             actor.setParent(parent);
+        }
+        
+        if (supervisionStrategy != null) {
+            actor.withSupervisionStrategy(supervisionStrategy);
         }
         
         system.registerActor(actor);

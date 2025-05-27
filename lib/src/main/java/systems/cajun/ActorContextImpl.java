@@ -61,7 +61,9 @@ public class ActorContextImpl implements ActorContext {
                     .spawn();
         } else {
             // Fall back to traditional actor creation
-            return system.register((Class<? extends Actor<?>>) handlerClass, childId);
+            @SuppressWarnings("unchecked")
+            Class<? extends Actor<?>> actorClass = (Class<? extends Actor<?>>) handlerClass;
+            return system.register(actorClass, childId);
         }
     }
     
@@ -77,7 +79,9 @@ public class ActorContextImpl implements ActorContext {
                     .spawn();
         } else {
             // Fall back to traditional actor creation
-            return system.register((Class<? extends Actor<?>>) handlerClass);
+            @SuppressWarnings("unchecked")
+            Class<? extends Actor<?>> actorClass = (Class<? extends Actor<?>>) handlerClass;
+            return system.register(actorClass);
         }
     }
     

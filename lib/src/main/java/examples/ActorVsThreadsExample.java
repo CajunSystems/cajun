@@ -3,10 +3,13 @@ package examples;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import systems.cajun.Actor;
+import systems.cajun.ActorContext;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+import systems.cajun.builder.ActorBuilder;
 import systems.cajun.config.BackpressureConfig;
 import systems.cajun.backpressure.BackpressureStrategy;
+import systems.cajun.handler.Handler;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -14,7 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
+
 import java.util.concurrent.StructuredTaskScope;
 
 /**
@@ -137,35 +140,142 @@ public class ActorVsThreadsExample {
                 .build();
         }
 
-        // Register the SinkActor class with the system
+        // Create the SinkActor using the new interface-based approach
         Pid sinkPid;
+        Handler<Object> sinkHandler = new Handler<Object>() {
+            private CountDownLatch completionLatch;
+            private int receivedCount = 0;
+            
+            @Override
+            public void receive(Object message, ActorContext context) {
+                if (message instanceof InitSinkMessage initMessage) {
+                    this.completionLatch = initMessage.getCompletionLatch();
+                } else if (message instanceof NumberMessage) {
+                    // Process the received number (just count it)
+                    receivedCount++;
+
+                    // Log progress periodically
+                    if (receivedCount % (NUM_MESSAGES / 10) == 0) {
+                        logger.info("Sink actor received {}% of messages", receivedCount * 100 / NUM_MESSAGES);
+                    }
+                } else if (message instanceof CompletionMessage) {
+                    // Signal completion
+                    logger.info("Sink actor received completion message. Processed {} messages.", receivedCount);
+                    if (completionLatch != null) {
+                        completionLatch.countDown();
+                    }
+                }
+            }
+        };
+        
+        ActorBuilder<Object> sinkBuilder = system.actorOf(sinkHandler);
         if (enableBackpressure) {
-            sinkPid = system.register(SinkActor.class, "sink", backpressureConfig);
-        } else {
-            sinkPid = system.register(SinkActor.class, "sink");
+            sinkBuilder.withBackpressureConfig(backpressureConfig);
         }
+        sinkPid = sinkBuilder.withId("sink").spawn();
         
         // Initialize the SinkActor with our completionLatch
         sinkPid.tell(new InitSinkMessage(completionLatch));
 
-        // Register the ProcessorActor class with the system
+        // Create the ProcessorActor using the new interface-based approach
         Pid processorPid;
+        Handler<Object> processorHandler = new Handler<Object>() {
+            private Pid sinkPid;
+            private int processedCount = 0;
+            
+            @Override
+            public void receive(Object message, ActorContext context) {
+                if (message instanceof InitProcessorMessage initMessage) {
+                    this.sinkPid = initMessage.getSinkPid();
+                } else if (message instanceof NumberMessage numberMessage) {
+                    // Process the message (increment the number)
+                    int processedNumber = numberMessage.getNumber() + 1;
+
+                    // Forward to sink if sinkPid is available
+                    if (sinkPid != null) {
+                        sinkPid.tell(new NumberMessage(processedNumber));
+                    }
+                    
+                    // Track progress
+                    processedCount++;
+                    if (processedCount % (NUM_MESSAGES / 10) == 0) {
+                        logger.info("Processor actor processed {}% of messages", processedCount * 100 / NUM_MESSAGES);
+                    }
+                } else if (message instanceof CompletionMessage) {
+                    // Forward completion message to sink if sinkPid is available
+                    logger.info("Processor actor completed processing all messages");
+                    if (sinkPid != null) {
+                        sinkPid.tell(new CompletionMessage());
+                    }
+                }
+            }
+        };
+        
+        ActorBuilder<Object> processorBuilder = system.actorOf(processorHandler);
         if (enableBackpressure) {
-            processorPid = system.register(ProcessorActor.class, "processor", backpressureConfig);
-        } else {
-            processorPid = system.register(ProcessorActor.class, "processor");
+            processorBuilder.withBackpressureConfig(backpressureConfig);
         }
+        processorPid = processorBuilder.withId("processor").spawn();
         
         // Initialize the ProcessorActor with the sink's PID
         processorPid.tell(new InitProcessorMessage(sinkPid));
 
-        // Register the SourceActor class with the system
+        // Create the SourceActor using the new interface-based approach
         Pid sourcePid;
+        Handler<Object> sourceHandler = new Handler<Object>() {
+            private Pid processorPid;
+            private int numMessages;
+            
+            @Override
+            public void receive(Object message, ActorContext context) {
+                if (message instanceof InitSourceMessage initMessage) {
+                    this.processorPid = initMessage.getProcessorPid();
+                    this.numMessages = initMessage.getNumMessages();
+                } else if (message instanceof StartMessage) {
+                    // Only proceed if processorPid is available
+                    if (processorPid == null) {
+                        logger.warn("Source actor cannot generate messages: processor PID is null");
+                        return;
+                    }
+                    
+                    logger.info("Source actor starting to generate {} messages", numMessages);
+
+                    // Generate messages in batches for better performance and to prevent mailbox overflow
+                    for (int i = 0; i < numMessages; i += BATCH_SIZE) {
+                        int batchEnd = Math.min(i + BATCH_SIZE, numMessages);
+                        
+                        // Send a batch of messages
+                        for (int j = i; j < batchEnd; j++) {
+                            processorPid.tell(new NumberMessage(j));
+                        }
+                        
+                        // Log progress periodically
+                        if ((i + BATCH_SIZE) % (numMessages / 10) <= BATCH_SIZE) {
+                            int percentage = Math.min((i + BATCH_SIZE) * 100 / numMessages, 100);
+                            logger.info("Source actor generated {}% of messages", percentage);
+                        }
+                        
+                        // Small delay between batches to prevent overwhelming the processor
+                        try {
+                            Thread.sleep(1);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+
+                    logger.info("Source actor completed generating all messages");
+                    
+                    // Send completion message to processor to signal end of data
+                    processorPid.tell(new CompletionMessage());
+                }
+            }
+        };
+        
+        ActorBuilder<Object> sourceBuilder = system.actorOf(sourceHandler);
         if (enableBackpressure) {
-            sourcePid = system.register(SourceActor.class, "source", backpressureConfig);
-        } else {
-            sourcePid = system.register(SourceActor.class, "source");
+            sourceBuilder.withBackpressureConfig(backpressureConfig);
         }
+        sourcePid = sourceBuilder.withId("source").spawn();
         
         // Initialize the SourceActor with the processor's PID and message count
         sourcePid.tell(new InitSourceMessage(processorPid, NUM_MESSAGES));
@@ -206,8 +316,7 @@ public class ActorVsThreadsExample {
         // Create executor service
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-        // Create atomic counter for tracking progress
-        AtomicInteger processedCount = new AtomicInteger(0);
+        // We'll track progress through the sink thread directly
 
         // Create and start sink thread
         SinkThread sink = new SinkThread(processorToSinkQueue, completionLatch, NUM_MESSAGES, POISON_PILL);
@@ -243,6 +352,7 @@ public class ActorVsThreadsExample {
     /**
      * Runs the structured concurrency implementation and returns the execution time in milliseconds.
      */
+    @SuppressWarnings("preview")
     private static long runStructuredConcurrencyImplementation() throws Exception {
         logger.info("Running structured concurrency implementation...");
 
@@ -421,12 +531,13 @@ public class ActorVsThreadsExample {
 
     /**
      * Source actor that generates numbers and sends them to the processor.
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
+    @Deprecated
     public static class SourceActor extends Actor<Object> {
         private Pid processorPid;
         private int numMessages;
 
-        // Add a constructor that takes only system and actorId
         public SourceActor(ActorSystem system, String actorId) {
             super(system, actorId);
             this.processorPid = null;
@@ -480,12 +591,13 @@ public class ActorVsThreadsExample {
 
     /**
      * Processor actor that increments numbers and forwards them to the sink.
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
+    @Deprecated
     public static class ProcessorActor extends Actor<Object> {
         private Pid sinkPid;
         private int processedCount = 0;
 
-        // Add a constructor that takes only system and actorId
         public ProcessorActor(ActorSystem system, String actorId) {
             super(system, actorId);
             this.sinkPid = null; // Default value when created by the system
@@ -521,12 +633,13 @@ public class ActorVsThreadsExample {
 
     /**
      * Sink actor that receives processed numbers and counts them.
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
+    @Deprecated
     public static class SinkActor extends Actor<Object> {
         private CountDownLatch completionLatch;
         private int receivedCount = 0;
 
-        // Add a constructor that takes only system and actorId
         public SinkActor(ActorSystem system, String actorId) {
             super(system, actorId);
             this.completionLatch = null; // Default value when created by the system

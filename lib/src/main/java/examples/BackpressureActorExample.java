@@ -2,15 +2,12 @@ package examples;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import systems.cajun.Actor;
+import systems.cajun.ActorContext;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
-import systems.cajun.backpressure.BackpressureStatus;
-import systems.cajun.backpressure.BackpressureSendOptions;
-import systems.cajun.backpressure.BackpressureState;
 import systems.cajun.config.BackpressureConfig;
-import systems.cajun.config.MailboxConfig;
 import systems.cajun.config.ResizableMailboxConfig;
+import systems.cajun.handler.Handler;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -32,8 +29,48 @@ public class BackpressureActorExample {
         ResizableMailboxConfig mailboxConfig = new ResizableMailboxConfig()
             .setInitialCapacity(100)
             .setMaxCapacity(10_000);
-        Pid processorPid = system.register(ProcessorActor.class, "processor", backpressureConfig, mailboxConfig);
-        ProcessorActor processor = (ProcessorActor) system.getActor(processorPid);
+            
+        // Create the processor actor using the new interface-based approach
+        Pid processorPid = system.actorOf(new Handler<String>() {
+            private final AtomicInteger processedCount = new AtomicInteger(0);
+            private long startTime = 0;
+            
+            @Override
+            public void preStart(ActorContext context) {
+                startTime = System.currentTimeMillis();
+                logger.info("ProcessorActor starting");
+            }
+            
+            @Override
+            public void receive(String message, ActorContext context) {
+                try {
+                    // Simulate varying processing times
+                    int processed = processedCount.incrementAndGet();
+                    
+                    if (processed % 1000 == 0) {
+                        // Every 1000th message, log progress
+                        long elapsed = System.currentTimeMillis() - startTime;
+                        double rate = processed * 1000.0 / elapsed;
+                        logger.info("Processed {} messages at {} msg/sec", processed, String.format("%.2f", rate));
+                    }
+                    
+                    // Simulate processing time (variable based on message count)
+                    Thread.sleep(5 + (processed % 5));
+                    
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            
+            @Override
+            public void postStop(ActorContext context) {
+                logger.info("ProcessorActor stopping after processing {} messages", processedCount.get());
+            }
+        })
+        .withId("processor")
+        .withBackpressureConfig(backpressureConfig)
+        .withMailboxConfig(mailboxConfig)
+        .spawn();
         
         // Set up metrics reporting
         final AtomicInteger messagesAccepted = new AtomicInteger(0);
@@ -62,8 +99,8 @@ public class BackpressureActorExample {
                 
                 while (sent < totalMessages) {
                     try {
-                        // Send message directly
-                        processor.tell("Message-" + sent);
+                        // Send message to the processor actor
+                        system.tell(processorPid, "Message-" + sent);
                         messagesAccepted.incrementAndGet();
                         sent++;
                         
@@ -113,98 +150,5 @@ public class BackpressureActorExample {
         system.shutdown();
         
         logger.info("Example completed");
-    }
-    
-    /**
-     * A processor actor that demonstrates backpressure handling.
-     * This actor processes messages at a controlled rate to show
-     * how backpressure affects the system.
-     */
-    public static class ProcessorActor extends Actor<String> {
-        private static final Logger logger = LoggerFactory.getLogger(ProcessorActor.class);
-        private final AtomicInteger processedCount = new AtomicInteger(0);
-        private long startTime = 0;
-        
-        /**
-         * Constructor with separate backpressure and mailbox configuration
-         * 
-         * @param system The actor system
-         * @param actorId The actor ID
-         * @param backpressureConfig The backpressure configuration
-         * @param mailboxConfig The mailbox configuration
-         */
-        public ProcessorActor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
-            super(system, actorId, backpressureConfig, mailboxConfig);
-        }
-        
-        /**
-         * Default constructor required by ActorSystem
-         * 
-         * @param system The actor system
-         * @param actorId The actor ID
-         */
-        public ProcessorActor(ActorSystem system, String actorId) {
-            super(system, actorId, 
-                  new BackpressureConfig(), 
-                  new ResizableMailboxConfig().setInitialCapacity(100).setMaxCapacity(10_000));
-        }
-        
-        /**
-         * @deprecated Use the constructor with separate BackpressureConfig and ResizableMailboxConfig instead
-         */
-        @Deprecated
-        public ProcessorActor(ActorSystem system, String actorId, boolean enableBackpressure, int initialCapacity, int maxCapacity) {
-            super(system, actorId, 
-                enableBackpressure ? system.getBackpressureConfig() : null, 
-                new ResizableMailboxConfig().setInitialCapacity(initialCapacity).setMaxCapacity(maxCapacity));
-        }
-        
-        /**
-         * @deprecated Use the constructor with separate BackpressureConfig and ResizableMailboxConfig instead
-         */
-        @Deprecated
-        public ProcessorActor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, int initialCapacity, int maxCapacity) {
-            super(system, actorId, backpressureConfig, 
-                new ResizableMailboxConfig().setInitialCapacity(initialCapacity).setMaxCapacity(maxCapacity));
-        }
-        
-        @Override
-        protected void preStart() {
-            startTime = System.currentTimeMillis();
-            logger.info("ProcessorActor starting");
-        }
-        
-        @Override
-        protected void receive(String message) {
-            try {
-                // Simulate varying processing times
-                int processed = processedCount.incrementAndGet();
-                
-                if (processed % 1000 == 0) {
-                    // Every 1000th message, log progress
-                    long elapsed = System.currentTimeMillis() - startTime;
-                    double rate = processed * 1000.0 / elapsed;
-                    logger.info("Processed {} messages at {} msg/sec", processed, String.format("%.2f", rate));
-                }
-                
-                // Simulate processing work with variable latency
-                if (processed % 100 == 0) {
-                    // Occasionally take longer to process
-                    Thread.sleep(5);
-                } else {
-                    // Normal processing time
-                    Thread.sleep(1);
-                }
-                
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        
-        @Override
-        protected void postStop() {
-            logger.info("ProcessorActor stopping after processing {} messages", 
-                    processedCount.get());
-        }
     }
 }

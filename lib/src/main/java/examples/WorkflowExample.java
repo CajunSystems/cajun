@@ -1,9 +1,11 @@
 package examples;
 
 import systems.cajun.Actor;
+import systems.cajun.ActorContext;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
 import systems.cajun.SupervisionStrategy;
+import systems.cajun.handler.Handler;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,12 +51,12 @@ public class WorkflowExample {
     /**
      * Source Actor that initiates the workflow
      */
-    public static class SourceActor extends Actor<WorkflowMessage> {
+    public static class SourceActor implements Handler<WorkflowMessage> {
         private Pid firstProcessor;
+        private final String actorId;
         
-        public SourceActor(ActorSystem system, String actorId) {
-            super(system, actorId);
-            withSupervisionStrategy(SupervisionStrategy.RESTART);
+        public SourceActor(String actorId) {
+            this.actorId = actorId;
         }
         
         public void setFirstProcessor(Pid firstProcessor) {
@@ -62,40 +64,39 @@ public class WorkflowExample {
         }
         
         @Override
-        protected void receive(WorkflowMessage message) {
-            switch (message) {
-                case WorkflowMessage.StartWorkflow startMsg -> {
-                    System.out.println("Source: Starting workflow " + startMsg.workflowId());
-                    // Forward to first processor
-                    firstProcessor.tell(new WorkflowMessage.ProcessData(
-                        startMsg.workflowId(), 
-                        startMsg.data(),
-                        1
-                    ));
-                }
-                default -> System.out.println("Source: Unexpected message type: " + message);
+        public void receive(WorkflowMessage message, ActorContext context) {
+            if (message instanceof WorkflowMessage.StartWorkflow startMsg) {
+                System.out.println("Source: Starting workflow " + startMsg.workflowId());
+                // Forward to first processor
+                firstProcessor.tell(new WorkflowMessage.ProcessData(
+                    startMsg.workflowId(), 
+                    startMsg.data(),
+                    1
+                ));
+            } else {
+                System.out.println("Source: Unexpected message type: " + message);
             }
         }
         
         @Override
-        protected void preStart() {
-            System.out.println("Source actor started: " + getActorId());
+        public void preStart(ActorContext context) {
+            System.out.println("Source actor started: " + actorId);
         }
     }
     
     /**
      * Processor Actor that performs a step in the workflow
      */
-    public static class ProcessorActor extends Actor<WorkflowMessage> {
+    public static class ProcessorActor implements Handler<WorkflowMessage> {
         private final int processorNumber;
         private Pid nextPid; // Next processor or sink
+        private final String actorId;
         
-        public ProcessorActor(ActorSystem system, String actorId) {
-            super(system, actorId);
+        public ProcessorActor(String actorId) {
+            this.actorId = actorId;
             // Extract processor number from the actor ID
             String[] parts = actorId.split("-");
             this.processorNumber = Integer.parseInt(parts[1]);
-            withSupervisionStrategy(SupervisionStrategy.RESUME);
         }
         
         public void setNextProcessor(Pid nextPid) {
@@ -103,83 +104,76 @@ public class WorkflowExample {
         }
         
         @Override
-        protected void receive(WorkflowMessage message) {
-            switch (message) {
-                case WorkflowMessage.ProcessData processMsg -> {
-                    // Check if this is the right step for this processor
-                    if (processMsg.step() == processorNumber) {
-                        System.out.println("Processor " + processorNumber + 
-                                          ": Processing workflow " + processMsg.workflowId());
-                        
-                        // Simulate processing by transforming the data
-                        String processedData = processData(processMsg.data());
-                        
-                        // Forward to next processor or sink
-                        nextPid.tell(new WorkflowMessage.ProcessData(
-                            processMsg.workflowId(),
-                            processedData,
-                            processMsg.step() + 1
-                        ));
-                    } else {
-                        System.out.println("Processor " + processorNumber + 
-                                          ": Skipping message for step " + processMsg.step());
-                    }
+        public void receive(WorkflowMessage message, ActorContext context) {
+            if (message instanceof WorkflowMessage.ProcessData processMsg) {
+                // Check if this is the right step for this processor
+                if (processMsg.step() == processorNumber) {
+                    System.out.println("Processor " + processorNumber + 
+                                      ": Processing workflow " + processMsg.workflowId());
+                    
+                    // Process the data (in a real application, this would do actual work)
+                    String processedData = processData(processMsg.data());
+                    
+                    // Forward to next processor or sink
+                    nextPid.tell(new WorkflowMessage.ProcessData(
+                        processMsg.workflowId(),
+                        processedData,
+                        processMsg.step() + 1
+                    ));
+                } else {
+                    System.out.println("Processor " + processorNumber + 
+                                      ": Skipping message for step " + processMsg.step());
                 }
-                default -> System.out.println("Processor " + processorNumber + 
-                                             ": Unexpected message type: " + message);
+            } else {
+                System.out.println("Processor " + processorNumber + 
+                                  ": Unexpected message type: " + message);
             }
         }
         
         private String processData(String data) {
-            // Simulate processing by appending processor number
+            // Simulate processing by adding a processor-specific suffix
             return data + "-P" + processorNumber;
         }
         
         @Override
-        protected void preStart() {
-            System.out.println("Processor " + processorNumber + " started: " + getActorId());
+        public void preStart(ActorContext context) {
+            System.out.println("Processor actor started: " + actorId);
         }
         
-        @Override
-        protected boolean onError(WorkflowMessage message, Throwable exception) {
-            System.out.println("Processor " + processorNumber + " error: " + exception.getMessage());
-            // Return true to reprocess the message after recovery
-            return true;
+        // Error handling method - not required by the Handler interface
+        public void handleError(Throwable exception) {
+            System.err.println("Error in processor " + processorNumber + ": " + exception.getMessage());
+            // In a real application, you might implement more sophisticated error handling
         }
     }
     
     /**
      * Sink Actor that receives the final result
      */
-    public static class SinkActor extends Actor<WorkflowMessage> {
+    public static class SinkActor implements Handler<WorkflowMessage> {
+        private final String actorId;
         
-        public SinkActor(ActorSystem system, String actorId) {
-            super(system, actorId);
-            withSupervisionStrategy(SupervisionStrategy.ESCALATE);
+        public SinkActor(String actorId) {
+            this.actorId = actorId;
         }
         
         @Override
-        protected void receive(WorkflowMessage message) {
-            switch (message) {
-                case WorkflowMessage.ProcessData processMsg -> {
-                    System.out.println("Sink: Received final result for workflow " + 
-                                      processMsg.workflowId() + ": " + processMsg.data());
-                    
-                    // Store the result
-                    synchronized (results) {
-                        results.add(processMsg.data());
-                    }
-                    
-                    // Signal workflow completion
-                    completionLatch.countDown();
-                }
-                default -> System.out.println("Sink: Unexpected message type: " + message);
+        public void receive(WorkflowMessage message, ActorContext context) {
+            if (message instanceof WorkflowMessage.ProcessData processMsg) {
+                System.out.println("Sink: Received final result for workflow " + 
+                                   processMsg.workflowId() + ": " + processMsg.data());
+                
+                // Store result and signal completion
+                results.add(processMsg.data());
+                completionLatch.countDown();
+            } else {
+                System.out.println("Sink: Unexpected message type: " + message);
             }
         }
         
         @Override
-        protected void preStart() {
-            System.out.println("Sink actor started: " + getActorId());
+        public void preStart(ActorContext context) {
+            System.out.println("Sink actor started: " + actorId);
         }
     }
     
@@ -187,33 +181,92 @@ public class WorkflowExample {
      * Creates a workflow with the specified number of processors
      */
     private static void setupWorkflow(ActorSystem system, int processorCount) {
-        // Create sink actor first
-        Pid sinkPid = system.register(SinkActor.class, "sink");
+        // Create sink actor using the new interface-based approach
+        SinkActor sink = new SinkActor("sink");
+        Pid sinkPid = system.actorOf(sink)
+            .withSupervisionStrategy(SupervisionStrategy.ESCALATE)
+            .withId("sink")
+            .spawn();
+        
+        System.out.println("Sink actor started: sink");
+        
+
         
         // Create processors in reverse order (last to first)
         Pid[] processorPids = new Pid[processorCount];
+        Pid nextPid = sinkPid;
+        
         for (int i = processorCount; i >= 1; i--) {
+            final int processorNumber = i;
+            final Pid nextProcessor = nextPid;
+            
             String processorId = "processor-" + i;
-            processorPids[i-1] = system.register(ProcessorActor.class, processorId);
+            
+            processorPids[i-1] = system.actorOf(new Handler<WorkflowMessage>() {
+                @Override
+                public void receive(WorkflowMessage message, ActorContext context) {
+                    if (message instanceof WorkflowMessage.ProcessData processMsg) {
+                        // Check if this is the right step for this processor
+                        if (processMsg.step() == processorNumber) {
+                            System.out.println("Processor " + processorNumber + 
+                                              ": Processing workflow " + processMsg.workflowId());
+
+                            // Process the data (in a real application, this would do actual work)
+                            String processedData = processMsg.data() + "-P" + processorNumber;
+
+                            // Forward to next processor or sink
+                            nextProcessor.tell(new WorkflowMessage.ProcessData(
+                                processMsg.workflowId(),
+                                processedData,
+                                processMsg.step() + 1
+                            ));
+                        } else {
+                            System.out.println("Processor " + processorNumber + 
+                                              ": Skipping message for step " + processMsg.step());
+                        }
+                    } else {
+                        System.out.println("Processor " + processorNumber + 
+                                          ": Unexpected message type: " + message);
+                    }
+                }
+            })
+            .withSupervisionStrategy(SupervisionStrategy.RESUME)
+            .withId(processorId)
+            .spawn();
+            
+            System.out.println("Processor actor started: " + processorId);
+            
+            // Update nextPid for the next iteration
+            nextPid = processorPids[i-1];
         }
         
-        // Create source actor
-        Pid sourcePid = system.register(SourceActor.class, "source");
+        // Create source actor using the new interface-based approach
+        final Pid firstProcessorPid = processorPids[0];
+        system.actorOf(new Handler<WorkflowMessage>() {
+            @Override
+            public void receive(WorkflowMessage message, ActorContext context) {
+                if (message instanceof WorkflowMessage.StartWorkflow startMsg) {
+                    System.out.println("Source: Starting workflow " + startMsg.workflowId());
+                    
+                    // Forward to first processor
+                    firstProcessorPid.tell(new WorkflowMessage.ProcessData(
+                        startMsg.workflowId(),
+                        startMsg.data(),
+                        1
+                    ));
+                } else {
+                    System.out.println("Source: Unexpected message type: " + message);
+                }
+            }
+        })
+        .withSupervisionStrategy(SupervisionStrategy.RESTART)
+        .withId("source")
+        .spawn();
         
-        // Connect the actors
-        // Set the next processor for each processor
-        for (int i = 0; i < processorCount - 1; i++) {
-            ProcessorActor processor = (ProcessorActor) system.getActor(processorPids[i]);
-            processor.setNextProcessor(processorPids[i+1]);
-        }
+        System.out.println("Source actor started: source");
         
-        // Set the sink as the next for the last processor
-        ProcessorActor lastProcessor = (ProcessorActor) system.getActor(processorPids[processorCount-1]);
-        lastProcessor.setNextProcessor(sinkPid);
-        
-        // Set the first processor for the source
-        SourceActor source = (SourceActor) system.getActor(sourcePid);
-        source.setFirstProcessor(processorPids[0]);
+        // No need to connect actors manually as we've already set up the connections
+        // when creating the actors with the new interface-based approach
     }
     
     /**

@@ -41,9 +41,9 @@ public abstract class Actor<Message> {
     private SupervisionStrategy supervisionStrategy = SupervisionStrategy.RESUME;
     private Actor<?> parent;
     private final Map<String, Actor<?>> children = new ConcurrentHashMap<>();
+    // Timeout in seconds for actor shutdown
     private int shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
     private final MailboxProcessor<Message> mailboxProcessor;
-
 
     // Backpressure support
     private boolean backpressureEnabled = false;
@@ -54,7 +54,6 @@ public abstract class Actor<Message> {
     private CustomBackpressureHandler<Message> customBackpressureHandler;
 
     // For tracking metrics
-    private final AtomicLong messagesProcessed = new AtomicLong(0);
     private final AtomicLong messagesProcessedSinceLastRateCalculation = new AtomicLong(0);
     private final AtomicLong lastMetricsUpdateTime = new AtomicLong(System.currentTimeMillis());
     private static final int METRICS_UPDATE_INTERVAL_MS = 1000; // Update metrics once per second
@@ -119,6 +118,13 @@ public abstract class Actor<Message> {
         return capacity > 0 ? (float) currentSize / capacity : 0;
     }
 
+    /**
+     * Creates a new Actor with the specified system and an auto-generated ID.
+     * 
+     * @param system The actor system
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
+     */
+    @Deprecated
     public Actor(ActorSystem system) {
         this(system, generateDefaultActorId());
     }
@@ -129,9 +135,11 @@ public abstract class Actor<Message> {
      *
      * @param system  The actor system
      * @param actorId The actor ID
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
+    @Deprecated
     public Actor(ActorSystem system, String actorId) {
-        this(system, actorId, null, new ResizableMailboxConfig());
+        this(system, actorId, null, null);
     }
 
     /**
@@ -141,11 +149,22 @@ public abstract class Actor<Message> {
      * @param system             The actor system
      * @param actorId            The actor ID
      * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
+    @Deprecated
     public Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig) {
-        this(system, actorId, backpressureConfig, new ResizableMailboxConfig());
+        this(system, actorId, backpressureConfig, null);
     }
 
+    /**
+     * Creates a new Actor with the specified system, ID, and mailbox configuration.
+     *
+     * @param system       The actor system
+     * @param actorId      The actor ID
+     * @param mailboxConfig The mailbox configuration
+     * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
+     */
+    @Deprecated
     public Actor(ActorSystem system, String actorId, ResizableMailboxConfig mailboxConfig) {
         this(system, actorId, null, mailboxConfig);
     }
@@ -158,7 +177,7 @@ public abstract class Actor<Message> {
      * @param backpressureConfig The backpressure configuration, or null to disable backpressure
      * @param mailboxConfig      The mailbox configuration
      */
-    public Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
+    protected Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
         this.system = system;
         this.actorId = actorId == null ? generateDefaultActorId() : actorId;
         this.pid = new Pid(this.actorId, system);
@@ -184,7 +203,7 @@ public abstract class Actor<Message> {
             this.shutdownTimeoutSeconds = system.getThreadPoolFactory().getActorShutdownTimeoutSeconds();
             configuredBatchSize = system.getThreadPoolFactory().getActorBatchSize();
         } else {
-            this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
+            this.shutdownTimeoutSeconds = 5;
         }
         this.mailboxProcessor = new MailboxProcessor<>(
                 actorId,
@@ -507,16 +526,6 @@ public abstract class Actor<Message> {
     }
 
     /**
-     * Initialize the backpressure system with the provided configuration.
-     *
-     * @param backpressureConfig The backpressure configuration to use
-     * @param maxCapacity        The maximum capacity of the mailbox
-     */
-    private void initializeBackpressure(BackpressureConfig backpressureConfig, int maxCapacity) {
-        initializeBackpressure(backpressureConfig, null, maxCapacity);
-    }
-
-    /**
      * Initialize the backpressure system with the provided configuration and callback.
      *
      * @param backpressureConfig The backpressure configuration to use
@@ -525,7 +534,7 @@ public abstract class Actor<Message> {
     public void initializeBackpressure(BackpressureConfig backpressureConfig, Consumer<BackpressureEvent> callback) {
         initializeBackpressure(backpressureConfig, callback, backpressureConfig != null ? backpressureConfig.getMaxCapacity() : Integer.MAX_VALUE);
     }
-
+    
     /**
      * Initialize the backpressure system with the provided configuration, callback, and capacity.
      *
@@ -548,7 +557,11 @@ public abstract class Actor<Message> {
         this.warningThreshold = backpressureConfig.getWarningThreshold();
         this.recoveryThreshold = backpressureConfig.getRecoveryThreshold();
         this.backpressureStrategy = backpressureConfig.getStrategy();
-        this.customBackpressureHandler = (CustomBackpressureHandler<Message>) backpressureConfig.getCustomHandler();
+        if (backpressureConfig.getCustomHandler() != null) {
+            @SuppressWarnings("unchecked")
+            CustomBackpressureHandler<Message> handler = (CustomBackpressureHandler<Message>) backpressureConfig.getCustomHandler();
+            this.customBackpressureHandler = handler;
+        }
         this.backpressureEnabled = backpressureConfig.isEnabled();
         this.maxCapacity = maxCapacity;
 

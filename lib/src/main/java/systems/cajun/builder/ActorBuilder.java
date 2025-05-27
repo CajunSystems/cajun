@@ -3,6 +3,7 @@ package systems.cajun.builder;
 import systems.cajun.Actor;
 import systems.cajun.ActorSystem;
 import systems.cajun.Pid;
+import systems.cajun.SupervisionStrategy;
 import systems.cajun.config.BackpressureConfig;
 import systems.cajun.config.ResizableMailboxConfig;
 import systems.cajun.handler.Handler;
@@ -23,6 +24,7 @@ public class ActorBuilder<Message> {
     private BackpressureConfig backpressureConfig;
     private ResizableMailboxConfig mailboxConfig;
     private Actor<?> parent;
+    private SupervisionStrategy supervisionStrategy;
     
     /**
      * Creates a new ActorBuilder with the specified system and handler.
@@ -82,6 +84,17 @@ public class ActorBuilder<Message> {
     }
     
     /**
+     * Sets the supervision strategy for the actor.
+     * 
+     * @param supervisionStrategy The supervision strategy to use
+     * @return This builder for method chaining
+     */
+    public ActorBuilder<Message> withSupervisionStrategy(SupervisionStrategy supervisionStrategy) {
+        this.supervisionStrategy = supervisionStrategy;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
@@ -93,6 +106,10 @@ public class ActorBuilder<Message> {
                 handler, 
                 backpressureConfig, 
                 mailboxConfig);
+        
+        if (supervisionStrategy != null) {
+            actor.withSupervisionStrategy(supervisionStrategy);
+        }
         
         if (parent != null) {
             parent.addChild(actor);
