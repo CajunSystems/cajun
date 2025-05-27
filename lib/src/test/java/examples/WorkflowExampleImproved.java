@@ -1,11 +1,12 @@
 package examples;
 
-
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.handler.Handler;
+import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.backpressure.BackpressureStrategy;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,7 +62,7 @@ public class WorkflowExampleImproved {
         @Override
         public void receive(WorkflowMessage message, ActorContext context) {
             if (message instanceof WorkflowMessage.StartWorkflow startMsg) {
-                System.out.println(STR."Source: Starting workflow \{startMsg.workflowId()}");
+                System.out.println("Source: Starting workflow " + startMsg.workflowId());
                 // In the new interface-based approach, we'll use the first processor directly
                 // This will be set up in the setupWorkflow method
             } else {
@@ -160,6 +161,20 @@ public class WorkflowExampleImproved {
      * Creates a workflow with the specified number of processors using the improved API
      */
     private static void setupWorkflow(ActorSystem system, int processorCount) {
+        // Create a shared backpressure configuration for all actors
+        BackpressureConfig backpressureConfig = new BackpressureConfig.Builder()
+                .warningThreshold(0.8f)
+                .criticalThreshold(0.9f)
+                .recoveryThreshold(0.2f)
+                .strategy(BackpressureStrategy.BLOCK)
+                .maxCapacity(1000)
+                .build();
+                
+        System.out.println("Created backpressure configuration: warning=" + 
+                backpressureConfig.getWarningThreshold() + ", critical=" + 
+                backpressureConfig.getCriticalThreshold() + ", recovery=" + 
+                backpressureConfig.getRecoveryThreshold());
+                
         // Create sink actor using the new interface-based approach
         Pid sinkPid = system.actorOf(new Handler<WorkflowMessage>() {
             @Override
@@ -183,6 +198,7 @@ public class WorkflowExampleImproved {
         })
         .withSupervisionStrategy(SupervisionStrategy.ESCALATE)
         .withId("sink")
+        .withBackpressureConfig(backpressureConfig)
         .spawn();
         
         // Create processors in reverse order (last to first)
@@ -229,6 +245,7 @@ public class WorkflowExampleImproved {
             })
             .withSupervisionStrategy(SupervisionStrategy.RESUME)
             .withId(processorId)
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
             
             // Update nextPid for the next iteration
@@ -261,6 +278,7 @@ public class WorkflowExampleImproved {
         })
         .withSupervisionStrategy(SupervisionStrategy.RESTART)
         .withId("source")
+        .withBackpressureConfig(backpressureConfig)
         .spawn();
     }
     

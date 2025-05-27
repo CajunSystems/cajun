@@ -16,9 +16,10 @@ import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.runtime.persistence.PersistenceFactory;
+import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.backpressure.BackpressureStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 
 /**
  * Example demonstrating the use of stateful actors with the interface-based approach.
@@ -52,17 +53,31 @@ public class StatefulActorExample {
         // Create an actor system
         ActorSystem system = new ActorSystem();
 
+        // Create backpressure configuration
+        BackpressureConfig backpressureConfig = new BackpressureConfig.Builder()
+                .warningThreshold(0.8f)
+                .criticalThreshold(0.9f)
+                .recoveryThreshold(0.2f)
+                .strategy(BackpressureStrategy.BLOCK)
+                .maxCapacity(1000)
+                .build();
+                
+        logger.info("Created backpressure configuration: warning={}, critical={}, recovery={}",
+                backpressureConfig.getWarningThreshold(),
+                backpressureConfig.getCriticalThreshold(),
+                backpressureConfig.getRecoveryThreshold());
+
         // Example 1: Simple counter actor with in-memory persistence
-        simpleCounterExample(system);
+        simpleCounterExample(system, backpressureConfig);
 
         // Example 2: Counter actor with file-based persistence
-        fileBasedCounterExample(system, tempDir.toString());
+        fileBasedCounterExample(system, tempDir.toString(), backpressureConfig);
 
         // Example 3: Chain of stateful actors
-        statefulActorChainExample(system);
+        statefulActorChainExample(system, backpressureConfig);
         
         // Example 4: Error handling demonstration
-        errorHandlingExample(system);
+        errorHandlingExample(system, backpressureConfig);
         
         // Shutdown the actor system
         system.shutdown();
@@ -82,12 +97,13 @@ public class StatefulActorExample {
     /**
      * Example of a simple counter actor with in-memory persistence.
      */
-    private static void simpleCounterExample(ActorSystem system) throws Exception {
+    private static void simpleCounterExample(ActorSystem system, BackpressureConfig backpressureConfig) throws Exception {
         logger.info("Starting simple counter example with in-memory persistence");
 
         // Create a counter actor with default persistence using the interface-based approach
         Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
             .withId("counter-1")
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
         
         logger.info("Counter actor created and started");
@@ -133,7 +149,7 @@ public class StatefulActorExample {
     /**
      * Example of a counter actor with file-based persistence.
      */
-    private static void fileBasedCounterExample(ActorSystem system, String persistenceDir) throws Exception {
+    private static void fileBasedCounterExample(ActorSystem system, String persistenceDir, BackpressureConfig backpressureConfig) throws Exception {
         logger.info("Starting file-based counter example");
         
         // Create a file-based message journal and snapshot store
@@ -146,6 +162,7 @@ public class StatefulActorExample {
         Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
             .withId("file-counter")
             .withPersistence(messageJournal, snapshotStore)
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
             
         logger.info("File-based counter actor created and started");
@@ -173,6 +190,7 @@ public class StatefulActorExample {
         Pid recoveredCounterPid = system.statefulActorOf(CounterHandler.class, 0)
             .withId("file-counter")
             .withPersistence(messageJournal, snapshotStore)
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
             
         logger.info("Recovered counter actor created and started");
@@ -192,7 +210,7 @@ public class StatefulActorExample {
     /**
      * Example of a chain of stateful actors.
      */
-    private static void statefulActorChainExample(ActorSystem system) throws Exception {
+    private static void statefulActorChainExample(ActorSystem system, BackpressureConfig backpressureConfig) throws Exception {
         logger.info("Starting stateful actor chain example");
         
         // Create three different handlers for the chain
@@ -203,14 +221,17 @@ public class StatefulActorExample {
         // Create three actors with the handlers
         Pid actor1Pid = system.statefulActorOf(handler1, 0)
             .withId("counter-chain-1")
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
             
         Pid actor2Pid = system.statefulActorOf(handler2, 0)
             .withId("counter-chain-2")
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
             
         Pid actor3Pid = system.statefulActorOf(handler3, 0)
             .withId("counter-chain-3")
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
         
         // Connect the actors in a chain by setting up message forwarding
@@ -236,6 +257,60 @@ public class StatefulActorExample {
         
         latch.await(1, TimeUnit.SECONDS);
         logger.info("Final count from chain: {}", result.get());
+    }
+
+    /**
+     * Example demonstrating error handling in stateful actors.
+     */
+    private static void errorHandlingExample(ActorSystem system, BackpressureConfig backpressureConfig) throws Exception {
+        logger.info("Starting error handling example");
+        
+        // Create a counter actor with error handling strategy
+        Pid counterPid = system.statefulActorOf(ErrorProneCounterHandler.class, 0)
+            .withId("error-counter")
+            .withSupervisionStrategy(SupervisionStrategy.RESUME)
+            .withBackpressureConfig(backpressureConfig)
+            .spawn();
+        
+        logger.info("Counter actor created and started");
+        
+        // Increment the counter
+        counterPid.tell(new CounterMessage.Increment(5));
+        Thread.sleep(100);
+        
+        // Get the current count
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger result = new AtomicInteger();
+        counterPid.tell(new CounterMessage.GetCount(count -> {
+            result.set(count);
+            latch.countDown();
+        }));
+        
+        // Wait for the response
+        latch.await(1, TimeUnit.SECONDS);
+        logger.info("Counter value before error: {}", result.get());
+        
+        // Send a message that will cause an error
+        logger.info("Sending message that will cause an error");
+        counterPid.tell(new CounterMessage.ThrowError());
+        
+        // Wait for error handling to complete
+        Thread.sleep(500);
+        
+        // Verify the actor is still responsive after error
+        CountDownLatch latch2 = new CountDownLatch(1);
+        AtomicInteger result2 = new AtomicInteger();
+        counterPid.tell(new CounterMessage.GetCount(count -> {
+            result2.set(count);
+            latch2.countDown();
+        }));
+        
+        // Wait for the response
+        latch2.await(1, TimeUnit.SECONDS);
+        logger.info("Counter value after error: {}", result2.get());
+        
+        // Shutdown the actor
+        system.shutdown(counterPid.actorId());
     }
 
     /**
@@ -430,55 +505,50 @@ public class StatefulActorExample {
     }
     
     /**
-     * Example demonstrating error handling in stateful actors.
+     * A counter handler that intentionally throws an error for testing error handling.
      */
-    private static void errorHandlingExample(ActorSystem system) throws Exception {
-        logger.info("Starting error handling example");
+    public static class ErrorProneCounterHandler implements StatefulHandler<Integer, CounterMessage> {
+        private static final Logger logger = LoggerFactory.getLogger(ErrorProneCounterHandler.class);
         
-        // Create a counter actor with error handling strategy
-        Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
-            .withId("error-counter")
-            .withSupervisionStrategy(SupervisionStrategy.RESTART)
-            .spawn();
+        @Override
+        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+            // Handle null state (could happen during recovery)
+            if (state == null) {
+                state = 0;
+            }
+            
+            try {
+                if (message instanceof CounterMessage.Increment increment) {
+                    return state + increment.amount();
+                } else if (message instanceof CounterMessage.Reset) {
+                    return 0;
+                } else if (message instanceof CounterMessage.GetCount getCount) {
+                    getCount.callback().accept(state);
+                } else if (message instanceof CounterMessage.ThrowError) {
+                    throw new RuntimeException("Intentional error for demonstration");
+                }
+                return state;
+            } catch (Exception e) {
+                // This will be caught by the actor framework and passed to onError
+                throw e;
+            }
+        }
         
-        logger.info("Counter actor created and started");
+        @Override
+        public Integer preStart(Integer state, ActorContext context) {
+            logger.debug("ErrorProneCounterHandler for actor {} starting", context.getActorId());
+            return state;
+        }
         
-        // Increment the counter
-        counterPid.tell(new CounterMessage.Increment(5));
-        Thread.sleep(100);
+        @Override
+        public void postStop(Integer state, ActorContext context) {
+            logger.debug("ErrorProneCounterHandler for actor {} stopping", context.getActorId());
+        }
         
-        // Get the current count
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger result = new AtomicInteger();
-        counterPid.tell(new CounterMessage.GetCount(count -> {
-            result.set(count);
-            latch.countDown();
-        }));
-        
-        // Wait for the response
-        latch.await(1, TimeUnit.SECONDS);
-        logger.info("Counter value before error: {}", result.get());
-        
-        // Send a message that will cause an error
-        logger.info("Sending message that will cause an error");
-        counterPid.tell(new CounterMessage.ThrowError());
-        
-        // Wait for error handling to complete
-        Thread.sleep(500);
-        
-        // Verify the actor is still responsive after error
-        CountDownLatch latch2 = new CountDownLatch(1);
-        AtomicInteger result2 = new AtomicInteger();
-        counterPid.tell(new CounterMessage.GetCount(count -> {
-            result2.set(count);
-            latch2.countDown();
-        }));
-        
-        // Wait for the response
-        latch2.await(1, TimeUnit.SECONDS);
-        logger.info("Counter value after error: {}", result2.get());
-        
-        // Shutdown the actor
-        system.shutdown(counterPid.actorId());
+        @Override
+        public boolean onError(CounterMessage message, Integer state, Throwable exception, ActorContext context) {
+            logger.error("Error in ErrorProneCounterHandler for actor {}: {}", context.getActorId(), exception.getMessage());
+            return false; // Let the supervision strategy handle it
+        }
     }
 }

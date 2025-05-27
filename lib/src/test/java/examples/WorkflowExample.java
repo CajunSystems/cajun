@@ -1,8 +1,9 @@
 package examples;
 
-
 import com.cajunsystems.*;
 import com.cajunsystems.handler.Handler;
+import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.backpressure.BackpressureStrategy;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -105,8 +106,9 @@ public class WorkflowExample {
             if (message instanceof WorkflowMessage.ProcessData processMsg) {
                 // Check if this is the right step for this processor
                 if (processMsg.step() == processorNumber) {
-                    System.out.println(STR."Processor \{processorNumber}: Processing workflow \{processMsg.workflowId()}");
-                    
+                    System.out.println("Processor " + processorNumber + 
+                                      ": Processing workflow " + processMsg.workflowId());
+
                     // Process the data (in a real application, this would do actual work)
                     String processedData = processData(processMsg.data());
                     
@@ -117,7 +119,8 @@ public class WorkflowExample {
                         processMsg.step() + 1
                     ));
                 } else {
-                    System.out.println(STR."Processor \{processorNumber}: Skipping message for step \{processMsg.step()}");
+                    System.out.println("Processor " + processorNumber + 
+                                      ": Skipping message for step " + processMsg.step());
                 }
             } else {
                 System.out.println("Processor " + processorNumber + 
@@ -176,11 +179,26 @@ public class WorkflowExample {
      * Creates a workflow with the specified number of processors
      */
     private static void setupWorkflow(ActorSystem system, int processorCount) {
+        // Create a shared backpressure configuration for all actors
+        BackpressureConfig backpressureConfig = new BackpressureConfig.Builder()
+                .warningThreshold(0.8f)
+                .criticalThreshold(0.9f)
+                .recoveryThreshold(0.2f)
+                .strategy(BackpressureStrategy.BLOCK)
+                .maxCapacity(1000)
+                .build();
+                
+        System.out.println("Created backpressure configuration: warning=" + 
+                backpressureConfig.getWarningThreshold() + ", critical=" + 
+                backpressureConfig.getCriticalThreshold() + ", recovery=" + 
+                backpressureConfig.getRecoveryThreshold());
+                
         // Create sink actor using the new interface-based approach
         SinkActor sink = new SinkActor("sink");
         Pid sinkPid = system.actorOf(sink)
             .withSupervisionStrategy(SupervisionStrategy.ESCALATE)
             .withId("sink")
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
         
         System.out.println("Sink actor started: sink");
@@ -227,6 +245,7 @@ public class WorkflowExample {
             })
             .withSupervisionStrategy(SupervisionStrategy.RESUME)
             .withId(processorId)
+            .withBackpressureConfig(backpressureConfig)
             .spawn();
             
             System.out.println("Processor actor started: " + processorId);
@@ -256,6 +275,7 @@ public class WorkflowExample {
         })
         .withSupervisionStrategy(SupervisionStrategy.RESTART)
         .withId("source")
+        .withBackpressureConfig(backpressureConfig)
         .spawn();
         
         System.out.println("Source actor started: source");
