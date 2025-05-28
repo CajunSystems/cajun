@@ -19,7 +19,7 @@ public class MessageUnwrapper {
     @SuppressWarnings("unchecked")
     public static <T> T unwrap(Object message) {
         if (message instanceof MessageAdapter) {
-            return (T) ((MessageAdapter<?>) message).getOriginalMessage();
+            return (T) ((MessageAdapter<?>) message).originalMessage();
         }
         return (T) message;
     }
@@ -35,7 +35,7 @@ public class MessageUnwrapper {
      */
     public static <T> boolean isMessageOfType(Object message, Class<T> expectedType) {
         if (message instanceof MessageAdapter) {
-            Object originalMessage = ((MessageAdapter<?>) message).getOriginalMessage();
+            Object originalMessage = ((MessageAdapter<?>) message).originalMessage();
             return expectedType.isInstance(originalMessage);
         }
         return expectedType.isInstance(message);
@@ -54,7 +54,7 @@ public class MessageUnwrapper {
     public static <T> T castMessage(Object message, Class<T> expectedType) {
         Object unwrapped = message;
         if (message instanceof MessageAdapter) {
-            unwrapped = ((MessageAdapter<?>) message).getOriginalMessage();
+            unwrapped = ((MessageAdapter<?>) message).originalMessage();
         }
         
         if (expectedType.isInstance(unwrapped)) {

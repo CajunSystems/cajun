@@ -13,7 +13,8 @@ import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.metrics.ActorMetrics;
 import com.cajunsystems.metrics.MetricsRegistry;
 import com.cajunsystems.persistence.*;
-import com.cajunsystems.runtime.persistence.PersistenceFactory;
+import com.cajunsystems.persistence.PersistenceProvider;
+import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,6 +62,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     private boolean stateChanged = false;
     private long lastSnapshotTime = 0;
     private int changesSinceLastSnapshot = 0;
+    private final PersistenceProvider persistenceProvider;
     
     // Metrics for this actor
     private final ActorMetrics metrics;
@@ -92,10 +94,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param initialState The initial state of the actor
      */
     protected StatefulActor(ActorSystem system, State initialState) {
-        this(system, initialState,
-             PersistenceFactory.createBatchedFileMessageJournal(),
-             PersistenceFactory.createFileSnapshotStore(),
-             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
+        this(system, Actor.generateDefaultActorId(), initialState);
     }
     
     /**
@@ -120,8 +119,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     protected StatefulActor(ActorSystem system, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
         super(system, Actor.generateDefaultActorId(), backpressureConfig, mailboxConfig);
         this.initialState = initialState;
-        this.messageJournal = PersistenceFactory.createBatchedFileMessageJournal();
-        this.snapshotStore = PersistenceFactory.createFileSnapshotStore();
+        this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
+        this.messageJournal = this.persistenceProvider.createBatchedMessageJournal(getActorId());
+        this.snapshotStore = this.persistenceProvider.createSnapshotStore(getActorId());
         this.actorId = getActorId();
         this.persistenceExecutor = createPersistenceExecutor(DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
         this.metrics = new ActorMetrics(actorId);
@@ -140,48 +140,6 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         this(system, initialState, backpressureConfig, convertToResizableMailboxConfig(mailboxConfig));
     }
     
-    // This constructor is removed in favor of the ResizableMailboxConfig version
-    
-    // Removed deprecated constructor with boolean flag for backpressure in favor of BackpressureConfig
-    
-    /**
-     * Creates a new StatefulActor with default persistence and custom backpressure settings.
-     *
-     * @param system The actor system
-     * @param initialState The initial state of the actor
-     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
-     * @param initialCapacity Initial capacity of the mailbox when backpressure is enabled
-     * @param maxCapacity Maximum capacity of the mailbox when backpressure is enabled
-     */
-    /* package */ StatefulActor(ActorSystem system, State initialState, BackpressureConfig backpressureConfig, int initialCapacity, int maxCapacity) {
-        // Call super constructor with ResizableMailboxConfig
-        super(system, Actor.generateDefaultActorId(), backpressureConfig, 
-              new ResizableMailboxConfig()
-                  .setInitialCapacity(initialCapacity)
-                  .setMaxCapacity(maxCapacity));
-        
-        this.initialState = initialState;
-        this.messageJournal = PersistenceFactory.createBatchedFileMessageJournal();
-        this.snapshotStore = PersistenceFactory.createFileSnapshotStore();
-        this.actorId = getActorId();
-        this.persistenceExecutor = createPersistenceExecutor(DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
-        this.metrics = new ActorMetrics(actorId);
-    }
-    
-    // Removed deprecated constructor with boolean flag for backpressure and mailbox capacities
-    // Use StatefulActor(ActorSystem, State, BackpressureConfig, int, int) instead
-
-    /**
-     * Creates a new StatefulActor with a custom message journal.
-     *
-     * @param system The actor system
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     */
-    protected StatefulActor(ActorSystem system, State initialState, BatchedMessageJournal<Message> messageJournal) {
-        this(system, initialState, messageJournal, PersistenceFactory.createFileSnapshotStore(), DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
-    }
-
     /**
      * Creates a new StatefulActor with a custom actor ID and default persistence.
      *
@@ -190,12 +148,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param initialState The initial state of the actor
      */
     protected StatefulActor(ActorSystem system, String actorId, State initialState) {
-        this(system, actorId, initialState,
-             PersistenceFactory.createBatchedFileMessageJournal(),
-             PersistenceFactory.createFileSnapshotStore(),
-             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE,
-             null,
-             new ResizableMailboxConfig());
+        this(system, actorId, initialState, null, new ResizableMailboxConfig());
     }
     
     /**
@@ -219,11 +172,12 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param backpressureConfig The backpressure configuration, or null to disable backpressure
      * @param mailboxConfig The mailbox configuration
      */
-    public StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
+    protected StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
         super(system, actorId, backpressureConfig, mailboxConfig);
+        this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         this.initialState = initialState;
-        this.messageJournal = PersistenceFactory.createBatchedFileMessageJournal();
-        this.snapshotStore = PersistenceFactory.createFileSnapshotStore();
+        this.messageJournal = persistenceProvider.createBatchedMessageJournal(actorId);
+        this.snapshotStore = persistenceProvider.createSnapshotStore(actorId);
         this.actorId = actorId;
         this.persistenceExecutor = createPersistenceExecutor(DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
         this.metrics = new ActorMetrics(actorId);
@@ -241,133 +195,6 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      */
     protected StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
         this(system, actorId, initialState, backpressureConfig, convertToResizableMailboxConfig(mailboxConfig));
-    }
-    
-    // Removed deprecated constructor with boolean flag for backpressure
-    // Use StatefulActor(ActorSystem, String, State, BackpressureConfig) instead
-    
-    // Constructor removed due to duplication with the one at line 240
-    
-    /**
-     * Creates a new StatefulActor with a custom actor ID, default persistence, and custom backpressure settings.
-     *
-     * @param system The actor system
-     * @param actorId The actor ID
-     * @param initialState The initial state of the actor
-     * @param enableBackpressure Whether to enable backpressure
-     * @deprecated Use {@link #StatefulActor(ActorSystem, String, State, BackpressureConfig, ResizableMailboxConfig)} instead
-     */
-    // Removed deprecated constructor with boolean flag for backpressure and mailbox capacities
-    // Use StatefulActor(ActorSystem, String, State, BackpressureConfig, ResizableMailboxConfig) instead
-
-    /**
-     * Creates a new StatefulActor with a custom actor ID and message journal.
-     *
-     * @param system The actor system
-     * @param actorId The actor ID
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @deprecated Use {@link #StatefulActor(ActorSystem, String, State, BatchedMessageJournal, SnapshotStore, int, BackpressureConfig, ResizableMailboxConfig)} instead
-     */
-    @Deprecated
-    /* package */ StatefulActor(ActorSystem system, String actorId, State initialState, 
-                         BatchedMessageJournal<Message> messageJournal) {
-        this(system, actorId, initialState, 
-             messageJournal, 
-             PersistenceFactory.createFileSnapshotStore(),
-             DEFAULT_PERSISTENCE_THREAD_POOL_SIZE,
-             null,
-             new ResizableMailboxConfig());
-    }
-    
-    /**
-     * Creates a new StatefulActor with a custom actor ID, message journal, and a regular MailboxConfig.
-     * This constructor is provided for backward compatibility with code that uses MailboxConfig instead of ResizableMailboxConfig.
-     *
-     * @param system The actor system
-     * @param actorId The actor ID
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @param mailboxConfig The mailbox configuration (will be converted to ResizableMailboxConfig)
-     */
-    protected StatefulActor(ActorSystem system, String actorId, State initialState, 
-                         BatchedMessageJournal<Message> messageJournal,
-                         MailboxConfig mailboxConfig) {
-        this(system, actorId, initialState, messageJournal, PersistenceFactory.createFileSnapshotStore(), DEFAULT_PERSISTENCE_THREAD_POOL_SIZE, null, convertToResizableMailboxConfig(mailboxConfig));
-    }
-    
-    /**
-     * Creates a new StatefulActor with full persistence configuration.
-     *
-     * @param system The actor system
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @param snapshotStore The snapshot store to use for state snapshots
-     */
-    protected StatefulActor(ActorSystem system, State initialState, 
-                         BatchedMessageJournal<Message> messageJournal,
-                         SnapshotStore<State> snapshotStore) {
-        this(system, initialState, messageJournal, snapshotStore, DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
-    }
-    
-    /**
-     * Creates a new StatefulActor with full persistence configuration and custom thread pool size.
-     *
-     * @param system The actor system
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @param snapshotStore The snapshot store to use for state snapshots
-     * @param persistenceThreadPoolSize The size of the thread pool for persistence operations
-     */
-    protected StatefulActor(ActorSystem system, State initialState, 
-                         BatchedMessageJournal<Message> messageJournal,
-                         SnapshotStore<State> snapshotStore,
-                         int persistenceThreadPoolSize) {
-        super(system);
-        this.initialState = initialState;
-        this.messageJournal = messageJournal;
-        this.snapshotStore = snapshotStore;
-        this.actorId = getActorId();
-        this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
-        this.metrics = new ActorMetrics(actorId);
-    }
-
-    /**
-     * Creates a new StatefulActor with a custom actor ID and full persistence configuration.
-     *
-     * @param system The actor system
-     * @param actorId The actor ID
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @param snapshotStore The snapshot store to use for state snapshots
-     */
-    protected StatefulActor(ActorSystem system, String actorId, State initialState, 
-                         BatchedMessageJournal<Message> messageJournal,
-                         SnapshotStore<State> snapshotStore) {
-        this(system, actorId, initialState, messageJournal, snapshotStore, DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
-    }
-    
-    /**
-     * Creates a new StatefulActor with a custom actor ID, message journal, snapshot store, and thread pool size.
-     *
-     * @param system The actor system
-     * @param actorId The actor ID
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @param snapshotStore The snapshot store to use for state snapshots
-     * @param persistenceThreadPoolSize The thread pool size for persistence operations
-     */
-    protected StatefulActor(ActorSystem system, String actorId, State initialState, 
-                         BatchedMessageJournal<Message> messageJournal,
-                         SnapshotStore<State> snapshotStore,
-                         int persistenceThreadPoolSize) {
-        super(system, actorId);
-        this.initialState = initialState;
-        this.messageJournal = messageJournal;
-        this.snapshotStore = snapshotStore;
-        this.actorId = actorId;
-        this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
-        this.metrics = new ActorMetrics(actorId);
     }
     
     /**
@@ -408,6 +235,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                          BackpressureConfig backpressureConfig,
                          ResizableMailboxConfig mailboxConfig) {
         super(system, actorId, backpressureConfig, mailboxConfig);
+        this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         this.initialState = initialState;
         this.messageJournal = messageJournal;
         this.snapshotStore = snapshotStore;
@@ -425,7 +253,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param initialState The initial state of the actor
      * @param messageJournal The message journal to use for message persistence
      * @param snapshotStore The snapshot store to use for state snapshots
-     * @param persistenceThreadPoolSize The size of the thread pool for persistence operations
+     * @param persistenceThreadPoolSize The thread pool size for persistence operations
      * @param backpressureConfig The backpressure configuration, or null to disable backpressure
      * @param mailboxConfig The mailbox configuration
      */
@@ -436,6 +264,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                          BackpressureConfig backpressureConfig,
                          ResizableMailboxConfig mailboxConfig) {
         super(system, actorId, backpressureConfig, mailboxConfig);
+        this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         this.initialState = initialState;
         this.messageJournal = messageJournal;
         this.snapshotStore = snapshotStore;
@@ -445,52 +274,25 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     }
     
     /**
-     * Creates a new StatefulActor with a custom actor ID, full persistence configuration, custom thread pool size,
-     * and backpressure support.
+     * Creates a new StatefulActor with a custom actor ID, message journal, and snapshot store.
+     * This constructor is specifically needed by the FunctionalStatefulActor factory method.
      *
      * @param system The actor system
      * @param actorId The actor ID
      * @param initialState The initial state of the actor
      * @param messageJournal The message journal to use for message persistence
-     * @param snapshotStore The snapshot store to use for state snapshots
-     * @param persistenceThreadPoolSize The size of the thread pool for persistence operations
-     * @param enableBackpressure Whether to enable backpressure
-     * @deprecated Use {@link #StatefulActor(ActorSystem, String, State, BatchedMessageJournal, SnapshotStore, int, BackpressureConfig, ResizableMailboxConfig)} instead
+     * @param snapshotStore The snapshot store to use for state persistence
      */
-    @Deprecated
-    /* package */ StatefulActor(ActorSystem system, String actorId, State initialState, 
+    protected StatefulActor(ActorSystem system, String actorId, State initialState, 
                          BatchedMessageJournal<Message> messageJournal,
-                         SnapshotStore<State> snapshotStore,
-                         int persistenceThreadPoolSize,
-                         boolean enableBackpressure) {
-        this(system, actorId, initialState, messageJournal, snapshotStore, persistenceThreadPoolSize, 
-             enableBackpressure ? system.getBackpressureConfig() : null, 
-             new ResizableMailboxConfig());
-    }
-    
-    /**
-     * Creates a new StatefulActor with full configuration, backpressure and mailbox support.
-     *
-     * @param system The actor system
-     * @param initialState The initial state of the actor
-     * @param messageJournal The message journal to use for message persistence
-     * @param snapshotStore The snapshot store to use for state snapshots
-     * @param persistenceThreadPoolSize The size of the thread pool for persistence operations
-     * @param backpressureConfig The backpressure configuration
-     * @param mailboxConfig The mailbox configuration
-     */
-    protected StatefulActor(ActorSystem system, State initialState, 
-                        BatchedMessageJournal<Message> messageJournal,
-                        SnapshotStore<State> snapshotStore,
-                        int persistenceThreadPoolSize,
-                        BackpressureConfig backpressureConfig,
-                        ResizableMailboxConfig mailboxConfig) {
-        super(system, Actor.generateDefaultActorId(), backpressureConfig, mailboxConfig);
+                         SnapshotStore<State> snapshotStore) {
+        super(system, actorId, null, new ResizableMailboxConfig());
+        this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         this.initialState = initialState;
         this.messageJournal = messageJournal;
         this.snapshotStore = snapshotStore;
-        this.actorId = getActorId();
-        this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
+        this.actorId = actorId;
+        this.persistenceExecutor = createPersistenceExecutor(DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
         this.metrics = new ActorMetrics(actorId);
     }
     

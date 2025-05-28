@@ -635,11 +635,23 @@ Cajun provides a `StatefulActor` class that maintains and persists its state. Th
 Stateful actors can persist their state to disk or other storage backends. This allows actors to recover their state after a restart or crash.
 
 ```java
-// Create a stateful actor with an initial state
-StatefulActor<Integer, CounterMessage> counterActor = new CounterActor(system, 0);
+// Define a stateful handler for the counter
+public class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+    @Override
+    public Integer processMessage(Integer count, CounterMessage message) {
+        if (message instanceof IncrementMessage) {
+            return count + 1;
+        } else if (message instanceof GetCountMessage getCountMsg) {
+            // Send the current count back to the sender
+            getCountMsg.getSender().tell(count);
+            return count;
+        }
+        return count;
+    }
+}
 
-// Register the actor with the system
-Pid counterPid = system.register(counterActor);
+// Create a stateful actor with an initial state using the handler pattern
+Pid counterPid = system.statefulActor("counter", 0, new CounterHandler());
 
 // Send messages to the actor
 counterPid.tell(new IncrementMessage());
@@ -655,19 +667,79 @@ Cajun supports message persistence and replay for stateful actors using a Write-
 - **Message Journaling**: All messages are logged to a journal before processing
 - **State Snapshots**: Periodic snapshots of actor state are taken to speed up recovery
 - **Hybrid Recovery**: Uses latest snapshot plus replay of subsequent messages
+- **Pluggable Persistence**: Swap out persistence implementations without changing actor code
+- **Provider Pattern**: Configure system-wide persistence strategy with ease
 
 ```java
-// Configure a stateful actor with custom persistence
-StatefulActor<MyState, MyMessage> actor = new MyStatefulActor(
-    system,
+// Define a stateful handler with custom persistence (legacy approach)
+public class MyStatefulHandler implements StatefulHandler<MyState, MyMessage> {
+    @Override
+    public MyState processMessage(MyState state, MyMessage message) {
+        // Process the message and return the new state
+        return newState;
+    }
+}
+
+// Create the actor using the stateful handler
+Pid actorPid = system.statefulActor(
+    "my-actor",
     initialState,
+    new MyStatefulHandler(),
     PersistenceFactory.createBatchedFileMessageJournal(),
     PersistenceFactory.createFileSnapshotStore()
 );
-
-// Register the actor
-Pid actorPid = system.register(actor);
 ```
+
+#### Persistence Provider Pattern
+
+Cajun now supports a provider pattern for persistence, allowing you to swap out persistence implementations at runtime without changing your actor code:
+
+```java
+// Register a custom persistence provider for the entire actor system
+PersistenceProvider customProvider = new CustomPersistenceProvider();
+ActorSystemPersistenceHelper.setPersistenceProvider(actorSystem, customProvider);
+
+// Or use the fluent API
+ActorSystemPersistenceHelper.persistence(actorSystem)
+    .withPersistenceProvider(customProvider);
+
+// Create stateful actors using the handler pattern with the configured provider
+// No need to specify persistence components explicitly
+public class MyStatefulHandler implements StatefulHandler<MyState, MyMessage> {
+    @Override
+    public MyState processMessage(MyState state, MyMessage message) {
+        // Process the message and return the new state
+        return newState;
+    }
+}
+
+// The system will use the configured persistence provider automatically
+Pid actorPid = system.statefulActor("my-actor", initialState, new MyStatefulHandler());
+```
+
+#### Creating Custom Persistence Providers
+
+Implement the `PersistenceProvider` interface to create custom persistence backends:
+
+```java
+public class CustomPersistenceProvider implements PersistenceProvider {
+    @Override
+    public <M> BatchedMessageJournal<M> createBatchedMessageJournal(String actorId) {
+        // Implement custom message journaling
+        return new CustomBatchedMessageJournal<>(actorId);
+    }
+    
+    @Override
+    public <S> SnapshotStore<S> createSnapshotStore(String actorId) {
+        // Implement custom state snapshot storage
+        return new CustomSnapshotStore<>(actorId);
+    }
+    
+    // Implement other required methods
+}
+```
+
+The actor system uses `FileSystemPersistenceProvider` by default if no custom provider is specified.
 
 ### Stateful Actor Recovery
 

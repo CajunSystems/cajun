@@ -125,7 +125,7 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
             BatchedMessageJournal<M> messageJournal,
             SnapshotStore<S> snapshotStore
     ) {
-        return new StatefulActor<>(system, actorId, initialState, messageJournal, snapshotStore) {
+        return new StatefulActor<S, M>(system, actorId, initialState, messageJournal, snapshotStore) {
             @Override
             protected S processMessage(S state, M message) {
                 return action.apply(state, message);

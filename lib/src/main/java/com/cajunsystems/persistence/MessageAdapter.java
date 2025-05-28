@@ -9,64 +9,56 @@ import java.io.Serializable;
  *
  * @param <T> The type of the original message
  */
-public class MessageAdapter<T extends Serializable> implements OperationAwareMessage {
+public record MessageAdapter<T extends Serializable>(T originalMessage,
+                                                     boolean isReadOnly) implements OperationAwareMessage {
     private static final long serialVersionUID = 1L;
-    
-    private final T originalMessage;
-    private final boolean isReadOnly;
-    
+
     /**
      * Creates a new MessageAdapter wrapping the original message.
      *
      * @param originalMessage The original message to wrap
-     * @param isReadOnly Whether this message is a read-only operation
+     * @param isReadOnly      Whether this message is a read-only operation
      */
-    public MessageAdapter(T originalMessage, boolean isReadOnly) {
-        this.originalMessage = originalMessage;
-        this.isReadOnly = isReadOnly;
+    public MessageAdapter {
     }
-    
+
     /**
      * Gets the original message that was wrapped.
      *
      * @return The original message
      */
-    public T getOriginalMessage() {
+    @Override
+    public T originalMessage() {
         return originalMessage;
     }
-    
-    @Override
-    public boolean isReadOnly() {
-        return isReadOnly;
-    }
-    
+
     /**
      * Creates a read-only message adapter for the given message.
      *
-     * @param <T> The type of the original message
+     * @param <T>     The type of the original message
      * @param message The message to wrap
      * @return A new MessageAdapter instance marked as read-only
      */
     public static <T extends Serializable> MessageAdapter<T> readOnly(T message) {
         return new MessageAdapter<>(message, true);
     }
-    
+
     /**
      * Creates a write operation message adapter for the given message.
      *
-     * @param <T> The type of the original message
+     * @param <T>     The type of the original message
      * @param message The message to wrap
      * @return A new MessageAdapter instance marked as a write operation
      */
     public static <T extends Serializable> MessageAdapter<T> writeOp(T message) {
         return new MessageAdapter<>(message, false);
     }
-    
+
     /**
      * Unwraps the original message if it's a MessageAdapter, otherwise returns the original message.
      * This is useful when you want to get the original message regardless of whether it's wrapped.
      *
-     * @param <T> The expected type of the original message
+     * @param <T>     The expected type of the original message
      * @param message The message that might be wrapped
      * @return The unwrapped message
      * @throws ClassCastException if the message is not of the expected type
@@ -74,11 +66,11 @@ public class MessageAdapter<T extends Serializable> implements OperationAwareMes
     @SuppressWarnings("unchecked")
     public static <T> T unwrap(Object message) {
         if (message instanceof MessageAdapter) {
-            return (T) ((MessageAdapter<?>) message).getOriginalMessage();
+            return (T) ((MessageAdapter<?>) message).originalMessage();
         }
         return (T) message;
     }
-    
+
     @Override
     public String toString() {
         return "MessageAdapter[" + originalMessage + ", readOnly=" + isReadOnly + "]";
