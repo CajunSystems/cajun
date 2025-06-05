@@ -6,6 +6,7 @@ import com.cajunsystems.Pid;
 import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
 import com.cajunsystems.persistence.BatchedMessageJournal;
@@ -32,6 +33,7 @@ public class StatefulActorBuilder<State, Message> {
     private SnapshotStore<State> snapshotStore;
     private boolean customPersistence = false;
     private SupervisionStrategy supervisionStrategy;
+    private ThreadPoolFactory threadPoolFactory;
     
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -120,6 +122,18 @@ public class StatefulActorBuilder<State, Message> {
     }
     
     /**
+     * Sets the thread pool factory for the actor.
+     * If not specified, the actor will use the default virtual thread-based implementation.
+     * 
+     * @param threadPoolFactory The thread pool factory to use
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withThreadPoolFactory(ThreadPoolFactory threadPoolFactory) {
+        this.threadPoolFactory = threadPoolFactory;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
@@ -136,7 +150,8 @@ public class StatefulActorBuilder<State, Message> {
                     messageJournal,
                     snapshotStore,
                     backpressureConfig,
-                    mailboxConfig);
+                    mailboxConfig,
+                    threadPoolFactory);
         } else {
             actor = new StatefulHandlerActor<>(
                     system,
@@ -144,7 +159,8 @@ public class StatefulActorBuilder<State, Message> {
                     handler,
                     initialState,
                     backpressureConfig,
-                    mailboxConfig);
+                    mailboxConfig,
+                    threadPoolFactory);
         }
         
         if (parent != null) {

@@ -170,6 +170,16 @@ public class ThreadPoolFactory {
     }
 
     /**
+     * Creates a thread factory for the current configuration.
+     *
+     * @param prefix The prefix for thread names
+     * @return A thread factory that creates threads according to this factory's configuration
+     */
+    public ThreadFactory createThreadFactory(String prefix) {
+        return createNamedThreadFactory(prefix);
+    }
+    
+    /**
      * Creates a named thread factory for better thread identification in logs and profilers.
      *
      * @param prefix The prefix for thread names

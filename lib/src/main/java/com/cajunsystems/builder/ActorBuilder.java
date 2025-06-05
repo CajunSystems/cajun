@@ -7,6 +7,7 @@ import com.cajunsystems.Pid;
 import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.internal.HandlerActor;
 
@@ -26,6 +27,7 @@ public class ActorBuilder<Message> {
     private ResizableMailboxConfig mailboxConfig;
     private Actor<?> parent;
     private SupervisionStrategy supervisionStrategy;
+    private ThreadPoolFactory threadPoolFactory;
     
     /**
      * Creates a new ActorBuilder with the specified system and handler.
@@ -96,6 +98,18 @@ public class ActorBuilder<Message> {
     }
     
     /**
+     * Sets the thread pool factory for the actor.
+     * If not specified, the actor will use the default virtual thread-based implementation.
+     * 
+     * @param threadPoolFactory The thread pool factory to use
+     * @return This builder for method chaining
+     */
+    public ActorBuilder<Message> withThreadPoolFactory(ThreadPoolFactory threadPoolFactory) {
+        this.threadPoolFactory = threadPoolFactory;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
@@ -106,7 +120,8 @@ public class ActorBuilder<Message> {
                 id, 
                 handler, 
                 backpressureConfig, 
-                mailboxConfig);
+                mailboxConfig,
+                threadPoolFactory);
         
         if (supervisionStrategy != null) {
             actor.withSupervisionStrategy(supervisionStrategy);

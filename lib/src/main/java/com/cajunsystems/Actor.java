@@ -4,6 +4,7 @@ import com.cajunsystems.backpressure.*;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -177,6 +178,19 @@ public abstract class Actor<Message> {
      * @param mailboxConfig      The mailbox configuration
      */
     protected Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
+        this(system, actorId, backpressureConfig, mailboxConfig, null);
+    }
+    
+    /**
+     * Creates a new Actor with the specified system, ID, backpressure configuration, mailbox configuration, and thread pool factory.
+     *
+     * @param system             The actor system
+     * @param actorId            The actor ID
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig      The mailbox configuration
+     * @param threadPoolFactory  The thread pool factory, or null to use default
+     */
+    protected Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig, ThreadPoolFactory threadPoolFactory) {
         this.system = system;
         this.actorId = actorId == null ? generateDefaultActorId() : actorId;
         this.pid = new Pid(this.actorId, system);
@@ -204,6 +218,9 @@ public abstract class Actor<Message> {
         } else {
             this.shutdownTimeoutSeconds = 5;
         }
+        // Use the provided ThreadPoolFactory or fallback to system's default
+        ThreadPoolFactory effectiveThreadPoolFactory = threadPoolFactory != null ? threadPoolFactory : system.getThreadPoolFactory();
+        
         this.mailboxProcessor = new MailboxProcessor<>(
                 actorId,
                 mailbox,
@@ -224,7 +241,8 @@ public abstract class Actor<Message> {
                     public void postStop() {
                         Actor.this.postStop();
                     }
-                }
+                },
+                effectiveThreadPoolFactory
         );
         logger.debug("Actor {} created with batch size {}", actorId, configuredBatchSize);
     }

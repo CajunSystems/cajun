@@ -14,6 +14,7 @@
   - [Using the Actor System](#using-the-actor-system)
   - [Running Examples](#running-examples)
 - [Message Processing and Performance Tuning](#message-processing-and-performance-tuning)
+- [Configurable Thread Pools](#configurable-thread-pools)
 - [Request-Response with Ask Pattern](#request-response-with-ask-pattern)
 - [Error Handling and Supervision Strategy](#error-handling-and-supervision-strategy)
 - [Stateful Actors and Persistence](#stateful-actors-and-persistence)
@@ -45,6 +46,7 @@ Key benefits of using Cajun:
 - **Fault Tolerance**: Built-in supervision strategies for handling failures
 - **Flexibility**: Multiple programming styles (OO, functional, stateful)
 - **Performance**: High-throughput message processing with batching support
+- **Configurable Threading**: Per-actor thread pool configuration with workload optimization presets
 
 <img src="docs/actor_arch.png" alt="Actor architecture" style="height:auto;">
 
@@ -235,6 +237,14 @@ Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)
         PersistenceFactory.createFileSnapshotStore()
     )
     .spawn();
+
+// Configure actor with custom thread pool for CPU-intensive work
+ThreadPoolFactory cpuFactory = new ThreadPoolFactory()
+    .optimizeFor(ThreadPoolFactory.WorkloadType.CPU_BOUND);
+
+Pid computeActor = system.actorOf(ComputationHandler.class)
+    .withThreadPoolFactory(cpuFactory)
+    .spawn();
 ```
 
 #### 4. Creating Actor Hierarchies
@@ -399,6 +409,96 @@ The performance tests measure:
 1. **Actor Chain Throughput**: Tests message passing through a chain of actors
 2. **Many-to-One Throughput**: Tests many sender actors sending to a single receiver
 3. **Actor Lifecycle Performance**: Tests creation and stopping of large numbers of actors
+
+## Configurable Thread Pools
+
+Cajun provides flexible thread pool configuration for actors, allowing you to optimize performance based on your workload characteristics. Each actor can be configured with its own ThreadPoolFactory, or use the system default (virtual threads).
+
+### Thread Pool Types
+
+Cajun supports multiple thread pool strategies:
+
+- **VIRTUAL**: Uses Java 21 virtual threads for high concurrency with low overhead (default)
+- **FIXED**: Uses a fixed-size platform thread pool for predictable resource usage
+- **WORK_STEALING**: Uses a work-stealing thread pool for balanced workloads
+
+### Workload Optimization Presets
+
+```java
+// Optimize for I/O-bound operations (high concurrency, virtual threads)
+ThreadPoolFactory ioOptimized = new ThreadPoolFactory()
+    .optimizeFor(ThreadPoolFactory.WorkloadType.IO_BOUND);
+
+// Optimize for CPU-bound operations (fixed thread pool, platform threads)
+ThreadPoolFactory cpuOptimized = new ThreadPoolFactory()
+    .optimizeFor(ThreadPoolFactory.WorkloadType.CPU_BOUND);
+
+// Optimize for mixed workloads (work-stealing pool)
+ThreadPoolFactory mixedOptimized = new ThreadPoolFactory()
+    .optimizeFor(ThreadPoolFactory.WorkloadType.MIXED);
+```
+
+### Configuring Actors with Custom Thread Pools
+
+```java
+// Create actors with optimized thread pools
+Pid networkActor = system.actorOf(NetworkHandler.class)
+    .withId("network-processor")
+    .withThreadPoolFactory(ioOptimized)
+    .spawn();
+
+Pid computeActor = system.actorOf(ComputationHandler.class)
+    .withId("compute-processor")
+    .withThreadPoolFactory(cpuOptimized)
+    .spawn();
+
+// Stateful actors also support custom thread pools
+Pid statefulActor = system.statefulActorOf(StateHandler.class, initialState)
+    .withId("stateful-processor")
+    .withThreadPoolFactory(mixedOptimized)
+    .spawn();
+```
+
+### Custom Thread Pool Configuration
+
+For fine-grained control, you can create custom ThreadPoolFactory configurations:
+
+```java
+// Custom configuration for specific requirements
+ThreadPoolFactory customFactory = new ThreadPoolFactory()
+    .setExecutorType(ThreadPoolFactory.ThreadPoolType.FIXED)
+    .setFixedPoolSize(8)  // 8 platform threads
+    .setPreferVirtualThreads(false)
+    .setUseNamedThreads(true);
+
+Pid customActor = system.actorOf(MyHandler.class)
+    .withThreadPoolFactory(customFactory)
+    .spawn();
+```
+
+### When to Use Different Thread Pool Types
+
+#### Virtual Threads (Default - IO_BOUND)
+- **Best for**: Network I/O, file operations, database calls
+- **Characteristics**: Extremely lightweight, high concurrency (millions of threads)
+- **Use when**: You have many actors doing I/O operations
+
+#### Fixed Thread Pool (CPU_BOUND)
+- **Best for**: CPU-intensive computations, mathematical operations
+- **Characteristics**: Predictable resource usage, optimal for CPU-bound work
+- **Use when**: You have fewer actors doing intensive computation
+
+#### Work-Stealing Pool (MIXED)
+- **Best for**: Mixed I/O and CPU workloads
+- **Characteristics**: Dynamic load balancing, good for varied workloads
+- **Use when**: Your actors have unpredictable or mixed workload patterns
+
+### Performance Considerations
+
+- **Default behavior**: If no ThreadPoolFactory is specified, actors use virtual threads
+- **Per-actor configuration**: Different actors can use different thread pool strategies
+- **Resource isolation**: Custom thread pools provide isolation between different types of work
+- **Monitoring**: Thread pools can be monitored and tuned based on application metrics
 
 ## Request-Response with Ask Pattern
 

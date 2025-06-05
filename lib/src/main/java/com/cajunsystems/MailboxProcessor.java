@@ -1,5 +1,6 @@
 package com.cajunsystems;
 
+import com.cajunsystems.config.ThreadPoolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +25,7 @@ public class MailboxProcessor<T> {
     private final List<T> batchBuffer;
     private final BiConsumer<T, Throwable> exceptionHandler;
     private final ActorLifecycle lifecycle;
+    private final ThreadPoolFactory threadPoolFactory;
 
     private volatile boolean running = false;
     private volatile Thread thread;
@@ -43,16 +45,37 @@ public class MailboxProcessor<T> {
             int batchSize,
             BiConsumer<T, Throwable> exceptionHandler,
             ActorLifecycle lifecycle) {
+        this(actorId, mailbox, batchSize, exceptionHandler, lifecycle, null);
+    }
+    
+    /**
+     * Creates a new mailbox processor with a thread pool factory.
+     *
+     * @param actorId          The ID of the actor for logging
+     * @param mailbox          The queue to poll messages from
+     * @param batchSize        Number of messages to process per batch
+     * @param exceptionHandler Handler to route message processing errors
+     * @param lifecycle        Lifecycle hooks (preStart/postStop)
+     * @param threadPoolFactory The thread pool factory, or null to use default virtual threads
+     */
+    public MailboxProcessor(
+            String actorId,
+            BlockingQueue<T> mailbox,
+            int batchSize,
+            BiConsumer<T, Throwable> exceptionHandler,
+            ActorLifecycle lifecycle,
+            ThreadPoolFactory threadPoolFactory) {
         this.actorId = actorId;
         this.mailbox = mailbox;
         this.batchSize = batchSize;
         this.batchBuffer = new ArrayList<>(batchSize);
         this.exceptionHandler = exceptionHandler;
         this.lifecycle = lifecycle;
+        this.threadPoolFactory = threadPoolFactory;
     }
 
     /**
-     * Starts mailbox polling on a virtual thread.
+     * Starts mailbox polling using the configured thread factory or virtual threads.
      */
     public void start() {
         if (running) {
@@ -62,9 +85,17 @@ public class MailboxProcessor<T> {
         running = true;
         logger.info("Starting actor {} mailbox", actorId);
         lifecycle.preStart();
-        thread = Thread.ofVirtual()
-                .name("actor-" + actorId)
-                .start(this::processMailboxLoop);
+        
+        if (threadPoolFactory != null) {
+            // Use the configured thread pool factory to create a thread
+            thread = threadPoolFactory.createThreadFactory(actorId).newThread(this::processMailboxLoop);
+            thread.start();
+        } else {
+            // Fall back to virtual threads (default behavior)
+            thread = Thread.ofVirtual()
+                    .name("actor-" + actorId)
+                    .start(this::processMailboxLoop);
+        }
     }
 
     /**

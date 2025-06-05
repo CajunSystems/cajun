@@ -7,6 +7,7 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.StatefulActor;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
@@ -67,6 +68,58 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
             BackpressureConfig backpressureConfig,
             ResizableMailboxConfig mailboxConfig) {
         super(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig);
+        this.handler = handler;
+        this.context = new ActorContextImpl(this);
+    }
+    
+    /**
+     * Creates a new StatefulHandlerActor with the specified handler, initial state, persistence components, and thread pool factory.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param handler The handler to delegate to
+     * @param initialState The initial state
+     * @param messageJournal The message journal to use
+     * @param snapshotStore The snapshot store to use
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig The mailbox configuration
+     * @param threadPoolFactory The thread pool factory, or null to use default
+     */
+    public StatefulHandlerActor(
+            ActorSystem system,
+            String actorId,
+            StatefulHandler<State, Message> handler,
+            State initialState,
+            BatchedMessageJournal<Message> messageJournal,
+            SnapshotStore<State> snapshotStore,
+            BackpressureConfig backpressureConfig,
+            ResizableMailboxConfig mailboxConfig,
+            ThreadPoolFactory threadPoolFactory) {
+        super(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig, threadPoolFactory);
+        this.handler = handler;
+        this.context = new ActorContextImpl(this);
+    }
+    
+    /**
+     * Creates a new StatefulHandlerActor with the specified handler, initial state, and thread pool factory.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param handler The handler to delegate to
+     * @param initialState The initial state
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig The mailbox configuration
+     * @param threadPoolFactory The thread pool factory, or null to use default
+     */
+    public StatefulHandlerActor(
+            ActorSystem system,
+            String actorId,
+            StatefulHandler<State, Message> handler,
+            State initialState,
+            BackpressureConfig backpressureConfig,
+            ResizableMailboxConfig mailboxConfig,
+            ThreadPoolFactory threadPoolFactory) {
+        super(system, actorId, initialState, backpressureConfig, mailboxConfig, threadPoolFactory);
         this.handler = handler;
         this.context = new ActorContextImpl(this);
     }

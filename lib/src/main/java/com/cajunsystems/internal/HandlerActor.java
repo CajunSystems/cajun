@@ -7,6 +7,7 @@ import com.cajunsystems.ActorContextImpl;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 
 /**
@@ -36,6 +37,28 @@ public class HandlerActor<Message> extends Actor<Message> {
             BackpressureConfig backpressureConfig,
             ResizableMailboxConfig mailboxConfig) {
         super(system, actorId, backpressureConfig, mailboxConfig);
+        this.handler = handler;
+        this.context = new ActorContextImpl(this);
+    }
+    
+    /**
+     * Creates a new HandlerActor with the specified handler and thread pool factory.
+     *
+     * @param system The actor system
+     * @param actorId The actor ID
+     * @param handler The handler to delegate to
+     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig The mailbox configuration
+     * @param threadPoolFactory The thread pool factory, or null to use default
+     */
+    public HandlerActor(
+            ActorSystem system,
+            String actorId,
+            Handler<Message> handler,
+            BackpressureConfig backpressureConfig,
+            ResizableMailboxConfig mailboxConfig,
+            ThreadPoolFactory threadPoolFactory) {
+        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory);
         this.handler = handler;
         this.context = new ActorContextImpl(this);
     }
