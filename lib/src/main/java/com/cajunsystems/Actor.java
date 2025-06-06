@@ -208,19 +208,17 @@ public abstract class Actor<Message> {
         initializeBackpressure(backpressureConfig, null, maxCapacity);
 
         // Now create the mailbox based on backpressure configuration
-        createMailbox(initialCapacity, maxCapacity, mailboxConfig);
+        createMailbox(initialCapacity, maxCapacity, mailboxConfig, threadPoolFactory);
 
-        // Use configuration from the actor system (timeouts and batch size)
+        // Use configuration from explicitly provided thread pool factory, otherwise use defaults
         int configuredBatchSize = DEFAULT_BATCH_SIZE;
-        if (system.getThreadPoolFactory() != null) {
-            this.shutdownTimeoutSeconds = system.getThreadPoolFactory().getActorShutdownTimeoutSeconds();
-            configuredBatchSize = system.getThreadPoolFactory().getActorBatchSize();
+        if (threadPoolFactory != null) {
+            this.shutdownTimeoutSeconds = threadPoolFactory.getActorShutdownTimeoutSeconds();
+            configuredBatchSize = threadPoolFactory.getActorBatchSize();
         } else {
-            this.shutdownTimeoutSeconds = 5;
+            this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
         }
-        // Use the provided ThreadPoolFactory or fallback to system's default
-        ThreadPoolFactory effectiveThreadPoolFactory = threadPoolFactory != null ? threadPoolFactory : system.getThreadPoolFactory();
-        
+        // Only use ThreadPoolFactory if explicitly provided, otherwise use default virtual threads
         this.mailboxProcessor = new MailboxProcessor<>(
                 actorId,
                 mailbox,
@@ -235,6 +233,7 @@ public abstract class Actor<Message> {
                     @Override
                     public void receive(Message message) {
                         Actor.this.receive(message);
+                        lastProcessingTimestamp.set(System.currentTimeMillis());
                     }
 
                     @Override
@@ -242,7 +241,7 @@ public abstract class Actor<Message> {
                         Actor.this.postStop();
                     }
                 },
-                effectiveThreadPoolFactory
+                threadPoolFactory
         );
         logger.debug("Actor {} created with batch size {}", actorId, configuredBatchSize);
     }
@@ -608,15 +607,60 @@ public abstract class Actor<Message> {
      * @param maxCapacity     The maximum capacity the mailbox can grow to
      * @param mailboxConfig   The mailbox configuration parameters
      */
-    private void createMailbox(int initialCapacity, int maxCapacity, MailboxConfig mailboxConfig) {
-        if (mailboxConfig != null && mailboxConfig instanceof ResizableMailboxConfig) {
+    private void createMailbox(int initialCapacity, int maxCapacity, MailboxConfig mailboxConfig, ThreadPoolFactory threadPoolFactory) {
+        // Optimize mailbox type based on thread pool workload type if available
+        if (threadPoolFactory != null) {
+            ThreadPoolFactory.WorkloadType workloadType = getWorkloadTypeFromThreadPool(threadPoolFactory);
+            this.mailbox = createOptimizedMailbox(workloadType, initialCapacity, maxCapacity, mailboxConfig);
+        } else if (mailboxConfig != null && mailboxConfig instanceof ResizableMailboxConfig) {
+            // Legacy path: use resizable queue only if explicitly requested
             this.mailbox = new ResizableBlockingQueue<>(initialCapacity, maxCapacity);
         } else {
+            // Default: LinkedBlockingQueue for virtual threads (best general performance)
             this.mailbox = new LinkedBlockingQueue<>(maxCapacity);
         }
 
         // Store capacity configuration for backpressure management
         this.maxCapacity = maxCapacity;
+    }
+    
+    /**
+     * Creates an optimized mailbox based on the thread pool workload type.
+     */
+    private BlockingQueue<Message> createOptimizedMailbox(ThreadPoolFactory.WorkloadType workloadType, 
+                                                          int initialCapacity, int maxCapacity, 
+                                                          MailboxConfig mailboxConfig) {
+        switch (workloadType) {
+            case IO_BOUND:
+                // High concurrency, virtual threads - prioritize throughput
+                // Use LinkedBlockingQueue with large capacity for best performance
+                return new LinkedBlockingQueue<>(Math.max(maxCapacity, 10000));
+                
+            case CPU_BOUND:
+                // Fixed threads, CPU intensive - use bounded queues to prevent overload
+                // ArrayBlockingQueue provides better cache locality for platform threads
+                int boundedCapacity = Math.min(maxCapacity, 1000); // Limit memory usage
+                return new java.util.concurrent.ArrayBlockingQueue<>(boundedCapacity);
+                
+            case MIXED:
+                // Dynamic workload - use resizable queue but only if explicitly configured
+                if (mailboxConfig instanceof ResizableMailboxConfig) {
+                    return new ResizableBlockingQueue<>(initialCapacity, maxCapacity);
+                } else {
+                    // Default to LinkedBlockingQueue with moderate capacity
+                    return new LinkedBlockingQueue<>(Math.min(maxCapacity, 5000));
+                }
+                
+            default:
+                return new LinkedBlockingQueue<>(maxCapacity);
+        }
+    }
+    
+    /**
+     * Determines the workload type from ThreadPoolFactory configuration.
+     */
+    private ThreadPoolFactory.WorkloadType getWorkloadTypeFromThreadPool(ThreadPoolFactory factory) {
+        return factory.getInferredWorkloadType();
     }
 
     /**

@@ -302,4 +302,23 @@ public class ThreadPoolFactory {
         this.workStealingParallelism = workStealingParallelism;
         return this;
     }
+    
+    /**
+     * Gets the inferred workload type based on the current configuration.
+     * This is used by the actor system to optimize mailbox selection.
+     *
+     * @return The inferred workload type
+     */
+    public WorkloadType getInferredWorkloadType() {
+        if (executorType == ThreadPoolType.VIRTUAL || preferVirtualThreads) {
+            return WorkloadType.IO_BOUND;
+        } else if (executorType == ThreadPoolType.FIXED) {
+            return WorkloadType.CPU_BOUND;
+        } else if (executorType == ThreadPoolType.WORK_STEALING) {
+            return WorkloadType.MIXED;
+        }
+        
+        // Default fallback
+        return WorkloadType.IO_BOUND;
+    }
 }

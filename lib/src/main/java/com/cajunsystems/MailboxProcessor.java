@@ -175,7 +175,12 @@ public class MailboxProcessor<T> {
         while (running) {
             try {
                 batchBuffer.clear();
-                T first = mailbox.take();
+                T first = mailbox.poll(100, TimeUnit.MILLISECONDS);
+                if (first == null) {
+                    // No messages available, yield to prevent busy waiting
+                    Thread.yield();
+                    continue;
+                }
                 batchBuffer.add(first);
                 if (batchSize > 1) {
                     mailbox.drainTo(batchBuffer, batchSize - 1);

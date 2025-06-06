@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Set specific loggers to DEBUG level -->
+    <logger name="examples" level="DEBUG"/>
+    <logger name="examples.StateConsistencyTest" level="DEBUG"/>
+    <logger name="examples.StateConsistencyTest$WorkerHandler" level="DEBUG"/>
+    <logger name="examples.StateConsistencyTest$AccountHandler" level="DEBUG"/>
+    <logger name="com.cajunsystems" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
