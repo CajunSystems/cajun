@@ -15,6 +15,7 @@
   - [Running Examples](#running-examples)
 - [Message Processing and Performance Tuning](#message-processing-and-performance-tuning)
 - [Configurable Thread Pools](#configurable-thread-pools)
+- [Mailbox Configuration](#mailbox-configuration)
 - [Request-Response with Ask Pattern](#request-response-with-ask-pattern)
 - [Error Handling and Supervision Strategy](#error-handling-and-supervision-strategy)
 - [Stateful Actors and Persistence](#stateful-actors-and-persistence)
@@ -499,6 +500,68 @@ Pid customActor = system.actorOf(MyHandler.class)
 - **Per-actor configuration**: Different actors can use different thread pool strategies
 - **Resource isolation**: Custom thread pools provide isolation between different types of work
 - **Monitoring**: Thread pools can be monitored and tuned based on application metrics
+
+## Mailbox Configuration
+
+Actors in Cajun process messages from their mailboxes. The system provides flexibility in how these mailboxes are configured, affecting performance, resource usage, and backpressure behavior.
+
+#### Default Mailbox Behavior
+
+By default, if no specific mailbox configuration is provided when an actor is created, the `ActorSystem` will use its default `MailboxProvider` and default `MailboxConfig`. Typically, this results in:
+
+*   A **`LinkedBlockingQueue`** with a default capacity (e.g., 10,000 messages). This is suitable for general-purpose actors, especially those that might perform I/O operations or benefit from the unbounded nature (up to system memory) of `LinkedBlockingQueue` when paired with virtual threads.
+
+The exact default behavior can be influenced by the system-wide `MailboxProvider` configured in the `ActorSystem`.
+
+#### Overriding Mailbox Configuration
+
+You can customize the mailbox for an actor in several ways:
+
+1.  **Using `MailboxConfig` during Actor Creation:**
+    When creating an actor using the `ActorSystem.actorOf(...)` builder pattern, you can provide a specific `MailboxConfig` or `ResizableMailboxConfig`:
+
+    ```java
+    // Example: Using a ResizableMailboxConfig for an actor
+    ResizableMailboxConfig customMailboxConfig = new ResizableMailboxConfig(
+        100,    // Initial capacity
+        1000,   // Max capacity
+        50,     // Min capacity (for shrinking)
+        0.8,    // Resize threshold (e.g., grow at 80% full)
+        2.0,    // Resize factor (e.g., double the size)
+        0.2,    // Shrink threshold (e.g., shrink at 20% full)
+        0.5     // Shrink factor (e.g., halve the size)
+    );
+
+    Pid myActor = system.actorOf(MyHandler.class)
+        .withMailboxConfig(customMailboxConfig)
+        .spawn();
+    ```
+    If you provide a `ResizableMailboxConfig`, the `DefaultMailboxProvider` will typically create a `ResizableBlockingQueue` for that actor, allowing its mailbox to dynamically adjust its size based on load. Other `MailboxConfig` types might result in different queue implementations based on the provider's logic.
+
+2.  **Providing a Custom `MailboxProvider` to the `ActorSystem`:**
+    For system-wide changes or more complex mailbox selection logic, you can implement the `MailboxProvider` interface and configure your `ActorSystem` instance to use it.
+
+    ```java
+    // 1. Implement your custom MailboxProvider
+    public class MyCustomMailboxProvider<M> implements MailboxProvider<M> {
+        @Override
+        public BlockingQueue<M> createMailbox(MailboxConfig config, ThreadPoolFactory.WorkloadType workloadTypeHint) {
+            if (config instanceof MySpecialConfig) {
+                // return new MySpecialQueue<>();
+            }
+            // Fallback to default logic or other custom queues
+            return new DefaultMailboxProvider<M>().createMailbox(config, workloadTypeHint); // Assuming DefaultMailboxProvider has a no-arg constructor or a way to get a default instance
+        }
+    }
+
+    // 2. Configure ActorSystem to use it
+    ActorSystem system = ActorSystem.create("my-system")
+        .withMailboxProvider(new MyCustomMailboxProvider<>()) // Provide an instance of your custom provider
+        .build();
+    ```
+    When actors are created within this system, your `MyCustomMailboxProvider` will be called to create their mailboxes, unless an actor explicitly overrides it via its own builder methods (which might also accept a `MailboxProvider` instance for per-actor override).
+
+By understanding and utilizing these configuration options, you can fine-tune mailbox behavior to match the specific needs of your actors and the overall performance characteristics of your application.
 
 ## Request-Response with Ask Pattern
 
@@ -1164,3 +1227,4 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
    - [x] Actor reassignment on node failure
    - [x] Pluggable messaging system
    - [x] Configurable message delivery guarantees (EXACTLY_ONCE, AT_LEAST_ONCE, AT_MOST_ONCE)
+```
