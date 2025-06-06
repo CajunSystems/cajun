@@ -141,28 +141,23 @@ public class ThreadPoolFactory {
             case VIRTUAL:
                 if (useNamedThreads) {
                     return Executors.newThreadPerTaskExecutor(
-                            Thread.ofVirtual().name(poolName + "-", 0).factory());
+                            Thread.ofVirtual().name(poolName + "-virtual-", 0).factory());
                 } else {
                     return Executors.newVirtualThreadPerTaskExecutor();
                 }
             case FIXED:
-                if (preferVirtualThreads) {
-                    // Use platform threads with virtual thread characteristics
-                    if (useNamedThreads) {
-                        return Executors.newFixedThreadPool(fixedPoolSize,
-                                createNamedThreadFactory(STR."\{poolName}-worker"));
-                    } else {
-                        return Executors.newFixedThreadPool(fixedPoolSize);
-                    }
+                // A fixed thread pool always uses platform threads.
+                // The preferVirtualThreads flag might influence choosing VIRTUAL type initially,
+                // but once FIXED is chosen, it implies platform threads.
+                if (useNamedThreads) {
+                    return Executors.newFixedThreadPool(fixedPoolSize,
+                            createNamedThreadFactory(poolName + "-fixed-worker"));
                 } else {
-                    if (useNamedThreads) {
-                        return Executors.newFixedThreadPool(fixedPoolSize,
-                                createNamedThreadFactory(STR."\{poolName}-worker"));
-                    } else {
-                        return Executors.newFixedThreadPool(fixedPoolSize);
-                    }
+                    return Executors.newFixedThreadPool(fixedPoolSize);
                 }
             case WORK_STEALING:
+                // Work-stealing pools use platform threads and manage their own factory internally.
+                // The parallelism level is configurable.
                 return Executors.newWorkStealingPool(workStealingParallelism);
             default:
                 throw new IllegalStateException("Unknown executor type: " + executorType);
@@ -171,6 +166,8 @@ public class ThreadPoolFactory {
 
     /**
      * Creates a thread factory for the current configuration.
+     * This factory is primarily intended for executors that allow custom thread factories
+     * and where the type of thread (virtual or platform) needs to align with the factory's settings.
      *
      * @param prefix The prefix for thread names
      * @return A thread factory that creates threads according to this factory's configuration
@@ -186,17 +183,25 @@ public class ThreadPoolFactory {
      * @return A thread factory that creates named threads
      */
     private ThreadFactory createNamedThreadFactory(String prefix) {
+        final String threadPrefix = prefix + (prefix.endsWith("-") ? "" : "-");
         return new ThreadFactory() {
             private final AtomicInteger threadNumber = new AtomicInteger(1);
 
             @Override
             public Thread newThread(Runnable r) {
-                if (executorType == ThreadPoolType.VIRTUAL || preferVirtualThreads) {
+                // Create virtual threads only if the executorType is VIRTUAL.
+                // For FIXED pools or other contexts needing platform threads from this factory,
+                // platform threads will be created.
+                if (executorType == ThreadPoolType.VIRTUAL && preferVirtualThreads) { // Explicitly check preferVirtualThreads here too for clarity
                     return Thread.ofVirtual()
-                            .name(STR."\{prefix}-\{threadNumber.getAndIncrement()}")
+                            .name(threadPrefix + threadNumber.getAndIncrement())
                             .unstarted(r);
                 } else {
-                    return new Thread(r, STR."\{prefix}-\{threadNumber.getAndIncrement()}");
+                    // Platform thread
+                    Thread platformThread = new Thread(r, threadPrefix + threadNumber.getAndIncrement());
+                    // platformThread.setDaemon(false); // Default: non-daemon unless created by a daemon thread.
+                                                       // Consider if daemon status needs to be configurable or is fixed.
+                    return platformThread;
                 }
             }
         };

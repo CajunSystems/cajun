@@ -14,12 +14,13 @@ import com.cajunsystems.builder.ActorBuilder;
 import com.cajunsystems.builder.StatefulActorBuilder;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
+import com.cajunsystems.config.MailboxProvider;
+import com.cajunsystems.config.DefaultMailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 
 /**
  * ActorSystem is the main entry point for creating and managing actors.
@@ -61,7 +62,12 @@ public class ActorSystem {
         private final Receiver<Message> receiver;
         
         public FunctionalActor(ActorSystem system, String id, Receiver<Message> receiver) {
-            super(system, id);
+            super(system, 
+                  id, 
+                  system.getBackpressureConfig(), 
+                  system.getMailboxConfig(), 
+                  system.getThreadPoolFactory(), 
+                  (MailboxProvider<Message>) system.getMailboxProvider());
             this.receiver = receiver;
         }
 
@@ -78,13 +84,14 @@ public class ActorSystem {
     private final ThreadPoolFactory threadPoolConfig;
     private final BackpressureConfig backpressureConfig;
     private final MailboxConfig mailboxConfig;
+    private final MailboxProvider<?> mailboxProvider;
     private final SystemBackpressureMonitor backpressureMonitor;
 
     /**
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory(), new BackpressureConfig(), new MailboxConfig());
+        this(new ThreadPoolFactory(), new BackpressureConfig(), new MailboxConfig(), new DefaultMailboxProvider<>());
     }
 
     /**
@@ -93,7 +100,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), new BackpressureConfig(), new MailboxConfig());
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), new BackpressureConfig(), new MailboxConfig(), new DefaultMailboxProvider<>());
     }
 
     /**
@@ -102,7 +109,7 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
-        this(threadPoolConfig, new BackpressureConfig(), new MailboxConfig());
+        this(threadPoolConfig, new BackpressureConfig(), new MailboxConfig(), new DefaultMailboxProvider<>());
     }
 
     /**
@@ -112,29 +119,46 @@ public class ActorSystem {
      * @param backpressureConfig The backpressure configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig) {
-        this(threadPoolConfig, backpressureConfig, new MailboxConfig());
+        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new DefaultMailboxProvider<>());
     }
     
     /**
      * Creates a new ActorSystem with the specified thread pool configuration, backpressure configuration, and mailbox configuration.
+     * This constructor now delegates to the primary constructor that includes MailboxProvider.
      * 
      * @param threadPoolConfig The thread pool configuration
      * @param backpressureConfig The backpressure configuration
      * @param mailboxConfig The mailbox configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
+        this(threadPoolConfig, backpressureConfig, mailboxConfig, new DefaultMailboxProvider<>());
+    }
+
+    /**
+     * Primary constructor for ActorSystem.
+     * 
+     * @param threadPoolConfig The thread pool configuration
+     * @param backpressureConfig The backpressure configuration
+     * @param mailboxConfig The mailbox configuration
+     * @param mailboxProvider The mailbox provider implementation
+     */
+    public ActorSystem(ThreadPoolFactory threadPoolConfig, 
+                       BackpressureConfig backpressureConfig, 
+                       MailboxConfig mailboxConfig, 
+                       MailboxProvider<?> mailboxProvider) {
         this.actors = new ConcurrentHashMap<>();
-        this.threadPoolConfig = threadPoolConfig;
-        this.backpressureConfig = backpressureConfig;
-        this.mailboxConfig = mailboxConfig;
+        this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
+        this.backpressureConfig = backpressureConfig != null ? backpressureConfig : new BackpressureConfig();
+        this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
+        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider<>();
         
         // Create the delay scheduler based on configuration
-        this.delayScheduler = threadPoolConfig.createScheduledExecutorService("actor-system");
+        this.delayScheduler = this.threadPoolConfig.createScheduledExecutorService("actor-system");
         this.pendingDelayedMessages = new ConcurrentHashMap<>();
         
         // Create a shared executor for all actors if enabled
-        if (threadPoolConfig.isUseSharedExecutor()) {
-            this.sharedExecutor = threadPoolConfig.createExecutorService("shared-actor");
+        if (this.threadPoolConfig.isUseSharedExecutor()) {
+            this.sharedExecutor = this.threadPoolConfig.createExecutorService("shared-actor");
         } else {
             this.sharedExecutor = null;
         }
@@ -143,7 +167,7 @@ public class ActorSystem {
         this.backpressureMonitor = new SystemBackpressureMonitor(this);
         
         logger.debug("ActorSystem created with {} scheduler threads, thread pool type: {}", 
-                threadPoolConfig.getSchedulerThreads(), threadPoolConfig.getExecutorType());
+                this.threadPoolConfig.getSchedulerThreads(), this.threadPoolConfig.getExecutorType());
     }
 
     /**
@@ -302,8 +326,24 @@ public class ActorSystem {
     public <T extends Actor<?>> Pid register(Class<T> actorClass, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
         try {
             // Create the actor instance using reflection
-            Constructor<T> constructor = actorClass.getConstructor(ActorSystem.class, String.class, BackpressureConfig.class, MailboxConfig.class);
-            T actor = constructor.newInstance(this, actorId, backpressureConfig, mailboxConfig);
+            // The Actor constructor signature is expected to be:
+            // (ActorSystem, String, BackpressureConfig, MailboxConfig, ThreadPoolFactory, MailboxProvider)
+            Constructor<T> constructor = actorClass.getConstructor(
+                ActorSystem.class, 
+                String.class, 
+                BackpressureConfig.class, 
+                MailboxConfig.class,
+                ThreadPoolFactory.class,    // Added
+                MailboxProvider.class       // Added
+            );
+            T actor = constructor.newInstance(
+                this, 
+                actorId, 
+                backpressureConfig, 
+                mailboxConfig,
+                this.threadPoolConfig,    // Pass system's ThreadPoolFactory
+                this.mailboxProvider      // Pass system's MailboxProvider
+            );
             
             // Register the actor with this system
             actors.put(actorId, actor);
@@ -629,6 +669,15 @@ public class ActorSystem {
      */
     public MailboxConfig getMailboxConfig() {
         return mailboxConfig;
+    }
+
+    /**
+     * Gets the mailbox provider for this actor system.
+     *
+     * @return The mailbox provider
+     */
+    public MailboxProvider<?> getMailboxProvider() {
+        return mailboxProvider;
     }
 
     /**

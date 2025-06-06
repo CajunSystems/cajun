@@ -50,7 +50,16 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
     public FileMessageJournal(String journalDirPath) {
         this(Paths.get(journalDirPath));
     }
-    
+
+    /**
+     * Returns the base directory where journal files are stored.
+     *
+     * @return The path to the journal directory.
+     */
+    protected Path getJournalDir() {
+        return journalDir;
+    }
+
     @Override
     public CompletableFuture<Long> append(String actorId, M message) {
         return CompletableFuture.supplyAsync(() -> {

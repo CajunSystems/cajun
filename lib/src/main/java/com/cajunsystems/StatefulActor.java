@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
+import com.cajunsystems.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.metrics.ActorMetrics;
@@ -18,8 +19,6 @@ import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -174,7 +173,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param mailboxConfig The mailbox configuration
      */
     protected StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
-        this(system, actorId, initialState, backpressureConfig, mailboxConfig, null);
+        this(system, actorId, initialState, backpressureConfig, mailboxConfig, null, (MailboxProvider<Message>) system.getMailboxProvider());
     }
     
     /**
@@ -187,13 +186,13 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param mailboxConfig The mailbox configuration
      * @param threadPoolFactory The thread pool factory, or null to use default
      */
-    protected StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig, ThreadPoolFactory threadPoolFactory) {
-        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory);
+    protected StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig, ThreadPoolFactory threadPoolFactory, MailboxProvider<Message> mailboxProvider) {
+        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
         this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         this.initialState = initialState;
-        this.messageJournal = persistenceProvider.createBatchedMessageJournal(actorId);
-        this.snapshotStore = persistenceProvider.createSnapshotStore(actorId);
-        this.actorId = actorId;
+        this.messageJournal = this.persistenceProvider.createBatchedMessageJournal(getActorId());
+        this.snapshotStore = this.persistenceProvider.createSnapshotStore(getActorId());
+        this.actorId = getActorId();
         this.persistenceExecutor = createPersistenceExecutor(DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
         this.metrics = new ActorMetrics(actorId);
     }
@@ -249,7 +248,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                          SnapshotStore<State> snapshotStore,
                          BackpressureConfig backpressureConfig,
                          ResizableMailboxConfig mailboxConfig) {
-        this(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig, null);
+        this(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig, null, (MailboxProvider<Message>) system.getMailboxProvider());
     }
     
     /**
@@ -269,15 +268,16 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                          SnapshotStore<State> snapshotStore,
                          BackpressureConfig backpressureConfig,
                          ResizableMailboxConfig mailboxConfig,
-                         ThreadPoolFactory threadPoolFactory) {
-        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory);
-        this.persistenceProvider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
+                         ThreadPoolFactory threadPoolFactory,
+                         MailboxProvider<Message> mailboxProvider) {
+        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
+        this.persistenceProvider = null; // Correct: For custom persistence, the provider field is null
         this.initialState = initialState;
-        this.messageJournal = messageJournal;
-        this.snapshotStore = snapshotStore;
-        this.actorId = actorId;
+        this.messageJournal = messageJournal; // Use the provided custom journal
+        this.snapshotStore = snapshotStore;   // Use the provided custom snapshot store
+        this.actorId = getActorId(); // Ensure actorId field is aligned with superclass, or use getActorId() directly elsewhere
         this.persistenceExecutor = createPersistenceExecutor(DEFAULT_PERSISTENCE_THREAD_POOL_SIZE);
-        this.metrics = new ActorMetrics(actorId);
+        this.metrics = new ActorMetrics(getActorId()); // Use getActorId() for consistency
     }
     
     /**

@@ -1,11 +1,11 @@
 package com.cajunsystems.builder;
 
-
 import com.cajunsystems.Actor;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
@@ -28,6 +28,7 @@ public class ActorBuilder<Message> {
     private Actor<?> parent;
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
+    private MailboxProvider<Message> mailboxProvider;
     
     /**
      * Creates a new ActorBuilder with the specified system and handler.
@@ -110,18 +111,44 @@ public class ActorBuilder<Message> {
     }
     
     /**
+     * Sets the mailbox provider for the actor.
+     * If not specified, the actor will use the system's default mailbox provider.
+     * 
+     * @param mailboxProvider The mailbox provider to use
+     * @return This builder for method chaining
+     */
+    public ActorBuilder<Message> withMailboxProvider(MailboxProvider<Message> mailboxProvider) {
+        this.mailboxProvider = mailboxProvider;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
      */
     public Pid spawn() {
+        ThreadPoolFactory tpfToUse = (this.threadPoolFactory != null) 
+                                       ? this.threadPoolFactory 
+                                       : system.getThreadPoolFactory();
+        MailboxProvider<Message> mpToUse = (this.mailboxProvider != null) 
+                                           ? this.mailboxProvider 
+                                           : (MailboxProvider<Message>) system.getMailboxProvider();
+
+        // Ensure mailboxConfig is initialized if not set, Actor constructor expects non-null or will use system default
+        ResizableMailboxConfig mbConfigToUse = (this.mailboxConfig != null) 
+                                                ? this.mailboxConfig 
+                                                : new ResizableMailboxConfig(); // Or pass null and let Actor constructor use system.getMailboxConfig()
+
         HandlerActor<Message> actor = new HandlerActor<>(
                 system, 
                 id, 
                 handler, 
-                backpressureConfig, 
-                mailboxConfig,
-                threadPoolFactory);
+                backpressureConfig, // Can be null, Actor constructor handles it
+                mbConfigToUse,      // Pass potentially defaulted ResizableMailboxConfig
+                tpfToUse,           // Pass effective ThreadPoolFactory
+                mpToUse             // Pass effective MailboxProvider
+        );
         
         if (supervisionStrategy != null) {
             actor.withSupervisionStrategy(supervisionStrategy);

@@ -5,6 +5,7 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
@@ -34,6 +35,7 @@ public class StatefulActorBuilder<State, Message> {
     private boolean customPersistence = false;
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
+    private MailboxProvider<Message> mailboxProvider;
     
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -134,12 +136,34 @@ public class StatefulActorBuilder<State, Message> {
     }
     
     /**
+     * Sets the mailbox provider for the actor.
+     * If not specified, the actor will use the system's default mailbox provider.
+     * 
+     * @param mailboxProvider The mailbox provider to use
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withMailboxProvider(MailboxProvider<Message> mailboxProvider) {
+        this.mailboxProvider = mailboxProvider;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
      */
     public Pid spawn() {
         StatefulHandlerActor<State, Message> actor;
+
+        ThreadPoolFactory tpfToUse = (this.threadPoolFactory != null) 
+                                       ? this.threadPoolFactory 
+                                       : system.getThreadPoolFactory();
+        MailboxProvider<Message> mpToUse = (this.mailboxProvider != null) 
+                                           ? this.mailboxProvider 
+                                           : (MailboxProvider<Message>) system.getMailboxProvider();
+        ResizableMailboxConfig mbConfigToUse = (this.mailboxConfig != null) 
+                                                ? this.mailboxConfig 
+                                                : new ResizableMailboxConfig(); // Or pass null and let Actor constructor use system.getMailboxConfig()
         
         if (customPersistence) {
             actor = new StatefulHandlerActor<>(
@@ -150,8 +174,10 @@ public class StatefulActorBuilder<State, Message> {
                     messageJournal,
                     snapshotStore,
                     backpressureConfig,
-                    mailboxConfig,
-                    threadPoolFactory);
+                    mbConfigToUse, // Use effective mailbox config
+                    tpfToUse,      // Use effective TPF
+                    mpToUse        // Use effective MP
+            );
         } else {
             actor = new StatefulHandlerActor<>(
                     system,
@@ -159,8 +185,10 @@ public class StatefulActorBuilder<State, Message> {
                     handler,
                     initialState,
                     backpressureConfig,
-                    mailboxConfig,
-                    threadPoolFactory);
+                    mbConfigToUse, // Use effective mailbox config
+                    tpfToUse,      // Use effective TPF
+                    mpToUse        // Use effective MP
+            );
         }
         
         if (parent != null) {

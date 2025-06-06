@@ -133,30 +133,69 @@ public class ResizableBlockingQueue<E> extends AbstractQueue<E> implements Block
     public boolean offer(E e) {
         // Check if we need to resize the queue
         synchronized (resizeLock) {
-            int capacity = getCapacity();
+            int capacity = getCapacity(); // Should be called inside lock
             int size = delegate.size();
-            float fillRatio = (float) size / capacity;
+            float fillRatio = (capacity == 0) ? 1.0f : (float) size / capacity; // Avoid division by zero if capacity is 0 initially
 
             // If the queue is getting full and we're not at max capacity, resize it
             if (fillRatio >= resizeThreshold && capacity < maxCapacity) {
                 int newCapacity = Math.min(maxCapacity, (int) (capacity * resizeFactor));
+                if (newCapacity <= capacity && capacity < maxCapacity) { // Ensure newCapacity is actually larger or we are at maxCapacity
+                    newCapacity = Math.min(maxCapacity, capacity + 1); // Increment by at least 1 if factor is too small
+                }
+                if (newCapacity > capacity) {
+                    resize(newCapacity);
+                }
+            }
+            return delegate.offer(e);
+        }
+    }
+
+    @Override
+    public void put(E e) throws InterruptedException {
+        // Similar to offer, check for resize before putting, but put can block
+        // so the resize logic needs to be careful not to hold lock for too long if put blocks.
+        // For simplicity, we can try to resize optimistically before a potentially blocking put.
+        // A more complex strategy might involve retrying put after resizing if it initially fails due to capacity.
+        synchronized (resizeLock) {
+            int capacity = getCapacity();
+            int size = delegate.size();
+            float fillRatio = (capacity == 0) ? 1.0f : (float) size / capacity;
+
+            if (fillRatio >= resizeThreshold && capacity < maxCapacity) {
+                int newCapacity = Math.min(maxCapacity, (int) (capacity * resizeFactor));
+                if (newCapacity <= capacity && capacity < maxCapacity) {
+                    newCapacity = Math.min(maxCapacity, capacity + 1);
+                }
                 if (newCapacity > capacity) {
                     resize(newCapacity);
                 }
             }
         }
-
-        return delegate.offer(e);
-    }
-
-    @Override
-    public void put(E e) throws InterruptedException {
-        delegate.put(e);
+        delegate.put(e); // Actual put operation outside the resizeLock to avoid holding lock during blocking
     }
 
     @Override
     public boolean offer(E e, long timeout, TimeUnit unit) throws InterruptedException {
-        return delegate.offer(e, timeout, unit);
+        // Check if we need to resize the queue, similar to the non-timed offer
+        synchronized (resizeLock) {
+            int capacity = getCapacity(); // Should be called inside lock
+            int size = delegate.size();
+            float fillRatio = (capacity == 0) ? 1.0f : (float) size / capacity;
+
+            // If the queue is getting full and we're not at max capacity, resize it
+            if (fillRatio >= resizeThreshold && capacity < maxCapacity) {
+                int newCapacity = Math.min(maxCapacity, (int) (capacity * resizeFactor));
+                if (newCapacity <= capacity && capacity < maxCapacity) { // Ensure newCapacity is actually larger or we are at maxCapacity
+                    newCapacity = Math.min(maxCapacity, capacity + 1); // Increment by at least 1 if factor is too small
+                }
+                if (newCapacity > capacity) {
+                    resize(newCapacity);
+                }
+            }
+            // The actual offer operation must also be on the potentially new delegate
+            return delegate.offer(e, timeout, unit);
+        }
     }
 
     @Override

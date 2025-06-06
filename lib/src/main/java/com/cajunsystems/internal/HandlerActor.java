@@ -1,11 +1,11 @@
 package com.cajunsystems.internal;
 
-
 import com.cajunsystems.Actor;
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorContextImpl;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
@@ -36,7 +36,12 @@ public class HandlerActor<Message> extends Actor<Message> {
             Handler<Message> handler,
             BackpressureConfig backpressureConfig,
             ResizableMailboxConfig mailboxConfig) {
-        super(system, actorId, backpressureConfig, mailboxConfig);
+        super(system, 
+              actorId, 
+              backpressureConfig, 
+              mailboxConfig, 
+              system.getThreadPoolFactory(), 
+              (MailboxProvider<Message>) system.getMailboxProvider());
         this.handler = handler;
         this.context = new ActorContextImpl(this);
     }
@@ -50,6 +55,7 @@ public class HandlerActor<Message> extends Actor<Message> {
      * @param backpressureConfig The backpressure configuration, or null to disable backpressure
      * @param mailboxConfig The mailbox configuration
      * @param threadPoolFactory The thread pool factory, or null to use default
+     * @param mailboxProvider The mailbox provider
      */
     public HandlerActor(
             ActorSystem system,
@@ -57,8 +63,9 @@ public class HandlerActor<Message> extends Actor<Message> {
             Handler<Message> handler,
             BackpressureConfig backpressureConfig,
             ResizableMailboxConfig mailboxConfig,
-            ThreadPoolFactory threadPoolFactory) {
-        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory);
+            ThreadPoolFactory threadPoolFactory,
+            MailboxProvider<Message> mailboxProvider) {
+        super(system, actorId, backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
         this.handler = handler;
         this.context = new ActorContextImpl(this);
     }

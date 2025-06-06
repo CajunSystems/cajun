@@ -1,10 +1,7 @@
 package com.cajunsystems;
 
 import com.cajunsystems.backpressure.*;
-import com.cajunsystems.config.BackpressureConfig;
-import com.cajunsystems.config.MailboxConfig;
-import com.cajunsystems.config.ResizableMailboxConfig;
-import com.cajunsystems.config.ThreadPoolFactory;
+import com.cajunsystems.config.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +10,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -120,7 +116,7 @@ public abstract class Actor<Message> {
 
     /**
      * Creates a new Actor with the specified system and an auto-generated ID.
-     * 
+     *
      * @param system The actor system
      * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
@@ -153,20 +149,30 @@ public abstract class Actor<Message> {
      */
     @Deprecated
     public Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig) {
-        this(system, actorId, backpressureConfig, null);
+        this(system,
+                actorId,
+                backpressureConfig,
+                system.getMailboxConfig(), // Use system's default MailboxConfig
+                system.getThreadPoolFactory(),
+                (MailboxProvider<Message>) system.getMailboxProvider());
     }
 
     /**
      * Creates a new Actor with the specified system, ID, and mailbox configuration.
      *
-     * @param system       The actor system
-     * @param actorId      The actor ID
+     * @param system        The actor system
+     * @param actorId       The actor ID
      * @param mailboxConfig The mailbox configuration
      * @deprecated Use the new interface-based approach with ActorSystem.actorOf() instead
      */
     @Deprecated
     public Actor(ActorSystem system, String actorId, ResizableMailboxConfig mailboxConfig) {
-        this(system, actorId, null, mailboxConfig);
+        this(system,
+                actorId,
+                system.getBackpressureConfig(), // Use system's default BackpressureConfig
+                mailboxConfig,
+                system.getThreadPoolFactory(),
+                (MailboxProvider<Message>) system.getMailboxProvider());
     }
 
     /**
@@ -178,49 +184,70 @@ public abstract class Actor<Message> {
      * @param mailboxConfig      The mailbox configuration
      */
     protected Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
-        this(system, actorId, backpressureConfig, mailboxConfig, null);
+        this(system,
+                actorId,
+                backpressureConfig,
+                mailboxConfig,
+                system.getThreadPoolFactory(),
+                (MailboxProvider<Message>) system.getMailboxProvider());
     }
-    
+
     /**
      * Creates a new Actor with the specified system, ID, backpressure configuration, mailbox configuration, and thread pool factory.
      *
-     * @param system             The actor system
-     * @param actorId            The actor ID
-     * @param backpressureConfig The backpressure configuration, or null to disable backpressure
-     * @param mailboxConfig      The mailbox configuration
-     * @param threadPoolFactory  The thread pool factory, or null to use default
+     * @param system                  The actor system
+     * @param actorId                 The actor ID
+     * @param backpressureConfig      The backpressure configuration, or null to disable backpressure
+     * @param mailboxConfig           The mailbox configuration
+     * @param threadPoolFactory       The thread pool factory, or null to use system's default
+     * @param mailboxProviderInstance The mailbox provider instance, or null to use system's default
      */
-    protected Actor(ActorSystem system, String actorId, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig, ThreadPoolFactory threadPoolFactory) {
+    protected Actor(ActorSystem system,
+                    String actorId,
+                    BackpressureConfig backpressureConfig,
+                    MailboxConfig mailboxConfig,
+                    ThreadPoolFactory threadPoolFactory,
+                    MailboxProvider<Message> mailboxProviderInstance) {
         this.system = system;
         this.actorId = actorId == null ? generateDefaultActorId() : actorId;
         this.pid = new Pid(this.actorId, system);
 
-        // Handle null mailboxConfig
-        if (mailboxConfig == null) {
-            mailboxConfig = new ResizableMailboxConfig();
+        // Use provided instances or fallback to system's defaults if they are null (though system should pass non-null)
+        ThreadPoolFactory effectiveTpf = (threadPoolFactory != null) ? threadPoolFactory : system.getThreadPoolFactory();
+        MailboxProvider<Message> effectiveMp = (MailboxProvider<Message>) ((mailboxProviderInstance != null)
+                ? mailboxProviderInstance
+                : system.getMailboxProvider());
+
+        // Handle null mailboxConfig by defaulting to system's MailboxConfig, then ResizableMailboxConfig for its parameters
+        MailboxConfig effectiveMailboxConfig = (mailboxConfig != null) ? mailboxConfig : system.getMailboxConfig();
+        if (effectiveMailboxConfig == null) { // If system also didn't have one
+            effectiveMailboxConfig = new ResizableMailboxConfig();
         }
 
-        // Get mailbox configuration values
-        int initialCapacity = mailboxConfig.getInitialCapacity();
-        int maxCapacity = mailboxConfig.getMaxCapacity();
+        // Get mailbox configuration values (maxCapacity is used for backpressure)
+        this.maxCapacity = effectiveMailboxConfig.getMaxCapacity(); // Store for backpressure
 
         // Initialize backpressure configuration
-        initializeBackpressure(backpressureConfig, null, maxCapacity);
+        initializeBackpressure(backpressureConfig, null, this.maxCapacity);
 
-        // Now create the mailbox based on backpressure configuration
-        createMailbox(initialCapacity, maxCapacity, mailboxConfig, threadPoolFactory);
+        // Create the mailbox using the MailboxProvider
+        ThreadPoolFactory.WorkloadType workloadTypeHint = (effectiveTpf != null)
+                ? getWorkloadTypeFromThreadPool(effectiveTpf)
+                : null; // No hint if no factory
+
+        this.mailbox = effectiveMp.createMailbox(effectiveMailboxConfig, workloadTypeHint);
 
         // Use configuration from explicitly provided thread pool factory, otherwise use defaults
         int configuredBatchSize = DEFAULT_BATCH_SIZE;
-        if (threadPoolFactory != null) {
-            this.shutdownTimeoutSeconds = threadPoolFactory.getActorShutdownTimeoutSeconds();
-            configuredBatchSize = threadPoolFactory.getActorBatchSize();
+        if (effectiveTpf != null) {
+            this.shutdownTimeoutSeconds = effectiveTpf.getActorShutdownTimeoutSeconds();
+            configuredBatchSize = effectiveTpf.getActorBatchSize();
         } else {
             this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
         }
-        // Only use ThreadPoolFactory if explicitly provided, otherwise use default virtual threads
+
         this.mailboxProcessor = new MailboxProcessor<>(
-                actorId,
+                this.actorId, // Use this.actorId which is now definitely set
                 mailbox,
                 configuredBatchSize,
                 this::handleException,
@@ -241,9 +268,9 @@ public abstract class Actor<Message> {
                         Actor.this.postStop();
                     }
                 },
-                threadPoolFactory
+                effectiveTpf // Pass the effective ThreadPoolFactory to MailboxProcessor
         );
-        logger.debug("Actor {} created with batch size {}", actorId, configuredBatchSize);
+        logger.debug("Actor {} created with batch size {}", this.actorId, configuredBatchSize);
     }
 
     protected abstract void receive(Message message);
@@ -261,7 +288,21 @@ public abstract class Actor<Message> {
      * Override to perform cleanup logic.
      */
     protected void postStop() {
-        // Default implementation does nothing
+        logger.info("Actor {} stopping.", actorId);
+        // Stop all children
+        for (Actor<?> child : children.values()) {
+            child.stop();
+        }
+        children.clear();
+
+        // Shutdown backpressure manager if it exists and is enabled
+        if (backpressureManager != null && backpressureEnabled) {
+            logger.debug("Shutting down backpressure manager for actor {}.", actorId);
+            backpressureManager.shutdown();
+        }
+
+        // Additional cleanup specific to the actor can be done here by overriding this method
+        // For example, releasing resources, closing connections, etc.
     }
 
     /**
@@ -365,7 +406,7 @@ public abstract class Actor<Message> {
     public String getActorId() {
         return actorId;
     }
-    
+
     /**
      * Gets the actor system this actor belongs to.
      *
@@ -550,7 +591,7 @@ public abstract class Actor<Message> {
     public void initializeBackpressure(BackpressureConfig backpressureConfig, Consumer<BackpressureEvent> callback) {
         initializeBackpressure(backpressureConfig, callback, backpressureConfig != null ? backpressureConfig.getMaxCapacity() : Integer.MAX_VALUE);
     }
-    
+
     /**
      * Initialize the backpressure system with the provided configuration, callback, and capacity.
      *
@@ -601,63 +642,8 @@ public abstract class Actor<Message> {
     }
 
     /**
-     * Creates the mailbox for this actor with the specified capacities and configuration.
-     *
-     * @param initialCapacity The initial capacity of the mailbox
-     * @param maxCapacity     The maximum capacity the mailbox can grow to
-     * @param mailboxConfig   The mailbox configuration parameters
-     */
-    private void createMailbox(int initialCapacity, int maxCapacity, MailboxConfig mailboxConfig, ThreadPoolFactory threadPoolFactory) {
-        // Optimize mailbox type based on thread pool workload type if available
-        if (threadPoolFactory != null) {
-            ThreadPoolFactory.WorkloadType workloadType = getWorkloadTypeFromThreadPool(threadPoolFactory);
-            this.mailbox = createOptimizedMailbox(workloadType, initialCapacity, maxCapacity, mailboxConfig);
-        } else if (mailboxConfig != null && mailboxConfig instanceof ResizableMailboxConfig) {
-            // Legacy path: use resizable queue only if explicitly requested
-            this.mailbox = new ResizableBlockingQueue<>(initialCapacity, maxCapacity);
-        } else {
-            // Default: LinkedBlockingQueue for virtual threads (best general performance)
-            this.mailbox = new LinkedBlockingQueue<>(maxCapacity);
-        }
-
-        // Store capacity configuration for backpressure management
-        this.maxCapacity = maxCapacity;
-    }
-    
-    /**
-     * Creates an optimized mailbox based on the thread pool workload type.
-     */
-    private BlockingQueue<Message> createOptimizedMailbox(ThreadPoolFactory.WorkloadType workloadType, 
-                                                          int initialCapacity, int maxCapacity, 
-                                                          MailboxConfig mailboxConfig) {
-        switch (workloadType) {
-            case IO_BOUND:
-                // High concurrency, virtual threads - prioritize throughput
-                // Use LinkedBlockingQueue with large capacity for best performance
-                return new LinkedBlockingQueue<>(Math.max(maxCapacity, 10000));
-                
-            case CPU_BOUND:
-                // Fixed threads, CPU intensive - use bounded queues to prevent overload
-                // ArrayBlockingQueue provides better cache locality for platform threads
-                int boundedCapacity = Math.min(maxCapacity, 1000); // Limit memory usage
-                return new java.util.concurrent.ArrayBlockingQueue<>(boundedCapacity);
-                
-            case MIXED:
-                // Dynamic workload - use resizable queue but only if explicitly configured
-                if (mailboxConfig instanceof ResizableMailboxConfig) {
-                    return new ResizableBlockingQueue<>(initialCapacity, maxCapacity);
-                } else {
-                    // Default to LinkedBlockingQueue with moderate capacity
-                    return new LinkedBlockingQueue<>(Math.min(maxCapacity, 5000));
-                }
-                
-            default:
-                return new LinkedBlockingQueue<>(maxCapacity);
-        }
-    }
-    
-    /**
      * Determines the workload type from ThreadPoolFactory configuration.
+     * This is kept as it's used to provide a hint to the MailboxProvider.
      */
     private ThreadPoolFactory.WorkloadType getWorkloadTypeFromThreadPool(ThreadPoolFactory factory) {
         return factory.getInferredWorkloadType();

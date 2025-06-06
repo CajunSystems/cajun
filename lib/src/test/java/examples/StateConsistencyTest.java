@@ -33,7 +33,7 @@ public class StateConsistencyTest {
 
     private static final Logger logger = LoggerFactory.getLogger(StateConsistencyTest.class);
     private static final int NUM_WORKERS = 10;
-    private static final int OPERATIONS_PER_WORKER = 100;
+    private static final int OPERATIONS_PER_WORKER = 10_000;
     private static final int TOTAL_OPERATIONS = NUM_WORKERS * OPERATIONS_PER_WORKER;
     private static final int INITIAL_BALANCE = 1000;
     private static final String RESULTS_FILE = "state_consistency_results.txt";
