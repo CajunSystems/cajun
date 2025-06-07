@@ -33,10 +33,14 @@ public class StateConsistencyTest {
 
     private static final Logger logger = LoggerFactory.getLogger(StateConsistencyTest.class);
     private static final int NUM_WORKERS = 10;
-    private static final int OPERATIONS_PER_WORKER = 10_000;
+    private static final int OPERATIONS_PER_WORKER = 200_000;
     private static final int TOTAL_OPERATIONS = NUM_WORKERS * OPERATIONS_PER_WORKER;
     private static final int INITIAL_BALANCE = 1000;
     private static final String RESULTS_FILE = "state_consistency_results.txt";
+
+    // Warmup parameters
+    private static final int WARMUP_ITERATIONS = 10;
+    private static final int WARMUP_OPERATIONS_PER_WORKER = 10_000; // A fraction of actual operations
 
     public static void main(String[] args) throws Exception {
         logger.info("Starting Actor vs Threads State Consistency Comparison");
@@ -118,7 +122,31 @@ public class StateConsistencyTest {
     private static ConsistencyResult runActorImplementation() throws Exception {
         logger.info("Running actor-based implementation (isolated state)...");
 
-        // Create actor system
+        // Warmup phase
+        logger.info("Starting warmup for actor-based implementation...");
+        for (int i = 0; i < WARMUP_ITERATIONS; i++) {
+            ActorSystem warmupSystem = new ActorSystem();
+            CountDownLatch warmupLatch = new CountDownLatch(NUM_WORKERS);
+            AccountActor warmupAccountActor = new AccountActor(warmupSystem, "warmup-account-" + i, INITIAL_BALANCE);
+            registerActor(warmupSystem, "warmup-account-" + i, warmupAccountActor);
+
+            List<WorkerActor> warmupWorkers = new ArrayList<>();
+            for (int j = 0; j < NUM_WORKERS; j++) {
+                WorkerActor worker = new WorkerActor(warmupSystem, "warmup-worker-" + i + "-" + j, "warmup-account-" + i, WARMUP_OPERATIONS_PER_WORKER, warmupLatch);
+                registerActor(warmupSystem, "warmup-worker-" + i + "-" + j, worker);
+                warmupWorkers.add(worker);
+            }
+            for (WorkerActor worker : warmupWorkers) {
+                worker.tell(new StartMessage());
+            }
+            warmupLatch.await();
+            warmupSystem.shutdown();
+            logger.debug("Warmup iteration {}/{} for actors completed.", i + 1, WARMUP_ITERATIONS);
+        }
+        logger.info("Warmup for actor-based implementation completed.");
+
+        // Actual measurement
+        logger.info("Starting actual measurement for actor-based implementation...");
         ActorSystem system = new ActorSystem();
 
         // Create completion latch
@@ -175,6 +203,31 @@ public class StateConsistencyTest {
     private static ConsistencyResult runSynchronizedThreadImplementation() throws Exception {
         logger.info("Running thread-based implementation with synchronized methods (shared state)...");
 
+        // Warmup phase
+        logger.info("Starting warmup for synchronized thread-based implementation...");
+        for (int i = 0; i < WARMUP_ITERATIONS; i++) {
+            SynchronizedAccount warmupAccount = new SynchronizedAccount(INITIAL_BALANCE);
+            CountDownLatch warmupLatch = new CountDownLatch(NUM_WORKERS);
+            ExecutorService warmupExecutor = Executors.newVirtualThreadPerTaskExecutor();
+            for (int j = 0; j < NUM_WORKERS; j++) {
+                warmupExecutor.submit(new SynchronizedWorkerThread(warmupAccount, WARMUP_OPERATIONS_PER_WORKER, warmupLatch));
+            }
+            warmupLatch.await();
+            warmupExecutor.shutdown();
+            try {
+                if (!warmupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    warmupExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                warmupExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            logger.debug("Warmup iteration {}/{} for synchronized threads completed.", i + 1, WARMUP_ITERATIONS);
+        }
+        logger.info("Warmup for synchronized thread-based implementation completed.");
+
+        // Actual measurement
+        logger.info("Starting actual measurement for synchronized thread-based implementation...");
         // Create shared state object
         SynchronizedAccount account = new SynchronizedAccount(INITIAL_BALANCE);
 
@@ -220,6 +273,31 @@ public class StateConsistencyTest {
     private static ConsistencyResult runAtomicThreadImplementation() throws Exception {
         logger.info("Running thread-based implementation with atomic references (shared state)...");
 
+        // Warmup phase
+        logger.info("Starting warmup for atomic thread-based implementation...");
+        for (int i = 0; i < WARMUP_ITERATIONS; i++) {
+            AtomicAccount warmupAccount = new AtomicAccount(INITIAL_BALANCE);
+            CountDownLatch warmupLatch = new CountDownLatch(NUM_WORKERS);
+            ExecutorService warmupExecutor = Executors.newVirtualThreadPerTaskExecutor();
+            for (int j = 0; j < NUM_WORKERS; j++) {
+                warmupExecutor.submit(new AtomicWorkerThread(warmupAccount, WARMUP_OPERATIONS_PER_WORKER, warmupLatch));
+            }
+            warmupLatch.await();
+            warmupExecutor.shutdown();
+            try {
+                if (!warmupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    warmupExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                warmupExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            logger.debug("Warmup iteration {}/{} for atomic threads completed.", i + 1, WARMUP_ITERATIONS);
+        }
+        logger.info("Warmup for atomic thread-based implementation completed.");
+
+        // Actual measurement
+        logger.info("Starting actual measurement for atomic thread-based implementation...");
         // Create shared state object
         AtomicAccount account = new AtomicAccount(INITIAL_BALANCE);
 
@@ -265,6 +343,31 @@ public class StateConsistencyTest {
     private static ConsistencyResult runUnsafeThreadImplementation() throws Exception {
         logger.info("Running thread-based implementation without synchronization (unsafe, shared state)...");
 
+        // Warmup phase
+        logger.info("Starting warmup for unsafe thread-based implementation...");
+        for (int i = 0; i < WARMUP_ITERATIONS; i++) {
+            UnsafeAccount warmupAccount = new UnsafeAccount(INITIAL_BALANCE);
+            CountDownLatch warmupLatch = new CountDownLatch(NUM_WORKERS);
+            ExecutorService warmupExecutor = Executors.newVirtualThreadPerTaskExecutor();
+            for (int j = 0; j < NUM_WORKERS; j++) {
+                warmupExecutor.submit(new UnsafeWorkerThread(warmupAccount, WARMUP_OPERATIONS_PER_WORKER, warmupLatch));
+            }
+            warmupLatch.await();
+            warmupExecutor.shutdown();
+            try {
+                if (!warmupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    warmupExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                warmupExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            logger.debug("Warmup iteration {}/{} for unsafe threads completed.", i + 1, WARMUP_ITERATIONS);
+        }
+        logger.info("Warmup for unsafe thread-based implementation completed.");
+
+        // Actual measurement
+        logger.info("Starting actual measurement for unsafe thread-based implementation...");
         // Create shared state object
         UnsafeAccount account = new UnsafeAccount(INITIAL_BALANCE);
 

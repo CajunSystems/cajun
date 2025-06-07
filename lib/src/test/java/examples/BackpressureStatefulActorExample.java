@@ -7,6 +7,7 @@ import com.cajunsystems.StatefulActor;
 import com.cajunsystems.backpressure.BackpressureSendOptions;
 import com.cajunsystems.backpressure.BackpressureStrategy;
 import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,15 +26,14 @@ public class BackpressureStatefulActorExample {
 
     public static void main(String[] args) throws Exception {
         // Create an actor system
-        ActorSystem system = new ActorSystem();
+        ActorSystem system = new ActorSystem(new ThreadPoolFactory(), new BackpressureConfig());
         
         // Create a stateful processor actor with backpressure enabled using the new interface-based approach
         // Initial capacity of 100 and max of 10,000
-        BackpressureConfig backpressureConfig = new BackpressureConfig.Builder()
-            .warningThreshold(0.7f)
-            .recoveryThreshold(0.3f)
-            .maxCapacity(10000)
-            .build();
+        BackpressureConfig backpressureConfig = new BackpressureConfig()
+            .setWarningThreshold(0.7f)
+            .setRecoveryThreshold(0.3f)
+            .setMaxCapacity(10000);
             
         // Create the processor state
         CounterState initialState = new CounterState(0);
@@ -226,7 +226,9 @@ public class BackpressureStatefulActorExample {
             // Create with backpressure enabled, initial capacity 100, max capacity 10,000
             super(system, actorId, new CounterState(0), 
                   new BackpressureConfig()
-                      .setEnabled(true)
+                      .setWarningThreshold(0.6f)
+                      .setCriticalThreshold(0.8f)
+                      .setRecoveryThreshold(0.4f)
                       .setMaxCapacity(10_000));
         }
         

@@ -1,0 +1,27 @@
+State Consistency Comparison Results:
+Total operations: 2000000 (across 10 workers, 200000 operations each)
+
+Actor-based implementation (isolated state):
+  Total time: 244 ms
+  Final balance: 1000 (expected: 1000)
+  Balance consistency violations: 0
+  Invariant violations: 0
+
+Thread-based implementation with synchronized methods (shared state):
+  Total time: 71 ms
+  Final balance: 1000 (expected: 1000)
+  Balance consistency violations: 0
+  Invariant violations: 0
+
+Thread-based implementation with atomic references (shared state):
+  Total time: 184 ms
+  Final balance: 1000 (expected: 1000)
+  Balance consistency violations: 586365
+  Invariant violations: 0
+
+Thread-based implementation without synchronization (unsafe, shared state):
+  Total time: 2 ms
+  Final balance: -870 (expected: 1000)
+  Balance consistency violations: 0
+  Invariant violations: 104106
+

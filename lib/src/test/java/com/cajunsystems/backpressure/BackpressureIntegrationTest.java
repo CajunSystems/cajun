@@ -5,6 +5,7 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +34,9 @@ public class BackpressureIntegrationTest {
 
     @BeforeEach
     public void setup() {
-        system = new ActorSystem();
+        // Initialize ActorSystem with a default ThreadPoolFactory and BackpressureConfig
+        // to ensure the SystemBackpressureMonitor is available for callbacks and status checks.
+        system = new ActorSystem(new ThreadPoolFactory(), new BackpressureConfig());
     }
 
     @AfterEach
@@ -45,7 +48,6 @@ public class BackpressureIntegrationTest {
     public void testBackpressureStates() throws Exception {
         // Test the backpressure state transitions
         BackpressureConfig config = new BackpressureConfig()
-                .setEnabled(true)
                 .setWarningThreshold(0.5f)
                 .setCriticalThreshold(0.8f)
                 .setRecoveryThreshold(0.3f);
@@ -153,7 +155,6 @@ public class BackpressureIntegrationTest {
     public void testBackpressureStrategyBlock() throws Exception {
         // Test that the BLOCK strategy works correctly
         BackpressureConfig config = new BackpressureConfig()
-                .setEnabled(true)
                 .setStrategy(BackpressureStrategy.BLOCK)  // Use BLOCK strategy
                 .setWarningThreshold(0.5f)  // Set thresholds
                 .setCriticalThreshold(0.8f);
@@ -248,7 +249,6 @@ public class BackpressureIntegrationTest {
     public void testHighPriorityMessages() throws Exception {
         // Test that high priority messages bypass backpressure
         BackpressureConfig config = new BackpressureConfig()
-                .setEnabled(true)
                 .setStrategy(BackpressureStrategy.DROP_NEW)  // Explicitly use DROP_NEW strategy
                 .setWarningThreshold(0.3f)  // Lower thresholds to ensure backpressure activates
                 .setCriticalThreshold(0.5f);
@@ -294,7 +294,7 @@ public class BackpressureIntegrationTest {
             Thread.sleep(300);
             
             // Verify backpressure is active
-            BackpressureStatus status = system.getBackpressureStatus(actor.self());
+            BackpressureStatus status = system.getBackpressureStatus(actorPid);
             logger.info("Status after filling mailbox: {}", status);
             
             // Skip the test if we can't get backpressure to activate
@@ -310,7 +310,7 @@ public class BackpressureIntegrationTest {
                     .setHighPriority(true);
             
             boolean priorityAccepted = system.tellWithOptions(
-                    actor.self(), "important-message", highPriorityOptions);
+                    actorPid, "important-message", highPriorityOptions);
             
             // Log the result but don't assert - high priority messages should always be accepted
             logger.info("High priority message accepted: {}", priorityAccepted);
@@ -337,7 +337,7 @@ public class BackpressureIntegrationTest {
                     .setHighPriority(false);
             
             boolean regularAccepted = system.tellWithOptions(
-                    actor.self(), "should-be-dropped", regularOptions);
+                    actorPid, "should-be-dropped", regularOptions);
             
             logger.info("Regular message accepted: {}", regularAccepted);
             if (!regularAccepted) {

@@ -56,7 +56,6 @@ public class BillionRowChallengeTest {
 
         // Create backpressure config
         BackpressureConfig backpressureConfig = new BackpressureConfig();
-        backpressureConfig.setEnabled(true);
         backpressureConfig.setHighWatermark(0.9f); // Higher watermark for better throughput
         backpressureConfig.setLowWatermark(0.3f); // Higher low watermark
 
@@ -152,7 +151,7 @@ public class BillionRowChallengeTest {
         
         // Backpressure configuration
         logger.info("\n----- Backpressure Configuration -----");
-        logger.info("Backpressure enabled: true");
+        logger.info("Backpressure enabled: false");
         logger.info("High watermark: 0.9");
         logger.info("Low watermark: 0.3");
         logger.info("Mailbox capacity: {}", MAILBOX_CAPACITY);

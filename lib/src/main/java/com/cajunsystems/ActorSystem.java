@@ -91,7 +91,7 @@ public class ActorSystem {
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory(), new BackpressureConfig(), new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(new ThreadPoolFactory(), null, new MailboxConfig(), new DefaultMailboxProvider<>());
     }
 
     /**
@@ -100,7 +100,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), new BackpressureConfig(), new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new DefaultMailboxProvider<>());
     }
 
     /**
@@ -109,7 +109,7 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
-        this(threadPoolConfig, new BackpressureConfig(), new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(threadPoolConfig, null, new MailboxConfig(), new DefaultMailboxProvider<>());
     }
 
     /**
@@ -148,7 +148,7 @@ public class ActorSystem {
                        MailboxProvider<?> mailboxProvider) {
         this.actors = new ConcurrentHashMap<>();
         this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
-        this.backpressureConfig = backpressureConfig != null ? backpressureConfig : new BackpressureConfig();
+        this.backpressureConfig = backpressureConfig; // Allow null to disable backpressure
         this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
         this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider<>();
         
@@ -163,8 +163,8 @@ public class ActorSystem {
             this.sharedExecutor = null;
         }
         
-        // Initialize the backpressure monitor
-        this.backpressureMonitor = new SystemBackpressureMonitor(this);
+        // Initialize the backpressure monitor only if backpressure is configured
+        this.backpressureMonitor = this.backpressureConfig != null ? new SystemBackpressureMonitor(this) : null;
         
         logger.debug("ActorSystem created with {} scheduler threads, thread pool type: {}", 
                 this.threadPoolConfig.getSchedulerThreads(), this.threadPoolConfig.getExecutorType());

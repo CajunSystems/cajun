@@ -950,7 +950,35 @@ Key snapshot features:
 
 ## Backpressure Support in Actors
 
-Cajun provides a sophisticated backpressure system to help actors manage high load scenarios gracefully. The system has been streamlined to improve maintainability, simplify the API, and enhance performance by reducing reflection usage and providing type-safe configuration options.
+Cajun features a robust backpressure system to help actors manage high load scenarios effectively. Backpressure is an opt-in feature, configured using `BackpressureConfig` objects.
+
+### Enabling and Configuring Backpressure
+
+Backpressure can be configured at the `ActorSystem` level, which then applies to actors by default, or dynamically for individual actors if specific settings are needed.
+
+#### System-Wide Configuration
+To enable and configure backpressure for all actors by default within an `ActorSystem`, provide a `BackpressureConfig` object during its creation. Actors created within this system will inherit this configuration. If no `BackpressureConfig` is supplied to the `ActorSystem`, backpressure is disabled by default for the system.
+
+**Example:**
+```java
+// Define backpressure settings using BackpressureConfig
+BackpressureConfig systemBpConfig = new BackpressureConfig()
+    .setStrategy(BackpressureStrategy.BLOCK)      // Default strategy
+    .setWarningThreshold(0.7f)                 // 70% mailbox capacity
+    .setCriticalThreshold(0.9f)                // 90% mailbox capacity
+    .setRecoveryThreshold(0.5f);                // 50% mailbox capacity
+
+// Create ActorSystem with this configuration
+// This also requires a ThreadPoolFactory
+ActorSystem system = new ActorSystem(new ThreadPoolFactory(), systemBpConfig);
+
+// Actors created in this system will now use these backpressure settings by default.
+```
+
+#### Actor-Specific Configuration
+Actors primarily inherit their backpressure configuration from the `ActorSystem` they belong to. If you need to customize backpressure settings for a specific actor (e.g., use a different strategy or thresholds than the system default, or enable it if the system has it disabled), you can do so dynamically after the actor has been created using the `BackpressureBuilder`. See the "Dynamically Managing Backpressure" section for details.
+
+If an actor is part of an `ActorSystem` that has backpressure disabled (no `BackpressureConfig` provided to the system), backpressure will also be disabled for that actor by default. It can then be enabled and configured specifically for that actor using the `BackpressureBuilder`.
 
 ### Backpressure States
 
@@ -970,7 +998,9 @@ Cajun supports multiple strategies for handling backpressure:
 3. **DROP_OLDEST**: Remove oldest messages from the mailbox using the direct Actor.dropOldestMessage method
 4. **CUSTOM**: Use a custom strategy by implementing a `CustomBackpressureHandler`
 
-### Using the Enhanced BackpressureBuilder
+### Dynamically Managing Backpressure with BackpressureBuilder
+
+While `BackpressureConfig` sets the initial backpressure configuration (either system-wide or for an actor at creation), the `BackpressureBuilder` allows for dynamic adjustments to an actor's backpressure settings after it has been created. This is useful for overriding system defaults for a specific actor, or for enabling and configuring backpressure for an actor if its `ActorSystem` has backpressure disabled by default.
 
 ```java
 // Direct actor configuration with type safety

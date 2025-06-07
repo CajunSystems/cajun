@@ -1,6 +1,5 @@
 package com.cajunsystems.backpressure;
 
-
 import com.cajunsystems.Actor;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
@@ -23,7 +22,7 @@ public class BackpressureBuilder<T> {
     private final BackpressureConfig backpressureConfig;
     private Consumer<BackpressureEvent> eventCallback;
     private BackpressureManager<T> manager;
-    
+
     /**
      * Creates a new builder for the specified actor.
      *
@@ -34,7 +33,7 @@ public class BackpressureBuilder<T> {
         this.pid = null;
         this.backpressureConfig = new BackpressureConfig();
     }
-    
+
     /**
      * Creates a new builder for the actor identified by the specified PID.
      *
@@ -47,28 +46,7 @@ public class BackpressureBuilder<T> {
         this.backpressureConfig = new BackpressureConfig();
         this.manager = system.getBackpressureMonitor().getBackpressureManager(pid);
     }
-    
-    /**
-     * Enables backpressure on the actor.
-     * Backpressure is enabled by default.
-     *
-     * @return This builder for method chaining
-     */
-    public BackpressureBuilder<T> enable() {
-        backpressureConfig.setEnabled(true);
-        return this;
-    }
-    
-    /**
-     * Disables backpressure on the actor.
-     *
-     * @return This builder for method chaining
-     */
-    public BackpressureBuilder<T> disable() {
-        backpressureConfig.setEnabled(false);
-        return this;
-    }
-    
+
     /**
      * Sets the warning threshold as a fill ratio (0.0 to 1.0).
      * When the mailbox fill ratio exceeds this threshold, the actor
@@ -81,7 +59,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setWarningThreshold(threshold);
         return this;
     }
-    
+
     /**
      * Sets the critical threshold as a fill ratio (0.0 to 1.0).
      * When the mailbox fill ratio exceeds this threshold, the actor
@@ -94,7 +72,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setCriticalThreshold(threshold);
         return this;
     }
-    
+
     /**
      * Sets the recovery threshold as a fill ratio (0.0 to 1.0).
      * When the mailbox fill ratio falls below this threshold after
@@ -108,7 +86,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setRecoveryThreshold(threshold);
         return this;
     }
-    
+
     /**
      * Sets the maximum number of backpressure events to keep in history.
      *
@@ -119,7 +97,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setMaxEventsToKeep(maxEvents);
         return this;
     }
-    
+
     /**
      * Sets the backpressure strategy to use.
      *
@@ -130,7 +108,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setStrategy(strategy);
         return this;
     }
-    
+
     /**
      * Sets a custom handler for backpressure.
      * This is only used if the strategy is set to CUSTOM.
@@ -144,7 +122,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setStrategy(BackpressureStrategy.CUSTOM);
         return this;
     }
-    
+
     /**
      * Sets the interval for updating metrics and checking for resize,
      * in milliseconds.
@@ -156,7 +134,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setMetricsUpdateIntervalMs(intervalMs);
         return this;
     }
-    
+
     /**
      * Sets the high watermark for the backpressure buffer.
      *
@@ -167,7 +145,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setHighWatermark(highWatermark);
         return this;
     }
-    
+
     /**
      * Sets the low watermark for the backpressure buffer.
      *
@@ -178,7 +156,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setLowWatermark(lowWatermark);
         return this;
     }
-    
+
     /**
      * Sets the callback to be notified of backpressure events.
      * This callback will receive detailed information about the state
@@ -191,7 +169,7 @@ public class BackpressureBuilder<T> {
         this.eventCallback = callback;
         return this;
     }
-    
+
     /**
      * Sets the growth factor for the backpressure buffer.
      *
@@ -202,7 +180,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setGrowthFactor(factor);
         return this;
     }
-    
+
     /**
      * Sets the shrink factor for the backpressure buffer.
      *
@@ -213,7 +191,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setShrinkFactor(factor);
         return this;
     }
-    
+
     /**
      * Sets the minimum capacity for the backpressure buffer.
      *
@@ -224,7 +202,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setMinCapacity(capacity);
         return this;
     }
-    
+
     /**
      * Sets the maximum capacity for the mailbox.
      *
@@ -235,7 +213,7 @@ public class BackpressureBuilder<T> {
         backpressureConfig.setMaxCapacity(capacity);
         return this;
     }
-    
+
     /**
      * Sets the interval at which backpressure metrics are updated.
      *
@@ -303,59 +281,40 @@ public class BackpressureBuilder<T> {
             .withGrowthFactor(2.0f)
             .withMetricsUpdateInterval(1, TimeUnit.SECONDS);
     }
-    
+
     /**
      * Applies the configuration to the actor and returns the actor.
      * This method finalizes the backpressure configuration.
-     *
-     * @return The configured actor or null if using PID-based configuration
      */
-    public Actor<T> apply() {
+    public void apply() {
+        // Apply the configuration
         if (actor != null) {
-            // Direct actor configuration
-            actor.initializeBackpressure(backpressureConfig, eventCallback);
-            return actor;
-        } else if (manager != null) {
-            // PID-based configuration through ActorSystem
-            if (backpressureConfig.isEnabled()) {
-                manager.enable(backpressureConfig);
+            // actor.initializeBackpressure(backpressureConfig, eventCallback); // Removed, Actor needs a new method for this if live reconfiguration is desired.
+            // For now, this path does not reconfigure a live actor's backpressure directly through the builder.
+            // The BackpressureConfig built here would typically be used at actor creation.
+            // If a BackpressureManager exists on the actor, we could potentially update it.
+            BackpressureManager<T> actorManager = actor.getBackpressureManager();
+            if (actorManager != null) {
+                actorManager.enable(this.backpressureConfig); // Update existing manager
+                if (this.eventCallback != null) {
+                    actorManager.setCallback(this.eventCallback);
+                }
             } else {
-                manager.disable();
+                // This case implies the actor was created without backpressure. 
+                // To enable it now would require more significant changes to Actor class or recreation.
+                // Consider logging a warning or throwing an exception if this path is taken with intent to enable.
+                System.err.println("Warning: Attempting to apply backpressure config via builder to an actor initially without backpressure. This may not enable backpressure as expected without actor recreation or a dedicated reconfiguration method.");
             }
-            
-            // Apply strategy if set
-            if (backpressureConfig.getStrategy() != null) {
-                manager.setStrategy(backpressureConfig.getStrategy());
-            }
-            
-            // Apply custom handler if set
-            if (backpressureConfig.getStrategy() == BackpressureStrategy.CUSTOM && 
-                backpressureConfig.getCustomHandler() != null) {
-                // We need to use raw types here because of Java's generic type erasure
-                // The CustomBackpressureHandler interface is parameterized but we can't check
-                // the actual type parameter at runtime
-                @SuppressWarnings("unchecked") // This is actually necessary here
-                CustomBackpressureHandler<T> handler = 
-                    (CustomBackpressureHandler<T>) backpressureConfig.getCustomHandler();
-                manager.setCustomHandler(handler);
-            }
-            
-            // Apply callback if set
+
+        } else if (pid != null && manager != null) {
+            // For PID-based configuration, re-initialize the manager with the new config.
+            manager.enable(backpressureConfig);
             if (eventCallback != null) {
                 manager.setCallback(eventCallback);
             }
-            
-            // Apply max events to keep if set
-            if (backpressureConfig.getMaxEventsToKeep() > 0) {
-                manager.setMaxEventsToKeep(backpressureConfig.getMaxEventsToKeep());
-            }
-            
-            return null;
         }
-        
-        return null;
     }
-    
+
     /**
      * Gets the current backpressure status for the actor.
      * Only available when using PID-based configuration.
@@ -365,7 +324,7 @@ public class BackpressureBuilder<T> {
     public BackpressureStatus getStatus() {
         return manager != null ? manager.getStatus() : null;
     }
-    
+
     /**
      * Gets the PID of the actor being configured.
      * Only available when using PID-based configuration.

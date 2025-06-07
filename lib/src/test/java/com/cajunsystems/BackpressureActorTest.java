@@ -42,7 +42,9 @@ public class BackpressureActorTest {
     public void testBackpressureEnabled() throws Exception {
         // Create an actor with backpressure enabled and a small mailbox
         BackpressureConfig backpressureConfig = new BackpressureConfig()
-                .setEnabled(true);
+                .setWarningThreshold(0.5f)
+                .setCriticalThreshold(0.8f)
+                .setRecoveryThreshold(0.3f);
         ResizableMailboxConfig mailboxConfig = new ResizableMailboxConfig()
                 .setInitialCapacity(10)
                 .setMaxCapacity(20);
@@ -51,13 +53,8 @@ public class BackpressureActorTest {
         TestActor actor = new TestActor(system, "direct-test-actor", backpressureConfig, mailboxConfig);
 
         try {
-            // Use reflection to verify backpressureEnabled field is set correctly
-            Field backpressureEnabledField = Actor.class.getDeclaredField("backpressureEnabled");
-            backpressureEnabledField.setAccessible(true);
-            boolean backpressureEnabled = (boolean) backpressureEnabledField.get(actor);
-
-            // Verify backpressure is enabled
-            assertTrue(backpressureEnabled, "backpressureEnabled should be true");
+            // Verify backpressure is enabled by checking if BackpressureManager is present
+            assertNotNull(actor.getBackpressureManager(), "BackpressureManager should be initialized when BackpressureConfig is provided");
 
             // Verify mailbox is a ResizableBlockingQueue
             Field mailboxField = Actor.class.getDeclaredField("mailbox");
@@ -126,7 +123,9 @@ public class BackpressureActorTest {
         float resizeFactor = 2.0f;
 
         BackpressureConfig backpressureConfig = new BackpressureConfig()
-                .setEnabled(true);
+                .setWarningThreshold(0.5f)
+                .setCriticalThreshold(0.8f)
+                .setRecoveryThreshold(0.3f);
 
         // Create a new ResizableMailboxConfig directly
         ResizableMailboxConfig mailboxConfig = new ResizableMailboxConfig();
@@ -177,7 +176,9 @@ public class BackpressureActorTest {
         int maxCapacity = 10;
 
         BackpressureConfig backpressureConfig = new BackpressureConfig()
-                .setEnabled(true)
+                .setWarningThreshold(0.5f)
+                .setCriticalThreshold(0.8f)
+                .setRecoveryThreshold(0.3f)
                 .setHighWatermark(0.5f);
         ResizableMailboxConfig mailboxConfig = new ResizableMailboxConfig()
                 .setInitialCapacity(initialCapacity)

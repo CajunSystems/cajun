@@ -40,14 +40,7 @@ public abstract class Actor<Message> {
     // Timeout in seconds for actor shutdown
     private int shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
     private final MailboxProcessor<Message> mailboxProcessor;
-
-    // Backpressure support
-    private boolean backpressureEnabled = false;
-    private int maxCapacity = Integer.MAX_VALUE; // Maximum capacity of the mailbox
-    private float warningThreshold = DEFAULT_HIGH_WATERMARK;
-    private float recoveryThreshold = DEFAULT_LOW_WATERMARK;
-    private BackpressureStrategy backpressureStrategy = BackpressureStrategy.BLOCK;
-    private CustomBackpressureHandler<Message> customBackpressureHandler;
+    private final int actorMailboxMaxCapacity; // Added to store configured max capacity
 
     // For tracking metrics
     private final AtomicLong messagesProcessedSinceLastRateCalculation = new AtomicLong(0);
@@ -73,7 +66,7 @@ public abstract class Actor<Message> {
      * @return The current mailbox capacity
      */
     public int getCapacity() {
-        return maxCapacity;
+        return this.actorMailboxMaxCapacity; // Changed to return stored max capacity
     }
 
     /**
@@ -92,15 +85,6 @@ public abstract class Actor<Message> {
      */
     public boolean isBackpressureActive() {
         return backpressureManager != null && backpressureManager.isBackpressureActive();
-    }
-
-    /**
-     * Checks if backpressure is enabled for this actor.
-     *
-     * @return true if backpressure is enabled, false otherwise
-     */
-    public boolean isBackpressureEnabled() {
-        return backpressureEnabled;
     }
 
     /**
@@ -217,25 +201,24 @@ public abstract class Actor<Message> {
         MailboxProvider<Message> effectiveMp = (MailboxProvider<Message>) ((mailboxProviderInstance != null)
                 ? mailboxProviderInstance
                 : system.getMailboxProvider());
-
-        // Handle null mailboxConfig by defaulting to system's MailboxConfig, then ResizableMailboxConfig for its parameters
         MailboxConfig effectiveMailboxConfig = (mailboxConfig != null) ? mailboxConfig : system.getMailboxConfig();
-        if (effectiveMailboxConfig == null) { // If system also didn't have one
-            effectiveMailboxConfig = new ResizableMailboxConfig();
-        }
+
+        this.actorMailboxMaxCapacity = effectiveMailboxConfig.getMaxCapacity(); // Initialize actorMailboxMaxCapacity
+
+        // Determine workload type hint
+        ThreadPoolFactory.WorkloadType workloadTypeHint = (effectiveTpf != null)
+                ? effectiveTpf.getInferredWorkloadType() 
+                : ThreadPoolFactory.WorkloadType.IO_BOUND; // Changed GENERAL to IO_BOUND
 
         // Get mailbox configuration values (maxCapacity is used for backpressure)
-        this.maxCapacity = effectiveMailboxConfig.getMaxCapacity(); // Store for backpressure
+        this.mailbox = effectiveMp.createMailbox(effectiveMailboxConfig, workloadTypeHint); // Pass MailboxConfig and WorkloadType
 
-        // Initialize backpressure configuration
-        initializeBackpressure(backpressureConfig, null, this.maxCapacity);
-
-        // Create the mailbox using the MailboxProvider
-        ThreadPoolFactory.WorkloadType workloadTypeHint = (effectiveTpf != null)
-                ? getWorkloadTypeFromThreadPool(effectiveTpf)
-                : null; // No hint if no factory
-
-        this.mailbox = effectiveMp.createMailbox(effectiveMailboxConfig, workloadTypeHint);
+        // Initialize BackpressureManager only if backpressureConfig is provided
+        if (backpressureConfig != null) {
+            this.backpressureManager = new BackpressureManager<>(this, backpressureConfig); // Removed system.getSystemBackpressureMonitor()
+        } else {
+            this.backpressureManager = null;
+        }
 
         // Use configuration from explicitly provided thread pool factory, otherwise use defaults
         int configuredBatchSize = DEFAULT_BATCH_SIZE;
@@ -296,7 +279,7 @@ public abstract class Actor<Message> {
         children.clear();
 
         // Shutdown backpressure manager if it exists and is enabled
-        if (backpressureManager != null && backpressureEnabled) {
+        if (backpressureManager != null) {
             logger.debug("Shutting down backpressure manager for actor {}.", actorId);
             backpressureManager.shutdown();
         }
@@ -323,9 +306,9 @@ public abstract class Actor<Message> {
      * This is called periodically to assess the current load and adjust backpressure behavior if needed.
      */
     private void updateMetrics() {
-        if (backpressureManager != null && backpressureEnabled) {
+        if (backpressureManager != null) {
             int currentSize = mailboxProcessor.getCurrentSize();
-            int capacity = mailboxProcessor.getRemainingCapacity() + currentSize;
+            int capacity = getCapacity(); // This will now correctly use actorMailboxMaxCapacity
             long rate = calculateProcessingRate();
 
             // Update metrics in the manager
@@ -369,7 +352,7 @@ public abstract class Actor<Message> {
      */
     protected boolean checkBackpressure(BackpressureSendOptions options) {
         // Use the backpressure manager for new functionality
-        if (backpressureManager != null && backpressureEnabled) {
+        if (backpressureManager != null) {
             return backpressureManager.shouldAcceptMessage(options);
         } else {
             // No backpressure management when disabled, always accept
@@ -420,7 +403,7 @@ public abstract class Actor<Message> {
         mailboxProcessor.tell(message);
 
         // Update metrics if backpressure is enabled
-        if (backpressureEnabled) {
+        if (backpressureManager != null) {
             updateMetrics();
         }
     }
@@ -583,73 +566,6 @@ public abstract class Actor<Message> {
     }
 
     /**
-     * Initialize the backpressure system with the provided configuration and callback.
-     *
-     * @param backpressureConfig The backpressure configuration to use
-     * @param callback           The callback to invoke when backpressure events occur
-     */
-    public void initializeBackpressure(BackpressureConfig backpressureConfig, Consumer<BackpressureEvent> callback) {
-        initializeBackpressure(backpressureConfig, callback, backpressureConfig != null ? backpressureConfig.getMaxCapacity() : Integer.MAX_VALUE);
-    }
-
-    /**
-     * Initialize the backpressure system with the provided configuration, callback, and capacity.
-     *
-     * @param backpressureConfig The backpressure configuration to use
-     * @param callback           The callback to invoke when backpressure events occur
-     * @param maxCapacity        The maximum capacity of the mailbox
-     */
-    private void initializeBackpressure(BackpressureConfig backpressureConfig, Consumer<BackpressureEvent> callback, int maxCapacity) {
-        // Handle null configuration
-        if (backpressureConfig == null) {
-            this.backpressureEnabled = false;
-            this.warningThreshold = DEFAULT_HIGH_WATERMARK;
-            this.recoveryThreshold = DEFAULT_LOW_WATERMARK;
-            this.backpressureStrategy = BackpressureStrategy.BLOCK;
-            this.customBackpressureHandler = null;
-            return;
-        }
-
-        // Set up basic backpressure fields
-        this.warningThreshold = backpressureConfig.getWarningThreshold();
-        this.recoveryThreshold = backpressureConfig.getRecoveryThreshold();
-        this.backpressureStrategy = backpressureConfig.getStrategy();
-        if (backpressureConfig.getCustomHandler() != null) {
-            @SuppressWarnings("unchecked")
-            CustomBackpressureHandler<Message> handler = (CustomBackpressureHandler<Message>) backpressureConfig.getCustomHandler();
-            this.customBackpressureHandler = handler;
-        }
-        this.backpressureEnabled = backpressureConfig.isEnabled();
-        this.maxCapacity = maxCapacity;
-
-        // Create backpressure manager with the current configuration
-        BackpressureConfig config = new BackpressureConfig();
-        config.setEnabled(backpressureEnabled);
-        config.setWarningThreshold(warningThreshold);
-        config.setCriticalThreshold(warningThreshold * 1.2f); // Calculate based on warning threshold
-        config.setRecoveryThreshold(recoveryThreshold);
-        config.setStrategy(backpressureStrategy);
-        config.setCustomHandler(customBackpressureHandler);
-        config.setMaxCapacity(maxCapacity);
-
-        // Initialize the backpressure manager
-        this.backpressureManager = new BackpressureManager<Message>(this, config);
-
-        // Register the callback if provided
-        if (callback != null) {
-            this.backpressureManager.setCallback(callback);
-        }
-    }
-
-    /**
-     * Determines the workload type from ThreadPoolFactory configuration.
-     * This is kept as it's used to provide a hint to the MailboxProvider.
-     */
-    private ThreadPoolFactory.WorkloadType getWorkloadTypeFromThreadPool(ThreadPoolFactory factory) {
-        return factory.getInferredWorkloadType();
-    }
-
-    /**
      * Drops the oldest message from the mailbox to make room for new messages.
      * This is used by the backpressure system when using the DROP_OLDEST strategy.
      *
@@ -657,5 +573,14 @@ public abstract class Actor<Message> {
      */
     public boolean dropOldestMessage() {
         return mailboxProcessor.dropOldestMessage();
+    }
+
+    /**
+     * Gets the BackpressureManager for this actor, if configured.
+     *
+     * @return The BackpressureManager instance, or null if backpressure is not configured.
+     */
+    public BackpressureManager<Message> getBackpressureManager() {
+        return this.backpressureManager;
     }
 }

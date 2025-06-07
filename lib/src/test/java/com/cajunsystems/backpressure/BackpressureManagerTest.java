@@ -30,7 +30,6 @@ public class BackpressureManagerTest {
         
         // Configure with default settings
         config = new BackpressureConfig()
-            .setEnabled(true)
             .setStrategy(BackpressureStrategy.DROP_NEW)
             .setWarningThreshold(0.25f)
             .setHighWatermark(0.7f)

@@ -144,7 +144,7 @@ public class SystemBackpressureMonitor {
     public <T> boolean tellWithOptions(Pid pid, T message, BackpressureSendOptions options) {
         Actor<T> actor = getActorOrThrow(pid);
         
-        if (!actor.isBackpressureEnabled()) {
+        if (actor.getBackpressureManager() == null) { // Check if backpressure is configured via manager presence
             // When backpressure is disabled, send through the actor's PID
             pid.tell(message);
             return true;
@@ -210,9 +210,10 @@ public class SystemBackpressureMonitor {
      * @return true if backpressure is active, false otherwise
      * @throws IllegalArgumentException if the actor does not exist
      */
+    @SuppressWarnings("unchecked")
     public <T> boolean isBackpressureActive(Pid pid) {
-        Actor<T> actor = getActorOrThrow(pid);
-        return actor.isBackpressureEnabled() && getBackpressureManager(pid).isBackpressureActive();
+        Actor<T> actor = getActorOrThrow(pid); // Get actor instance
+        return actor.isBackpressureActive(); // Use actor's own method
     }
     
     /**

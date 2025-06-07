@@ -4,7 +4,9 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.config.BackpressureConfig;
+import com.cajunsystems.config.MailboxConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,8 +23,8 @@ public class BackpressureActorExample {
     private static final Logger logger = LoggerFactory.getLogger(BackpressureActorExample.class);
 
     public static void main(String[] args) throws Exception {
-        // Create an actor system optimized for high throughput
-        ActorSystem system = new ActorSystem();
+        // Create an actor system optimized for high throughput, ensuring backpressure capabilities
+        ActorSystem system = new ActorSystem(new ThreadPoolFactory(), new BackpressureConfig());
         
         // Create a processor actor with backpressure enabled and custom mailbox configuration
         BackpressureConfig backpressureConfig = new BackpressureConfig();

@@ -38,7 +38,6 @@ public class SimpleBackpressureTest {
     public void testBackpressureBasics() throws Exception {
         // Create a simple actor with backpressure configuration
         BackpressureConfig config = new BackpressureConfig()
-                .setEnabled(true)
                 .setStrategy(BackpressureStrategy.DROP_NEW);
         
         MailboxConfig mailboxConfig = new MailboxConfig()

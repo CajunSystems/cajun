@@ -21,7 +21,6 @@ public class BackpressureConfig {
     private float shrinkFactor;
     private float highWatermark;
     private float lowWatermark;
-    private boolean enabled = true;
     private float warningThreshold = 0.7f;
     private float criticalThreshold = 0.9f;
     private float recoveryThreshold = 0.5f;
@@ -40,7 +39,6 @@ public class BackpressureConfig {
         this.shrinkFactor = DEFAULT_SHRINK_FACTOR;
         this.highWatermark = DEFAULT_HIGH_WATERMARK;
         this.lowWatermark = DEFAULT_LOW_WATERMARK;
-        this.enabled = true;
         this.warningThreshold = 0.7f;
         this.criticalThreshold = 0.9f;
         this.recoveryThreshold = 0.5f;
@@ -48,26 +46,6 @@ public class BackpressureConfig {
         this.customHandler = null;
         this.maxEventsToKeep = 20;
         this.maxCapacity = Integer.MAX_VALUE;
-    }
-
-    /**
-     * Sets whether backpressure is enabled.
-     * 
-     * @param enabled Whether backpressure is enabled
-     * @return This BackpressureConfig instance
-     */
-    public BackpressureConfig setEnabled(boolean enabled) {
-        this.enabled = enabled;
-        return this;
-    }
-
-    /**
-     * Gets whether backpressure is enabled.
-     * 
-     * @return Whether backpressure is enabled
-     */
-    public boolean isEnabled() {
-        return enabled;
     }
 
     /**
@@ -135,8 +113,6 @@ public class BackpressureConfig {
         this.lowWatermark = lowWatermark;
         return this;
     }
-
-    // Initial capacity and max capacity are now part of MailboxConfig
 
     /**
      * Gets the minimum capacity for the backpressure buffer.
@@ -337,17 +313,6 @@ public class BackpressureConfig {
      */
     public static class Builder {
         private final BackpressureConfig config = new BackpressureConfig();
-        
-        /**
-         * Sets whether backpressure is enabled.
-         * 
-         * @param enabled Whether backpressure is enabled
-         * @return This builder instance
-         */
-        public Builder enabled(boolean enabled) {
-            config.setEnabled(enabled);
-            return this;
-        }
         
         /**
          * Sets the minimum capacity for the backpressure buffer.
