@@ -35,3 +35,8 @@ build
 # IDE metadata
 .idea
 .vscode
+
+# Environment variables
+.env*
+.env
+!.env.example

@@ -58,11 +58,11 @@ Key benefits of using Cajun:
 
 ## Installation
 
-Add Cajun to your project using Gradle:
+Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'systems.cajun:cajun-core:latest.release'
+    implementation 'com.cajunsystems:cajun:0.1.0'
 }
 ```
 
@@ -70,10 +70,53 @@ Or with Maven:
 
 ```xml
 <dependency>
-    <groupId>systems.cajun</groupId>
-    <artifactId>cajun-core</artifactId>
-    <version>latest.release</version>
+    <groupId>com.cajunsystems</groupId>
+    <artifactId>cajun</artifactId>
+    <version>0.1.0</version>
 </dependency>
+```
+
+**Note**: Since Cajun uses Java preview features, you need to enable preview features in your build:
+
+**Gradle:**
+```gradle
+tasks.withType(JavaCompile) {
+    options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(JavaExec) {
+    jvmArgs += '--enable-preview'
+}
+
+tasks.withType(Test) {
+    jvmArgs += '--enable-preview'
+}
+```
+
+**Maven:**
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.11.0</version>
+            <configuration>
+                <compilerArgs>
+                    <arg>--enable-preview</arg>
+                </compilerArgs>
+            </configuration>
+        </plugin>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>3.0.0</version>
+            <configuration>
+                <argLine>--enable-preview</argLine>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
 ```
 
 ## Usage
