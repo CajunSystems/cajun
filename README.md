@@ -62,7 +62,7 @@ Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.1.1'
+    implementation 'com.cajunsystems:cajun:0.1.2'
 }
 ```
 
@@ -72,7 +72,7 @@ Or with Maven:
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun</artifactId>
-    <version>0.1.1</version>
+    <version>0.1.2</version>
 </dependency>
 ```
 
@@ -172,9 +172,47 @@ public class HelloWorld {
         System.out.println("Received: " + response.greeting());
         
         // 5. Shutdown the system when done
-        system.shutdownAll();
+        system.shutdown();
     }
 }
+```
+
+### Actor System Lifecycle
+
+**Important**: The Cajun actor system keeps the JVM alive after the main method completes. This is the expected behavior for a production actor system.
+
+- **JVM Stays Alive**: The actor system's scheduler threads are non-daemon threads, which keep the JVM running even after the main thread exits. This ensures actors can continue processing messages.
+- **Explicit Shutdown Required**: You must call `system.shutdown()` to gracefully shut down the actor system and allow the JVM to exit.
+
+```java
+public static void main(String[] args) {
+    ActorSystem system = new ActorSystem();
+    
+    Pid actor = system.actorOf(new Handler<String>() {
+        @Override
+        public void receive(String message, ActorContext context) {
+            System.out.println("Received: " + message);
+        }
+    }).withId("demo-actor").spawn();
+    
+    actor.tell("Hello");
+    
+    // Main thread exits here, but JVM stays alive
+    System.out.println("Main exiting - JVM will continue running");
+    
+    // To allow JVM to exit, you must explicitly shutdown:
+    // system.shutdown();
+}
+```
+
+**Shutdown Options:**
+
+```java
+// Graceful shutdown - waits for actors to complete current work
+system.shutdown();
+
+// Or stop individual actors
+system.stopActor(actorPid);
 ```
 
 ### Creating Actors
@@ -796,7 +834,7 @@ public class AskPatternExample {
         PongMessage response = future.get();
         System.out.println("Received pong!");
         
-        system.shutdownAll();
+        system.shutdown();
     }
 }
 ```

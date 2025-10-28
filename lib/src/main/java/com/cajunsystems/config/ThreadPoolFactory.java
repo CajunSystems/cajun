@@ -122,12 +122,29 @@ public class ThreadPoolFactory {
      * @return A new scheduled executor service
      */
     public ScheduledExecutorService createScheduledExecutorService(String poolName) {
-        if (useNamedThreads) {
-            return Executors.newScheduledThreadPool(schedulerThreads,
-                    createNamedThreadFactory(poolName + "-scheduler"));
-        } else {
-            return Executors.newScheduledThreadPool(schedulerThreads);
-        }
+        // Always use a custom thread factory to ensure non-daemon threads
+        // This keeps the JVM alive until system.shutdown() is called
+        ThreadFactory factory = useNamedThreads 
+            ? createNamedThreadFactory(poolName + "-scheduler")
+            : createNonDaemonThreadFactory();
+        return Executors.newScheduledThreadPool(schedulerThreads, factory);
+    }
+    
+    /**
+     * Creates a thread factory that produces non-daemon threads.
+     * These threads will keep the JVM alive until explicitly shut down.
+     */
+    private ThreadFactory createNonDaemonThreadFactory() {
+        return new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread thread = new Thread(r, "actor-system-" + threadNumber.getAndIncrement());
+                thread.setDaemon(false); // Non-daemon to keep JVM alive
+                return thread;
+            }
+        };
     }
 
     /**
@@ -197,10 +214,9 @@ public class ThreadPoolFactory {
                             .name(threadPrefix + threadNumber.getAndIncrement())
                             .unstarted(r);
                 } else {
-                    // Platform thread
+                    // Platform thread - non-daemon to keep JVM alive until system.shutdown()
                     Thread platformThread = new Thread(r, threadPrefix + threadNumber.getAndIncrement());
-                    // platformThread.setDaemon(false); // Default: non-daemon unless created by a daemon thread.
-                                                       // Consider if daemon status needs to be configurable or is fixed.
+                    platformThread.setDaemon(false);
                     return platformThread;
                 }
             }

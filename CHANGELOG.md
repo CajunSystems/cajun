@@ -5,6 +5,17 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2025-10-28
+
+### Fixed
+- **JVM Lifecycle Management**: Ensured that the actor system's scheduler threads are non-daemon threads, keeping the JVM alive after the main method completes until `system.shutdown()` is explicitly called. This is the correct behavior for a production actor system.
+
+### Changed
+- **Enhanced Documentation**: 
+  - Added "Actor System Lifecycle" section explaining JVM lifecycle behavior
+  - Clarified that explicit `system.shutdown()` is required to exit the JVM
+  - Added examples demonstrating lifecycle management
+
 ## [0.1.1] - 2025-10-28
 
 ### Fixed
@@ -56,5 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance tuning guide
 - Configuration examples
 
+[0.1.2]: https://github.com/cajunsystems/cajun/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/cajunsystems/cajun/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/cajunsystems/cajun/releases/tag/v0.1.0
