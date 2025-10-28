@@ -62,7 +62,7 @@ application {
 }
 
 group = 'com.cajunsystems'
-version = '0.1.2'
+version = '0.1.3'
 
 java {
     withJavadocJar()
@@ -159,10 +159,23 @@ signing {
     sign publishing.publications.mavenJava
 }
 
+// Task to run example classes from test directory
+tasks.register('runExample', JavaExec) {
+    description = 'Runs an example class from the test directory'
+    group = 'application'
+    
+    classpath = sourceSets.test.runtimeClasspath
+    jvmArgs = ['--enable-preview']
+    
+    if (project.hasProperty('exampleClass')) {
+        mainClass = project.getProperty('exampleClass')
+    }
+}
+
 // Task to create a bundle for Central Portal upload
 tasks.register('createCentralBundle', Zip) {
     from layout.buildDirectory.dir('repo')
-    archiveFileName = "cajun-0.1.2-bundle.zip"
+    archiveFileName = "cajun-0.1.3-bundle.zip"
     destinationDirectory = layout.buildDirectory.dir('distributions')
     dependsOn 'publishMavenJavaPublicationToCentralPortalRepository'
 }

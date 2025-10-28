@@ -62,7 +62,7 @@ Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.1.2'
+    implementation 'com.cajunsystems:cajun:0.1.3'
 }
 ```
 
@@ -72,7 +72,7 @@ Or with Maven:
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun</artifactId>
-    <version>0.1.2</version>
+    <version>0.1.3</version>
 </dependency>
 ```
 
@@ -181,7 +181,8 @@ public class HelloWorld {
 
 **Important**: The Cajun actor system keeps the JVM alive after the main method completes. This is the expected behavior for a production actor system.
 
-- **JVM Stays Alive**: The actor system's scheduler threads are non-daemon threads, which keep the JVM running even after the main thread exits. This ensures actors can continue processing messages.
+- **JVM Stays Alive**: The actor system uses a non-daemon keep-alive thread that keeps the JVM running even after the main thread exits. This ensures actors can continue processing messages, even when using virtual threads (which are always daemon threads).
+- **Virtual Thread Support**: Actors run on virtual threads by default for optimal I/O-bound workloads. The keep-alive mechanism ensures the JVM doesn't exit prematurely despite virtual threads being daemon threads.
 - **Explicit Shutdown Required**: You must call `system.shutdown()` to gracefully shut down the actor system and allow the JVM to exit.
 
 ```java

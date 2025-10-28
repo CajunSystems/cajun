@@ -10,7 +10,7 @@ import com.cajunsystems.handler.Handler;
  * after the main method completes, until system.shutdown() is called.
  * 
  * To test: Run this example and observe that it doesn't exit automatically.
- * The JVM will stay alive because the actor system's scheduler threads are non-daemon.
+ * The JVM will stay alive because the actor system has a non-daemon keep-alive thread.
  * You'll need to manually terminate the process (Ctrl+C) or wait for the shutdown.
  */
 public class KeepAliveExample {
@@ -35,7 +35,7 @@ public class KeepAliveExample {
         Thread.sleep(500);
 
         System.out.println("Main method completed!");
-        System.out.println("Notice: JVM is still running because actor system threads are alive.");
+        System.out.println("Notice: JVM is still running because the actor system has a keep-alive thread.");
         System.out.println("The actor system will keep the JVM alive until system.shutdown() is called.");
         
         // Schedule shutdown after 3 seconds to demonstrate

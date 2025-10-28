@@ -122,8 +122,6 @@ public class ThreadPoolFactory {
      * @return A new scheduled executor service
      */
     public ScheduledExecutorService createScheduledExecutorService(String poolName) {
-        // Always use a custom thread factory to ensure non-daemon threads
-        // This keeps the JVM alive until system.shutdown() is called
         ThreadFactory factory = useNamedThreads 
             ? createNamedThreadFactory(poolName + "-scheduler")
             : createNonDaemonThreadFactory();
@@ -131,8 +129,8 @@ public class ThreadPoolFactory {
     }
     
     /**
-     * Creates a thread factory that produces non-daemon threads.
-     * These threads will keep the JVM alive until explicitly shut down.
+     * Creates a thread factory that produces non-daemon platform threads.
+     * Note: JVM keep-alive is handled by ActorSystem's keep-alive thread.
      */
     private ThreadFactory createNonDaemonThreadFactory() {
         return new ThreadFactory() {
@@ -141,7 +139,7 @@ public class ThreadPoolFactory {
             @Override
             public Thread newThread(Runnable r) {
                 Thread thread = new Thread(r, "actor-system-" + threadNumber.getAndIncrement());
-                thread.setDaemon(false); // Non-daemon to keep JVM alive
+                thread.setDaemon(false);
                 return thread;
             }
         };
@@ -214,7 +212,7 @@ public class ThreadPoolFactory {
                             .name(threadPrefix + threadNumber.getAndIncrement())
                             .unstarted(r);
                 } else {
-                    // Platform thread - non-daemon to keep JVM alive until system.shutdown()
+                    // Platform thread
                     Thread platformThread = new Thread(r, threadPrefix + threadNumber.getAndIncrement());
                     platformThread.setDaemon(false);
                     return platformThread;

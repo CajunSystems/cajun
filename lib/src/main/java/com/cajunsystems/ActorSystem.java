@@ -92,6 +92,10 @@ public class ActorSystem {
     private final MailboxConfig mailboxConfig;
     private final MailboxProvider<?> mailboxProvider;
     private final SystemBackpressureMonitor backpressureMonitor;
+    
+    // Keep-alive mechanism for virtual threads
+    private final Thread keepAliveThread;
+    private final CountDownLatch shutdownLatch;
 
     /**
      * Creates a new ActorSystem with the default configuration.
@@ -171,6 +175,23 @@ public class ActorSystem {
         
         // Initialize the backpressure monitor only if backpressure is configured
         this.backpressureMonitor = this.backpressureConfig != null ? new SystemBackpressureMonitor(this) : null;
+        
+        // Initialize keep-alive mechanism
+        // Virtual threads are always daemon threads, so we need a non-daemon platform thread
+        // to keep the JVM alive until shutdown() is called
+        this.shutdownLatch = new CountDownLatch(1);
+        this.keepAliveThread = new Thread(() -> {
+            try {
+                logger.debug("Keep-alive thread started, waiting for shutdown signal...");
+                shutdownLatch.await(); // Block until shutdown() is called
+                logger.debug("Keep-alive thread received shutdown signal, exiting...");
+            } catch (InterruptedException e) {
+                logger.debug("Keep-alive thread interrupted");
+                Thread.currentThread().interrupt();
+            }
+        }, "actor-system-keepalive");
+        this.keepAliveThread.setDaemon(false); // Non-daemon to keep JVM alive
+        this.keepAliveThread.start();
         
         logger.debug("ActorSystem created with {} scheduler threads, thread pool type: {}", 
                 this.threadPoolConfig.getSchedulerThreads(), this.threadPoolConfig.getExecutorType());
@@ -744,6 +765,20 @@ public class ActorSystem {
 
                 // Shutdown the shared executor if it exists
                 safeShutdownScheduler(sharedExecutor);
+                
+                // Signal the keep-alive thread to exit
+                shutdownLatch.countDown();
+                
+                // Wait for keep-alive thread to finish (with timeout)
+                try {
+                    if (!keepAliveThread.join(Duration.ofSeconds(2))) {
+                        logger.warn("Keep-alive thread did not exit within timeout");
+                        keepAliveThread.interrupt();
+                    }
+                } catch (InterruptedException e) {
+                    logger.warn("Interrupted while waiting for keep-alive thread");
+                    Thread.currentThread().interrupt();
+                }
 
                 logger.info("Actor system shut down successfully");
             } catch (InterruptedException e) {
