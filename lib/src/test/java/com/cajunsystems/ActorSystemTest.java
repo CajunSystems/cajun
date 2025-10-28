@@ -134,41 +134,38 @@ class ActorSystemTest {
 
     // Tests for the ask method
 
-    static class PingActor extends Actor<Object> {
+    static class PingActor extends Actor<String> {
         public PingActor(ActorSystem system, String actorId) {
             super(system, actorId);
         }
 
         @Override
-        protected void receive(Object message) {
-            if (message instanceof ActorSystem.AskPayload<?>) {
-                // This actor intentionally does not reply to AskPayload messages
-                // to test timeout behavior
-            } else if (message instanceof String strMessage && "ping".equals(strMessage)) {
-                // This actor does not reply to "ping" directly in this simple form
-                // It's designed to be used with AskPayload for ask tests
-            }
+        protected void receive(String message) {
+            // This actor intentionally does not reply to messages
+            // to test timeout behavior
         }
     }
 
-    static class PongActor extends Actor<ActorSystem.AskPayload<String>> {
+    static class PongActor extends Actor<String> {
         public PongActor(ActorSystem system, String actorId) {
             super(system, actorId);
         }
 
         @Override
-        protected void receive(ActorSystem.AskPayload<String> payload) {
-            if ("ping".equals(payload.message())) {
+        protected void receive(String message) {
+            if ("ping".equals(message)) {
                 // Add a small delay to ensure the reply actor is ready
                 try {
                     Thread.sleep(50);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                // Create a Pid for the reply actor and tell it the response
-                Pid replyPid = new Pid(payload.replyTo(), self().system());
-                replyPid.tell("pong");
-            } else if ("ping-wrong-type".equals(payload.message())) {
+                // Get the sender from context and reply
+                Pid sender = getSender();
+                if (sender != null) {
+                    sender.tell("pong");
+                }
+            } else if ("ping-wrong-type".equals(message)) {
                 // Add a small delay to ensure the reply actor is ready
                 try {
                     Thread.sleep(50);
@@ -176,8 +173,10 @@ class ActorSystemTest {
                     Thread.currentThread().interrupt();
                 }
                 // Send an Integer instead of String to trigger ClassCastException
-                Pid replyPid = new Pid(payload.replyTo(), self().system());
-                replyPid.tell(Integer.valueOf(123));
+                Pid sender = getSender();
+                if (sender != null) {
+                    sender.tell(Integer.valueOf(123));
+                }
             }
         }
     }

@@ -50,6 +50,9 @@ public abstract class Actor<Message> {
     // Enhanced backpressure management
     private BackpressureManager<Message> backpressureManager;
     private AtomicLong lastProcessingTimestamp = new AtomicLong(System.currentTimeMillis());
+    
+    // Sender context for ask pattern - stores the actor ID of the sender/replyTo
+    private final ThreadLocal<String> senderContext = new ThreadLocal<>();
 
     /**
      * Gets the current number of messages in the mailbox.
@@ -242,7 +245,22 @@ public abstract class Actor<Message> {
 
                     @Override
                     public void receive(Message message) {
-                        Actor.this.receive(message);
+                        // Check if this is a MessageWithSender wrapper
+                        if (message instanceof ActorSystem.MessageWithSender<?>) {
+                            ActorSystem.MessageWithSender<?> wrapper = (ActorSystem.MessageWithSender<?>) message;
+                            // Set sender context
+                            setSender(wrapper.sender());
+                            try {
+                                @SuppressWarnings("unchecked")
+                                Message unwrapped = (Message) wrapper.message();
+                                Actor.this.receive(unwrapped);
+                            } finally {
+                                // Clear sender context
+                                clearSender();
+                            }
+                        } else {
+                            Actor.this.receive(message);
+                        }
                         lastProcessingTimestamp.set(System.currentTimeMillis());
                     }
 
@@ -406,6 +424,35 @@ public abstract class Actor<Message> {
         if (backpressureManager != null) {
             updateMetrics();
         }
+    }
+    
+    /**
+     * Sets the sender context for the current message.
+     * Used internally by the ask pattern to track the reply-to actor.
+     * 
+     * @param senderActorId The actor ID of the sender
+     */
+    void setSender(String senderActorId) {
+        senderContext.set(senderActorId);
+    }
+    
+    /**
+     * Clears the sender context after message processing.
+     * Used internally by the ask pattern.
+     */
+    void clearSender() {
+        senderContext.remove();
+    }
+    
+    /**
+     * Gets the sender of the current message being processed.
+     * Returns null if there is no sender context (e.g., for messages sent via tell without ask).
+     * 
+     * @return The PID of the sender, or null if no sender context
+     */
+    public Pid getSender() {
+        String senderActorId = senderContext.get();
+        return senderActorId != null ? new Pid(senderActorId, system) : null;
     }
 
     public boolean isRunning() {

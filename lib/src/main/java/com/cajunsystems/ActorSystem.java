@@ -54,6 +54,12 @@ public class ActorSystem {
      * Message structure for the ask pattern that carries the original request and the reply address.
      */
     public record AskPayload<RequestMessage>(RequestMessage message, String replyTo) {}
+    
+    /**
+     * Internal wrapper for messages that includes sender context.
+     * This is used to pass sender information through the mailbox.
+     */
+    record MessageWithSender<T>(T message, String sender) {}
 
     /**
      * Functional actor implementation that delegates message handling to a function.
@@ -766,7 +772,8 @@ public class ActorSystem {
     }
 
     /**
-     * Routes a message to the actor with the specified ID.
+     * Routes a message to an actor by ID.
+     * Automatically unwraps AskPayload messages and wraps them with sender context.
      * 
      * @param <Message> The type of the message
      * @param actorId The ID of the actor to route the message to
@@ -776,9 +783,24 @@ public class ActorSystem {
         Actor<?> actor = actors.get(actorId);
         if (actor != null) {
             try {
-                @SuppressWarnings("unchecked")
-                Actor<Message> typedActor = (Actor<Message>) actor;
-                typedActor.tell(message);
+                // Check if the message is an AskPayload and unwrap it
+                if (message instanceof AskPayload<?>) {
+                    AskPayload<?> askPayload = (AskPayload<?>) message;
+                    Object unwrappedMessage = askPayload.message();
+                    String replyTo = askPayload.replyTo();
+                    
+                    // Wrap the unwrapped message with sender context
+                    MessageWithSender<Object> wrappedMessage = new MessageWithSender<>(unwrappedMessage, replyTo);
+                    
+                    @SuppressWarnings("unchecked")
+                    Actor<MessageWithSender<Object>> typedActor = (Actor<MessageWithSender<Object>>) actor;
+                    typedActor.tell(wrappedMessage);
+                } else {
+                    // Normal message routing without sender context
+                    @SuppressWarnings("unchecked")
+                    Actor<Message> typedActor = (Actor<Message>) actor;
+                    typedActor.tell(message);
+                }
             } catch (ClassCastException e) {
                 logger.warn("Failed to route message to actor {}: Message type mismatch", actorId, e);
             }

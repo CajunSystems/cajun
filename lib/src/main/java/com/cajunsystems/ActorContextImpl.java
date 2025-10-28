@@ -111,4 +111,9 @@ public class ActorContextImpl implements ActorContext {
     public void stop() {
         actor.stop();
     }
+    
+    @Override
+    public Pid getSender() {
+        return actor.getSender();
+    }
 }

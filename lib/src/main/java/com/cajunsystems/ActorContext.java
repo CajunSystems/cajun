@@ -94,4 +94,13 @@ public interface ActorContext {
      * Stops this actor.
      */
     void stop();
+    
+    /**
+     * Gets the sender of the current message being processed.
+     * This is useful for the ask pattern where the sender is the temporary reply actor.
+     * Returns null if there is no sender context (e.g., for messages sent via tell without ask).
+     *
+     * @return The PID of the sender, or null if no sender context
+     */
+    Pid getSender();
 }

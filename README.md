@@ -62,7 +62,7 @@ Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.1.0'
+    implementation 'com.cajunsystems:cajun:0.1.1'
 }
 ```
 
@@ -72,7 +72,7 @@ Or with Maven:
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
@@ -120,6 +120,62 @@ tasks.withType(Test) {
 ```
 
 ## Usage
+
+### Quick Start Example
+
+Here's a complete example to get you started with Cajun:
+
+```java
+import com.cajunsystems.*;
+import com.cajunsystems.handler.Handler;
+
+public class HelloWorld {
+    
+    // Define your message types
+    public record HelloMessage(String name) {}
+    public record GreetingResponse(String greeting) {}
+    
+    // Create a simple handler
+    public static class GreeterHandler implements Handler<HelloMessage> {
+        @Override
+        public void receive(HelloMessage message, ActorContext context) {
+            System.out.println("Hello, " + message.name() + "!");
+            
+            // Reply to sender if this was an ask request
+            Pid sender = context.getSender();
+            if (sender != null) {
+                context.tell(sender, new GreetingResponse("Hello, " + message.name() + "!"));
+            }
+        }
+    }
+    
+    public static void main(String[] args) throws Exception {
+        // 1. Create the ActorSystem
+        ActorSystem system = new ActorSystem();
+        
+        // 2. Spawn an actor
+        Pid greeter = system.actorOf(GreeterHandler.class)
+            .withId("greeter")
+            .spawn();
+        
+        // 3. Send a message (fire-and-forget)
+        greeter.tell(new HelloMessage("World"));
+        
+        // 4. Use ask pattern for request-response
+        CompletableFuture<GreetingResponse> future = system.ask(
+            greeter,
+            new HelloMessage("Cajun"),
+            Duration.ofSeconds(3)
+        );
+        
+        GreetingResponse response = future.get();
+        System.out.println("Received: " + response.greeting());
+        
+        // 5. Shutdown the system when done
+        system.shutdownAll();
+    }
+}
+```
 
 ### Creating Actors
 
@@ -638,25 +694,24 @@ try {
 
 ### Implementing Responders
 
-Actors that respond to ask requests must handle the special `AskPayload` wrapper message:
+**Important**: Actors receive their natural message types directly - the system automatically handles the ask pattern infrastructure. You don't need to wrap messages in `AskPayload` or manually manage `replyTo` addresses.
+
+To respond to an ask request, simply use `context.getSender()` to get the sender's Pid and send your response:
 
 ```java
-public class ResponderActor extends Actor<ActorSystem.AskPayload<String>> {
-    
-    public ResponderActor(ActorSystem system, String actorId) {
-        super(system, actorId);
-    }
+public class ResponderHandler implements Handler<String> {
     
     @Override
-    protected void receive(ActorSystem.AskPayload<String> payload) {
-        // Extract the original message
-        String message = payload.message();
-        
-        // Process the message
+    public void receive(String message, ActorContext context) {
+        // Process the message naturally
         String response = processMessage(message);
         
-        // Send the response back to the temporary reply actor
-        payload.replyTo().tell(response);
+        // Get the sender (will be non-null for ask requests)
+        Pid sender = context.getSender();
+        if (sender != null) {
+            // Send the response back
+            context.tell(sender, response);
+        }
     }
     
     private String processMessage(String message) {
@@ -667,6 +722,13 @@ public class ResponderActor extends Actor<ActorSystem.AskPayload<String>> {
     }
 }
 ```
+
+**Key Points:**
+- Your actor handles its natural message type (e.g., `String`, not `AskPayload<String>`)
+- The system automatically unwraps ask messages and sets the sender context
+- Use `context.getSender()` to check if there's a sender to reply to
+- `getSender()` returns `null` for regular `tell()` messages, non-null for `ask()` messages
+- No need to manually extract `replyTo` or handle `AskPayload` wrappers
 
 ### Error Handling
 
@@ -696,17 +758,65 @@ try {
 }
 ```
 
+### Complete Example
+
+Here's a complete example showing both the requester and responder:
+
+```java
+public class AskPatternExample {
+    
+    public record PingMessage() {}
+    public record PongMessage() {}
+    
+    public static class PingPongHandler implements Handler<PingMessage> {
+        @Override
+        public void receive(PingMessage message, ActorContext context) {
+            // Automatically reply to the sender
+            Pid sender = context.getSender();
+            if (sender != null) {
+                context.tell(sender, new PongMessage());
+            }
+        }
+    }
+    
+    public static void main(String[] args) throws Exception {
+        ActorSystem system = new ActorSystem();
+        
+        // Create the responder actor
+        Pid responder = system.actorOf(PingPongHandler.class).spawn();
+        
+        // Send an ask request
+        CompletableFuture<PongMessage> future = system.ask(
+            responder,
+            new PingMessage(),
+            Duration.ofSeconds(3)
+        );
+        
+        // Wait for and process the response
+        PongMessage response = future.get();
+        System.out.println("Received pong!");
+        
+        system.shutdownAll();
+    }
+}
+```
+
 ### Implementation Details
 
 Internally, the ask pattern works by:
 
 1. Creating a temporary actor to receive the response
-2. Wrapping the original message in an `AskPayload` that includes the temporary actor's PID
-3. Sending the wrapped message to the target actor
+2. Automatically wrapping your message with sender context (transparent to your code)
+3. Sending the message to the target actor
 4. Setting up a timeout to complete the future exceptionally if no response arrives in time
 5. Completing the future when the temporary actor receives a response
+6. Automatically cleaning up the temporary actor
 
-This implementation ensures that resources are properly cleaned up, even in failure scenarios, by automatically stopping the temporary actor after processing the response or timeout.
+This implementation ensures that:
+- Your actors work with their natural message types
+- The `replyTo` mechanism is handled automatically by the system
+- Resources are properly cleaned up, even in failure scenarios
+- The same actor can handle both `tell()` and `ask()` messages seamlessly
 
 ## Error Handling and Supervision Strategy
 
