@@ -1,6 +1,8 @@
 package com.cajunsystems;
 
 import com.cajunsystems.handler.Handler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -36,6 +38,11 @@ public class ActorContextImpl implements ActorContext {
     public <T> void tell(Pid target, T message) {
         ActorSystem system = actor.getSystem();
         system.tell(target, message);
+    }
+    
+    @Override
+    public <T> void reply(ReplyingMessage request, T response) {
+        tell(request.replyTo(), response);
     }
     
     @Override
@@ -115,5 +122,10 @@ public class ActorContextImpl implements ActorContext {
     @Override
     public Pid getSender() {
         return actor.getSender();
+    }
+    
+    @Override
+    public Logger getLogger() {
+        return actor.getLogger();
     }
 }

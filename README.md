@@ -413,6 +413,98 @@ public class ParentHandler implements Handler<ParentMessage> {
 }
 ```
 
+### ActorContext Convenience Features
+
+The `ActorContext` provides several convenience features to simplify common actor patterns:
+
+#### 1. Sending Messages to Self
+
+Use `tellSelf()` to send messages to the current actor:
+
+```java
+public class TimerHandler implements Handler<TimerMessage> {
+    @Override
+    public void receive(TimerMessage message, ActorContext context) {
+        switch (message) {
+            case Start ignored -> {
+                // Schedule a message to self after 1 second
+                context.tellSelf(new Tick(), 1, TimeUnit.SECONDS);
+            }
+            case Tick ignored -> {
+                context.getLogger().info("Tick received");
+                // Schedule next tick
+                context.tellSelf(new Tick(), 1, TimeUnit.SECONDS);
+            }
+        }
+    }
+}
+```
+
+#### 2. Built-in Logger with Actor Context
+
+Access a pre-configured logger through `context.getLogger()` that automatically includes the actor ID:
+
+```java
+public class LoggingHandler implements Handler<String> {
+    @Override
+    public void receive(String message, ActorContext context) {
+        // Logger automatically includes actor ID in output
+        context.getLogger().info("Processing message: {}", message);
+        context.getLogger().debug("Debug info for actor {}", context.getActorId());
+        context.getLogger().error("Error occurred", exception);
+    }
+}
+```
+
+Benefits:
+- **Consistent logging format** across all actors
+- **Automatic actor ID context** for easier debugging
+- **No manual logger setup** required
+
+#### 3. Standardized Reply Pattern with ReplyingMessage
+
+Use the `ReplyingMessage` interface to standardize request-response patterns:
+
+```java
+// Define messages that require replies
+public record GetUserRequest(String userId, Pid replyTo) implements ReplyingMessage {}
+public record GetOrderRequest(String orderId, Pid replyTo) implements ReplyingMessage {}
+
+public record UserResponse(String userId, String name) {}
+public record OrderResponse(String orderId, double amount) {}
+
+// In your handler
+public class DatabaseHandler implements Handler<Object> {
+    @Override
+    public void receive(Object message, ActorContext context) {
+        switch (message) {
+            case GetUserRequest req -> {
+                UserResponse user = fetchUser(req.userId());
+                // Use the reply convenience method
+                context.reply(req, user);
+            }
+            case GetOrderRequest req -> {
+                OrderResponse order = fetchOrder(req.orderId());
+                context.reply(req, order);
+            }
+        }
+    }
+}
+```
+
+Benefits:
+- **Strong type contracts** for reply semantics
+- **Cleaner code** with `context.reply()` instead of `context.tell(message.replyTo(), response)`
+- **Consistent pattern** across your codebase
+- **Better IDE support** with autocomplete for replyTo field
+
+The `ReplyingMessage` interface requires implementing a single method:
+```java
+public interface ReplyingMessage {
+    Pid replyTo();
+}
+```
+
 #### Key Features of Stateful Actors
 
 - **Persistent State**: State is automatically persisted using configurable storage backends

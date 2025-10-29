@@ -1,5 +1,7 @@
 package com.cajunsystems;
 
+import org.slf4j.Logger;
+
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -31,6 +33,16 @@ public interface ActorContext {
      * @param message The message to send
      */
     <T> void tell(Pid target, T message);
+    
+    /**
+     * Replies to a message that implements {@link ReplyingMessage}.
+     * This is a convenience method that extracts the replyTo PID and sends the response.
+     *
+     * @param <T> The type of the response message
+     * @param request The original request message that implements ReplyingMessage
+     * @param response The response message to send
+     */
+    <T> void reply(ReplyingMessage request, T response);
     
     /**
      * Sends a message to this actor after a delay.
@@ -103,4 +115,12 @@ public interface ActorContext {
      * @return The PID of the sender, or null if no sender context
      */
     Pid getSender();
+    
+    /**
+     * Gets a logger for this actor with the actor ID as context.
+     * This provides consistent logging output across all actors.
+     *
+     * @return A logger instance configured for this actor
+     */
+    Logger getLogger();
 }

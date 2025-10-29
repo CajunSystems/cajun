@@ -24,6 +24,9 @@ public abstract class Actor<Message> {
     private static final Logger logger = LoggerFactory.getLogger(Actor.class);
     private static final int DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10;
     private static final int DEFAULT_BATCH_SIZE = 10; // Default number of messages to process in a batch
+    
+    // Per-actor logger with actor ID context
+    private Logger actorLogger;
 
     // Default values for backpressure configuration
     private static final float DEFAULT_HIGH_WATERMARK = 0.8f;
@@ -198,6 +201,9 @@ public abstract class Actor<Message> {
         this.system = system;
         this.actorId = actorId == null ? generateDefaultActorId() : actorId;
         this.pid = new Pid(this.actorId, system);
+        
+        // Initialize per-actor logger with actor ID context
+        this.actorLogger = LoggerFactory.getLogger(this.getClass().getName() + "." + this.actorId);
 
         // Use provided instances or fallback to system's defaults if they are null (though system should pass non-null)
         ThreadPoolFactory effectiveTpf = (threadPoolFactory != null) ? threadPoolFactory : system.getThreadPoolFactory();
@@ -453,6 +459,16 @@ public abstract class Actor<Message> {
     public Pid getSender() {
         String senderActorId = senderContext.get();
         return senderActorId != null ? new Pid(senderActorId, system) : null;
+    }
+    
+    /**
+     * Gets a logger for this actor with the actor ID as context.
+     * This provides consistent logging output across all actors.
+     * 
+     * @return A logger instance configured for this actor
+     */
+    public Logger getLogger() {
+        return actorLogger;
     }
 
     public boolean isRunning() {
