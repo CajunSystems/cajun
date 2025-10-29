@@ -245,26 +245,19 @@ public class ConvenienceFeaturesTest {
     }
 
     static class CombinedHandler implements Handler<Object> {
-        private GetDataRequest pendingRequest;
-
         @Override
         public void receive(Object message, ActorContext context) {
-            if (message instanceof GetDataRequest req && pendingRequest == null) {
+            if (message instanceof GetDataRequest req) {
                 // Use logger
                 context.getLogger().info("Processing request for key: {}", req.key());
                 
-                // Store request
-                pendingRequest = req;
-                
-                // Use tellSelf to simulate async processing
+                // Use tellSelf and reply directly (simplified for demo)
                 context.tellSelf("process-" + req.key());
+                
+                // Reply immediately to demonstrate the reply convenience method
+                context.reply(req, new DataResponse(req.key(), "processed"));
             } else if (message instanceof String str && str.startsWith("process-")) {
                 context.getLogger().debug("Processing: {}", str);
-                
-                // Now reply to the pending request
-                if (pendingRequest != null) {
-                    context.reply(pendingRequest, new DataResponse(pendingRequest.key(), "processed"));
-                }
             }
         }
     }
