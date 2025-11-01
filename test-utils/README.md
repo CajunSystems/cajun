@@ -14,6 +14,29 @@ The Cajun test utilities eliminate common pain points in actor testing:
 - ✅ **Fast test execution** - Minimal waiting, maximum efficiency
 - ✅ **Complete visibility** - Inspect state, mailbox, and messages
 
+## Installation
+
+Add the test utilities to your project's test dependencies:
+
+**Gradle:**
+```gradle
+dependencies {
+    testImplementation 'com.cajunsystems:cajun-test:0.1.4'
+}
+```
+
+**Maven:**
+```xml
+<dependency>
+    <groupId>com.cajunsystems</groupId>
+    <artifactId>cajun-test</artifactId>
+    <version>0.1.4</version>
+    <scope>test</scope>
+</dependency>
+```
+
+**Note**: The test utilities require Java 21+ with preview features enabled (same as the core Cajun library).
+
 ## Quick Example
 
 ### Before (Without Test Utils)
