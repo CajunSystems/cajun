@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -451,13 +452,44 @@ public abstract class Actor<Message> {
     
     /**
      * Gets the sender of the current message being processed.
-     * Returns null if there is no sender context (e.g., for messages sent via tell without ask).
+     * Returns an empty Optional if there is no sender context (e.g., for messages sent via tell without ask).
      * 
-     * @return The PID of the sender, or null if no sender context
+     * @return An Optional containing the PID of the sender, or empty if no sender context
      */
-    public Pid getSender() {
+    public Optional<Pid> getSender() {
         String senderActorId = senderContext.get();
-        return senderActorId != null ? new Pid(senderActorId, system) : null;
+        return Optional.ofNullable(senderActorId).map(id -> new Pid(id, system));
+    }
+    
+    /**
+     * Gets the sender actor ID from the current thread context.
+     * Package-private for use by Pid.tell() to propagate sender context.
+     * 
+     * @return The sender actor ID, or null if no sender context
+     */
+    String getCurrentSenderActorId() {
+        return senderContext.get();
+    }
+    
+    /**
+     * Forwards a message to another actor, preserving the original sender context.
+     * This is useful when an actor acts as an intermediary and wants the final recipient
+     * to know about the original sender (e.g., for ask pattern replies).
+     * 
+     * @param <T> The type of the message
+     * @param target The target actor PID
+     * @param message The message to forward
+     */
+    public <T> void forward(Pid target, T message) {
+        String originalSender = senderContext.get();
+        if (originalSender != null) {
+            // Wrap the message with the original sender context
+            ActorSystem.MessageWithSender<T> wrapped = new ActorSystem.MessageWithSender<>(message, originalSender);
+            system.routeMessage(target.actorId(), wrapped);
+        } else {
+            // No sender context, just send normally
+            target.tell(message);
+        }
     }
     
     /**

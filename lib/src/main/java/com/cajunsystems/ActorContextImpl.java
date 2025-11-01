@@ -2,10 +2,10 @@ package com.cajunsystems;
 
 import com.cajunsystems.handler.Handler;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -120,8 +120,13 @@ public class ActorContextImpl implements ActorContext {
     }
     
     @Override
-    public Pid getSender() {
+    public Optional<Pid> getSender() {
         return actor.getSender();
+    }
+    
+    @Override
+    public <T> void forward(Pid target, T message) {
+        actor.forward(target, message);
     }
     
     @Override

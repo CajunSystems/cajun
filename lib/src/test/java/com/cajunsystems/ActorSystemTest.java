@@ -161,10 +161,7 @@ class ActorSystemTest {
                     Thread.currentThread().interrupt();
                 }
                 // Get the sender from context and reply
-                Pid sender = getSender();
-                if (sender != null) {
-                    sender.tell("pong");
-                }
+                getSender().ifPresent(sender -> sender.tell("pong"));
             } else if ("ping-wrong-type".equals(message)) {
                 // Add a small delay to ensure the reply actor is ready
                 try {
@@ -173,10 +170,7 @@ class ActorSystemTest {
                     Thread.currentThread().interrupt();
                 }
                 // Send an Integer instead of String to trigger ClassCastException
-                Pid sender = getSender();
-                if (sender != null) {
-                    sender.tell(Integer.valueOf(123));
-                }
+                getSender().ifPresent(sender -> sender.tell(Integer.valueOf(123)));
             }
         }
     }
