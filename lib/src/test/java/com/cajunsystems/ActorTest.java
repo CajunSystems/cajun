@@ -3,6 +3,7 @@ package com.cajunsystems;
 import com.cajunsystems.helper.ByeMessage;
 import com.cajunsystems.helper.GreetingActor;
 import com.cajunsystems.helper.HelloMessage;
+import com.cajunsystems.test.AsyncAssertion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class ActorTest {
     }
 
     @Test
-    void shouldBeAbleToProcessMessagesFromMailbox() throws InterruptedException {
+    void shouldBeAbleToProcessMessagesFromMailbox() {
         var actor = new GreetingActor(actorSystem, "Greeting-Actor-2");
         actor.start();
 
@@ -51,18 +52,14 @@ class ActorTest {
         actor.tell(new HelloMessage());
         actor.receive(new ByeMessage());
 
-        // Wait for messages to be processed with a timeout
+        // Use AsyncAssertion to wait for messages to be processed
         int expectedHelloCount = 6;
         int expectedByeCount = 3;
-        int maxWaitTimeMs = 500; // Reduced from 2000ms to 500ms
-        int pollIntervalMs = 10;
-        int elapsedTime = 0;
         
-        while ((actor.getHelloCount() < expectedHelloCount || actor.getByeCount() < expectedByeCount) 
-                && elapsedTime < maxWaitTimeMs) {
-            Thread.sleep(pollIntervalMs);
-            elapsedTime += pollIntervalMs;
-        }
+        AsyncAssertion.eventually(
+            () -> actor.getHelloCount() == expectedHelloCount && actor.getByeCount() == expectedByeCount,
+            java.time.Duration.ofMillis(500)
+        );
 
         assertEquals(expectedHelloCount, actor.getHelloCount());
         assertEquals(expectedByeCount, actor.getByeCount());

@@ -6,6 +6,7 @@ import com.cajunsystems.backpressure.BackpressureState;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.test.AsyncAssertion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,23 +96,15 @@ public class BackpressureActorTest {
         int messagesToSend = 50;
         int messagesSent = 0;
 
-        // Send messages with small pauses to allow processing
+        // Send messages
         for (int i = 0; i < messagesToSend; i++) {
             if (actor.tryTell("Message-" + i)) {
                 messagesSent++;
-            }
-
-            // Add a small pause every 10 messages
-            if (i % 10 == 0) {
-                Thread.sleep(10);
             }
         }
 
         // All messages should be accepted since there's no backpressure
         assertEquals(messagesToSend, messagesSent, "All messages should be accepted without backpressure");
-
-        // Allow time for processing
-        Thread.sleep(200);
     }
 
     @Test

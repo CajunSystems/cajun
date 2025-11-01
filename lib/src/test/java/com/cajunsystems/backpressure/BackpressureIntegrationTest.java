@@ -7,6 +7,7 @@ import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
+import com.cajunsystems.test.AsyncAssertion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,8 +18,8 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -69,66 +70,89 @@ public class BackpressureIntegrationTest {
         
         // Track state transitions
         List<BackpressureState> stateTransitions = new ArrayList<>();
-        CountDownLatch warningLatch = new CountDownLatch(1);
-        CountDownLatch criticalLatch = new CountDownLatch(1);
-        CountDownLatch recoveryLatch = new CountDownLatch(1);
+        AtomicBoolean warningReached = new AtomicBoolean(false);
+        AtomicBoolean criticalReached = new AtomicBoolean(false);
+        AtomicBoolean recoveryReached = new AtomicBoolean(false);
         
         system.setBackpressureCallback(actorPid, event -> {
             BackpressureState state = event.getState();
-            stateTransitions.add(state);
+            synchronized (stateTransitions) {
+                stateTransitions.add(state);
+            }
             logger.info("Backpressure state changed to: {}, fill ratio: {}", state, event.getFillRatio());
             
             if (state == BackpressureState.WARNING) {
-                warningLatch.countDown();
+                warningReached.set(true);
             } else if (state == BackpressureState.CRITICAL) {
-                criticalLatch.countDown();
+                criticalReached.set(true);
             } else if (state == BackpressureState.RECOVERY) {
-                recoveryLatch.countDown();
+                recoveryReached.set(true);
             }
         });
         
         try {
-            // Wait for actor to initialize
-            Thread.sleep(100);
-            
             // Fill mailbox to trigger WARNING state
             for (int i = 0; i < 3; i++) {
                 system.tell(actorPid, "message-" + i);
-                Thread.sleep(10); // Small delay between sends
             }
             
             // Wait for WARNING state
-            boolean warningReached = warningLatch.await(2, TimeUnit.SECONDS);
-            logger.info("WARNING state reached: {}", warningReached);
+            try {
+                AsyncAssertion.eventually(
+                    () -> warningReached.get(),
+                    Duration.ofSeconds(2)
+                );
+            } catch (AssertionError e) {
+                // Timing-sensitive, don't fail the test
+                logger.warn("WARNING state not reached within timeout");
+            }
+            logger.info("WARNING state reached: {}", warningReached.get());
             
-            if (warningReached) {
+            if (warningReached.get()) {
                 // Fill more to trigger CRITICAL state
                 for (int i = 0; i < 5; i++) {
                     system.tell(actorPid, "message-critical-" + i);
-                    Thread.sleep(10);
                 }
                 
                 // Wait for CRITICAL state
-                boolean criticalReached = criticalLatch.await(2, TimeUnit.SECONDS);
-                logger.info("CRITICAL state reached: {}", criticalReached);
+                try {
+                    AsyncAssertion.eventually(
+                        () -> criticalReached.get(),
+                        Duration.ofSeconds(2)
+                    );
+                } catch (AssertionError e) {
+                    // Timing-sensitive, don't fail the test
+                    logger.warn("CRITICAL state not reached within timeout");
+                }
+                logger.info("CRITICAL state reached: {}", criticalReached.get());
                 
-                if (criticalReached) {
+                if (criticalReached.get()) {
                     // Speed up processing to trigger RECOVERY
                     handler.setProcessingDelay(5);
                     
                     // Wait for RECOVERY state
-                    boolean recoveryReached = recoveryLatch.await(3, TimeUnit.SECONDS);
-                    logger.info("RECOVERY state reached: {}", recoveryReached);
+                    try {
+                        AsyncAssertion.eventually(
+                            () -> recoveryReached.get(),
+                            Duration.ofSeconds(3)
+                        );
+                    } catch (AssertionError e) {
+                        // Timing-sensitive, don't fail the test
+                        logger.warn("RECOVERY state not reached within timeout");
+                    }
+                    logger.info("RECOVERY state reached: {}", recoveryReached.get());
                     
-                    if (recoveryReached) {
+                    if (recoveryReached.get()) {
                         // Verify we went through all the states
                         logger.info("State transitions: {}", stateTransitions);
-                        assertTrue(stateTransitions.contains(BackpressureState.WARNING), 
-                                "Should have transitioned to WARNING state");
-                        assertTrue(stateTransitions.contains(BackpressureState.CRITICAL), 
-                                "Should have transitioned to CRITICAL state");
-                        assertTrue(stateTransitions.contains(BackpressureState.RECOVERY), 
-                                "Should have transitioned to RECOVERY state");
+                        synchronized (stateTransitions) {
+                            assertTrue(stateTransitions.contains(BackpressureState.WARNING), 
+                                    "Should have transitioned to WARNING state");
+                            assertTrue(stateTransitions.contains(BackpressureState.CRITICAL), 
+                                    "Should have transitioned to CRITICAL state");
+                            assertTrue(stateTransitions.contains(BackpressureState.RECOVERY), 
+                                    "Should have transitioned to RECOVERY state");
+                        }
                     } else {
                         // If recovery wasn't reached, we'll log it but not fail the test
                         logger.warn("RECOVERY state not reached, this might be due to timing issues");
@@ -176,31 +200,35 @@ public class BackpressureIntegrationTest {
                 .withMailboxConfig(mailboxConfig)
                 .spawn();
         
-        // Set up a latch to know when backpressure is activated
-        CountDownLatch backpressureLatch = new CountDownLatch(1);
+        // Set up a flag to know when backpressure is activated
+        AtomicBoolean backpressureActivated = new AtomicBoolean(false);
         system.setBackpressureCallback(actorPid, event -> {
             logger.info("Backpressure event: {} with ratio {}", event.getState(), event.getFillRatio());
             if (event.getState() == BackpressureState.WARNING || 
                 event.getState() == BackpressureState.CRITICAL) {
-                backpressureLatch.countDown();
+                backpressureActivated.set(true);
             }
         });
         
         try {
-            // Wait for actor to initialize
-            Thread.sleep(200);
-            
             logger.info("Filling mailbox to capacity...");
             // Fill mailbox completely
             for (int i = 0; i < 5; i++) { // Send more than capacity
                 system.tell(actorPid, "message-" + i);
-                Thread.sleep(20); // Small delay between sends
             }
             
             // Wait for backpressure to be activated (with timeout)
             logger.info("Waiting for backpressure to activate...");
-            boolean backpressureActivated = backpressureLatch.await(5, TimeUnit.SECONDS);
-            logger.info("Backpressure activation latch completed: {}", backpressureActivated);
+            try {
+                AsyncAssertion.eventually(
+                    () -> backpressureActivated.get(),
+                    Duration.ofSeconds(5)
+                );
+            } catch (AssertionError e) {
+                // Timing-sensitive, don't fail the test
+                logger.warn("Backpressure not activated within timeout");
+            }
+            logger.info("Backpressure activation completed: {}", backpressureActivated.get());
             
             // Get current status for debugging
             BackpressureStatus status = system.getBackpressureStatus(actorPid);
@@ -270,28 +298,21 @@ public class BackpressureIntegrationTest {
         actor.setProcessingDelay(200);
         
         // Add a callback to detect when the important message is processed
-        CountDownLatch importantMessageLatch = new CountDownLatch(1);
+        AtomicBoolean importantMessageProcessed = new AtomicBoolean(false);
         actor.setMessageCallback(message -> {
             logger.info("Actor processed message: {}", message);
             if (message != null && message.contains("important")) {
-                importantMessageLatch.countDown();
+                importantMessageProcessed.set(true);
             }
         });
         
         
         try {
-            // Wait for actor to initialize
-            Thread.sleep(200);
-            
             // Fill mailbox to capacity
             logger.info("Filling mailbox to capacity...");
             for (int i = 0; i < 5; i++) {  // Fill to exact capacity
                 system.tell(actorPid, "regular-" + i);
-                Thread.sleep(10); // Small delay between sends
             }
-            
-            // Allow time for backpressure to activate
-            Thread.sleep(300);
             
             // Verify backpressure is active
             BackpressureStatus status = system.getBackpressureStatus(actorPid);
@@ -317,7 +338,16 @@ public class BackpressureIntegrationTest {
             
             // Wait for the message to be processed
             logger.info("Waiting for high priority message to be processed...");
-            boolean messageProcessed = importantMessageLatch.await(5, TimeUnit.SECONDS);
+            try {
+                AsyncAssertion.eventually(
+                    () -> importantMessageProcessed.get(),
+                    Duration.ofSeconds(5)
+                );
+            } catch (AssertionError e) {
+                // Timing-sensitive, don't fail the test
+                logger.warn("High priority message not processed within timeout");
+            }
+            boolean messageProcessed = importantMessageProcessed.get();
             logger.info("High priority message processed: {}", messageProcessed);
             
             // The core of this test is to verify that high priority messages are processed
@@ -416,7 +446,7 @@ public class BackpressureIntegrationTest {
         private static final Logger logger = LoggerFactory.getLogger(MessageTrackingActor.class);
         private final List<String> processedMessages = new ArrayList<>();
         private String callbackMessagePattern;
-        private CountDownLatch messageProcessedLatch;
+        private AtomicBoolean messageProcessedFlag;
         private Pid self;
         protected volatile int processingDelay = 200;
         protected volatile Consumer<String> messageCallback;
@@ -437,9 +467,9 @@ public class BackpressureIntegrationTest {
             this.messageCallback = callback;
         }
 
-        public void setCallbackForMessage(String messagePattern, CountDownLatch latch) {
+        public void setCallbackForMessage(String messagePattern, AtomicBoolean flag) {
             this.callbackMessagePattern = messagePattern;
-            this.messageProcessedLatch = latch;
+            this.messageProcessedFlag = flag;
         }
 
         @Override
@@ -470,10 +500,10 @@ public class BackpressureIntegrationTest {
 
                 // Check if this message matches the pattern we're waiting for
                 if (callbackMessagePattern != null && message.contains(callbackMessagePattern) && 
-                        messageProcessedLatch != null) {
-                    logger.debug("Message matching pattern '{}' processed, counting down latch", 
+                        messageProcessedFlag != null) {
+                    logger.debug("Message matching pattern '{}' processed, setting flag", 
                             callbackMessagePattern);
-                    messageProcessedLatch.countDown();
+                    messageProcessedFlag.set(true);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
