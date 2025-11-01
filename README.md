@@ -139,7 +139,7 @@ tasks.withType(Test) {
 
 ### Quick Start Example
 
-Here's a complete example to get you started with Cajun:
+Here's a complete example to get you started with Cajun using the basic building blocks:
 
 ```java
 import com.cajunsystems.*;
@@ -147,20 +147,27 @@ import com.cajunsystems.handler.Handler;
 
 public class HelloWorld {
     
-    // Define your message types
-    public record HelloMessage(String name) {}
+    // Define your message types with explicit replyTo
+    public record HelloMessage(String name, Pid replyTo) {}
     public record GreetingResponse(String greeting) {}
     
-    // Create a simple handler
+    // Greeter actor that processes requests
     public static class GreeterHandler implements Handler<HelloMessage> {
         @Override
         public void receive(HelloMessage message, ActorContext context) {
-            System.out.println("Hello, " + message.name() + "!");
+            context.getLogger().info("Received greeting request for: {}", message.name());
             
-            // Reply to sender if this was an ask request
-            context.getSender().ifPresent(sender -> 
-                context.tell(sender, new GreetingResponse("Hello, " + message.name() + "!"))
-            );
+            // Process and reply
+            String greeting = "Hello, " + message.name() + "!";
+            context.tell(message.replyTo(), new GreetingResponse(greeting));
+        }
+    }
+    
+    // Receiver actor that handles responses
+    public static class ReceiverHandler implements Handler<GreetingResponse> {
+        @Override
+        public void receive(GreetingResponse message, ActorContext context) {
+            System.out.println("Received: " + message.greeting());
         }
     }
     
@@ -168,29 +175,28 @@ public class HelloWorld {
         // 1. Create the ActorSystem
         ActorSystem system = new ActorSystem();
         
-        // 2. Spawn an actor
+        // 2. Spawn actors
         Pid greeter = system.actorOf(GreeterHandler.class)
             .withId("greeter")
             .spawn();
         
-        // 3. Send a message (fire-and-forget)
-        greeter.tell(new HelloMessage("World"));
+        Pid receiver = system.actorOf(ReceiverHandler.class)
+            .withId("receiver")
+            .spawn();
         
-        // 4. Use ask pattern for request-response
-        CompletableFuture<GreetingResponse> future = system.ask(
-            greeter,
-            new HelloMessage("Cajun"),
-            Duration.ofSeconds(3)
-        );
+        // 3. Send a message with explicit replyTo
+        greeter.tell(new HelloMessage("World", receiver));
         
-        GreetingResponse response = future.get();
-        System.out.println("Received: " + response.greeting());
+        // Wait a bit for async processing
+        Thread.sleep(100);
         
-        // 5. Shutdown the system when done
+        // 4. Shutdown the system when done
         system.shutdown();
     }
 }
 ```
+
+**For request-response patterns**, Cajun provides the `ask` pattern that handles the reply mechanism automatically. See [Request-Response with Ask Pattern](#request-response-with-ask-pattern) for a simpler approach when you need synchronous replies.
 
 ### Actor System Lifecycle
 
