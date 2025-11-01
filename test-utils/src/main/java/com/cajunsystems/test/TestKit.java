@@ -5,6 +5,8 @@ import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 
+import java.time.Duration;
+
 /**
  * Main entry point for testing Cajun actors.
  * Provides utilities for spawning test actors and creating test probes.
@@ -24,10 +26,12 @@ public class TestKit implements AutoCloseable {
     
     private final ActorSystem system;
     private final boolean ownsSystem;
+    private Duration defaultTimeout = Duration.ofSeconds(5);
     
-    private TestKit(ActorSystem system, boolean ownsSystem) {
+    private TestKit(ActorSystem system, boolean ownsSystem, Duration defaultTimeout) {
         this.system = system;
         this.ownsSystem = ownsSystem;
+        this.defaultTimeout = defaultTimeout;
     }
     
     /**
@@ -35,7 +39,7 @@ public class TestKit implements AutoCloseable {
      * The ActorSystem will be automatically shut down when the TestKit is closed.
      */
     public static TestKit create() {
-        return new TestKit(new ActorSystem(), true);
+        return new TestKit(new ActorSystem(), true, Duration.ofSeconds(5));
     }
     
     /**
@@ -45,7 +49,16 @@ public class TestKit implements AutoCloseable {
      * @param system the ActorSystem to use
      */
     public static TestKit create(ActorSystem system) {
-        return new TestKit(system, false);
+        return new TestKit(system, false, Duration.ofSeconds(5));
+    }
+    
+    /**
+     * Creates a new TestKitBuilder for configuring a TestKit.
+     * 
+     * @return a new TestKitBuilder
+     */
+    public static TestKitBuilder builder() {
+        return new TestKitBuilder();
     }
     
     /**
@@ -53,6 +66,26 @@ public class TestKit implements AutoCloseable {
      */
     public ActorSystem system() {
         return system;
+    }
+    
+    /**
+     * Gets the default timeout for operations.
+     * 
+     * @return the default timeout
+     */
+    public Duration getDefaultTimeout() {
+        return defaultTimeout;
+    }
+    
+    /**
+     * Sets the default timeout for operations.
+     * 
+     * @param timeout the new default timeout
+     * @return this TestKit for chaining
+     */
+    public TestKit withDefaultTimeout(Duration timeout) {
+        this.defaultTimeout = timeout;
+        return this;
     }
     
     /**
@@ -139,6 +172,47 @@ public class TestKit implements AutoCloseable {
     public void close() {
         if (ownsSystem) {
             system.shutdown();
+        }
+    }
+    
+    /**
+     * Builder for creating configured TestKit instances.
+     */
+    public static class TestKitBuilder {
+        private ActorSystem system;
+        private Duration defaultTimeout = Duration.ofSeconds(5);
+        
+        /**
+         * Sets the ActorSystem to use.
+         * If not set, a new ActorSystem will be created.
+         * 
+         * @param system the ActorSystem to use
+         * @return this builder
+         */
+        public TestKitBuilder withSystem(ActorSystem system) {
+            this.system = system;
+            return this;
+        }
+        
+        /**
+         * Sets the default timeout for operations.
+         * 
+         * @param timeout the default timeout
+         * @return this builder
+         */
+        public TestKitBuilder withTimeout(Duration timeout) {
+            this.defaultTimeout = timeout;
+            return this;
+        }
+        
+        /**
+         * Builds the TestKit instance.
+         * 
+         * @return a new TestKit
+         */
+        public TestKit build() {
+            ActorSystem actualSystem = system != null ? system : new ActorSystem();
+            return new TestKit(actualSystem, system == null, defaultTimeout);
         }
     }
 }

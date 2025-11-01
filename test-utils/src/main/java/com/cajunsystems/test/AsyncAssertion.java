@@ -1,6 +1,9 @@
 package com.cajunsystems.test;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -29,6 +32,8 @@ public class AsyncAssertion {
      * @throws AssertionError if condition doesn't become true within timeout
      */
     public static void eventually(BooleanSupplier condition, Duration timeout) {
+        Objects.requireNonNull(condition, "condition cannot be null");
+        Objects.requireNonNull(timeout, "timeout cannot be null");
         eventually(condition, timeout, DEFAULT_POLL_INTERVAL_MS);
     }
     
@@ -41,6 +46,8 @@ public class AsyncAssertion {
      * @throws AssertionError if condition doesn't become true within timeout
      */
     public static void eventually(BooleanSupplier condition, Duration timeout, long pollIntervalMs) {
+        Objects.requireNonNull(condition, "condition cannot be null");
+        Objects.requireNonNull(timeout, "timeout cannot be null");
         long endTime = System.currentTimeMillis() + timeout.toMillis();
         Throwable lastError = null;
         
@@ -85,6 +92,8 @@ public class AsyncAssertion {
      * @throws AssertionError if value doesn't match within timeout
      */
     public static <T> T awaitValue(Supplier<T> supplier, T expected, Duration timeout) {
+        Objects.requireNonNull(supplier, "supplier cannot be null");
+        Objects.requireNonNull(timeout, "timeout cannot be null");
         return awaitValue(supplier, expected, timeout, DEFAULT_POLL_INTERVAL_MS);
     }
     
@@ -100,12 +109,21 @@ public class AsyncAssertion {
      * @throws AssertionError if value doesn't match within timeout
      */
     public static <T> T awaitValue(Supplier<T> supplier, T expected, Duration timeout, long pollIntervalMs) {
-        long endTime = System.currentTimeMillis() + timeout.toMillis();
+        Objects.requireNonNull(supplier, "supplier cannot be null");
+        Objects.requireNonNull(timeout, "timeout cannot be null");
+        
+        long startTime = System.currentTimeMillis();
+        long endTime = startTime + timeout.toMillis();
         T lastValue = null;
+        List<T> valueHistory = new ArrayList<>();
         
         while (System.currentTimeMillis() < endTime) {
             try {
                 lastValue = supplier.get();
+                // Track value changes only
+                if (valueHistory.isEmpty() || !Objects.equals(lastValue, valueHistory.get(valueHistory.size() - 1))) {
+                    valueHistory.add(lastValue);
+                }
                 if (expected == null ? lastValue == null : expected.equals(lastValue)) {
                     return lastValue;
                 }
@@ -121,9 +139,10 @@ public class AsyncAssertion {
             }
         }
         
+        // Enhanced error message with value history
         throw new AssertionError(String.format(
-            "Value did not become %s within %s. Last value: %s",
-            expected, timeout, lastValue
+            "Value did not become %s within %s. Value history: %s. Final value: %s",
+            expected, timeout, valueHistory, lastValue
         ));
     }
     
@@ -136,6 +155,8 @@ public class AsyncAssertion {
      * @throws AssertionError if assertion keeps failing within timeout
      */
     public static void eventuallyAssert(Runnable assertion, Duration timeout) {
+        Objects.requireNonNull(assertion, "assertion cannot be null");
+        Objects.requireNonNull(timeout, "timeout cannot be null");
         eventuallyAssert(assertion, timeout, DEFAULT_POLL_INTERVAL_MS);
     }
     
@@ -148,6 +169,8 @@ public class AsyncAssertion {
      * @throws AssertionError if assertion keeps failing within timeout
      */
     public static void eventuallyAssert(Runnable assertion, Duration timeout, long pollIntervalMs) {
+        Objects.requireNonNull(assertion, "assertion cannot be null");
+        Objects.requireNonNull(timeout, "timeout cannot be null");
         long endTime = System.currentTimeMillis() + timeout.toMillis();
         Throwable lastError = null;
         

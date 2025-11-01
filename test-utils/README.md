@@ -92,14 +92,25 @@ try (TestKit testKit = TestKit.create()) {
     // Access the actor system
     ActorSystem system = testKit.system();
 }
+
+// Use builder for custom configuration
+try (TestKit testKit = TestKit.builder()
+        .withTimeout(Duration.ofSeconds(10))
+        .build()) {
+    // Test code with custom timeout
+}
 ```
 
 **Key Methods:**
+- `create()` - Create with default settings
+- `create(system)` - Use existing ActorSystem
+- `builder()` - Create builder for custom configuration
 - `spawn(handlerClass)` - Spawn regular actor
 - `spawn(handler)` - Spawn with lambda handler
 - `spawnStateful(handlerClass, initialState)` - Spawn stateful actor
 - `createProbe()` - Create message probe
 - `system()` - Get underlying ActorSystem
+- `getDefaultTimeout()` / `withDefaultTimeout(timeout)` - Timeout configuration
 
 ### 2. TestProbe
 Capture and assert on messages sent to a probe.
@@ -391,6 +402,101 @@ Response result = AskTestHelper.tryAsk(
 - `askAndExpect(actor, message, expected, timeout)` - Ask and expect value
 - `tryAsk(actor, message, timeout)` - Ask without throwing
 
+### 9. PerformanceAssertion
+Performance testing utilities for timing and throughput assertions.
+
+```java
+// Assert operation completes within time limit
+String result = PerformanceAssertion.assertWithinTime(
+    () -> expensiveOperation(),
+    Duration.ofMillis(100)
+);
+
+// Assert throughput meets minimum requirement
+PerformanceAssertion.assertThroughput(
+    () -> actor.tell(new Message()),
+    1000,  // iterations
+    10000  // min ops/sec
+);
+
+// Measure execution time
+Duration duration = PerformanceAssertion.measureTime(
+    () -> operation()
+);
+
+// Measure throughput
+double opsPerSec = PerformanceAssertion.measureThroughput(
+    () -> operation(),
+    1000  // iterations
+);
+
+// Comprehensive measurement
+PerformanceResult result = PerformanceAssertion.measure(
+    () -> operation(),
+    1000
+);
+System.out.println(result); // duration, iterations, ops/sec
+```
+
+**Key Methods:**
+- `assertWithinTime(operation, maxTime)` - Assert timing
+- `assertThroughput(operation, iterations, minOpsPerSecond)` - Assert throughput
+- `measureTime(operation)` - Measure execution time
+- `measureThroughput(operation, iterations)` - Measure throughput
+- `measure(operation, iterations)` - Full performance measurement
+
+### 10. MessageMatcher
+Sophisticated message pattern matching for complex assertions.
+
+```java
+// Match by type
+Predicate<Object> matcher = MessageMatcher.instanceOf(Response.class);
+
+// Combine multiple conditions (all must match)
+Predicate<Response> matcher = MessageMatcher.allOf(
+    MessageMatcher.instanceOf(Response.class),
+    response -> response.value() > 0,
+    response -> response.status().equals("OK")
+);
+
+// Match any condition
+Predicate<Object> matcher = MessageMatcher.anyOf(
+    MessageMatcher.instanceOf(ErrorResponse.class),
+    MessageMatcher.instanceOf(TimeoutResponse.class)
+);
+
+// Negate a matcher
+Predicate<String> matcher = MessageMatcher.not(
+    MessageMatcher.contains("error")
+);
+
+// String matchers
+Predicate<String> startsWithHello = MessageMatcher.startsWith("hello");
+Predicate<String> containsWorld = MessageMatcher.contains("world");
+Predicate<String> endsWithBang = MessageMatcher.endsWith("!");
+Predicate<String> matchesPattern = MessageMatcher.matches("\\d{3}-\\d{4}");
+
+// Use with MessageCapture
+MessageCapture<Object> capture = MessageCapture.create();
+List<Response> responses = capture.filter(
+    MessageMatcher.allOf(
+        MessageMatcher.instanceOf(Response.class),
+        msg -> ((Response) msg).value() > 100
+    )
+);
+```
+
+**Key Methods:**
+- `instanceOf(type)` - Match by type
+- `allOf(predicates...)` - All must match
+- `anyOf(predicates...)` - Any must match
+- `not(predicate)` - Negate matcher
+- `equalTo(value)` / `notEqualTo(value)` - Equality matching
+- `isNull()` / `isNotNull()` - Null checks
+- `contains(substring)` / `startsWith(prefix)` / `endsWith(suffix)` - String matching
+- `matches(regex)` - Regex matching
+- `any()` / `none()` - Always/never match
+
 ## Complete Example
 
 Here's a comprehensive example showing multiple features:
@@ -447,18 +553,20 @@ void comprehensiveExample() {
 ## Implementation Status
 
 ### ✅ Phase 1 - Core Components (Complete)
-- **TestKit** - Actor lifecycle management
+- **TestKit** - Actor lifecycle management with builder pattern
 - **TestProbe** - Message capture and assertions
 - **TestPid** - Enhanced actor references
 
 ### ✅ Phase 2 - Inspection Tools (Complete)
 - **StateInspector** - Direct state access for stateful actors
 - **MailboxInspector** - Mailbox monitoring and metrics
-- **AsyncAssertion** - Async testing without Thread.sleep()
+- **AsyncAssertion** - Async testing with enhanced error messages and null safety
 
 ### ✅ Phase 3 - Advanced Tools (Complete)
 - **MessageCapture** - Message sequence inspection
 - **AskTestHelper** - Simplified ask pattern
+- **PerformanceAssertion** - Performance testing utilities
+- **MessageMatcher** - Sophisticated pattern matching
 
 ## Test Coverage
 
@@ -472,6 +580,126 @@ void comprehensiveExample() {
 - MessageCaptureTest.java (14 tests)
 - AskTestHelperTest.java (9 tests)
 - Plus 4 additional integration tests
+
+## Common Testing Patterns
+
+### Testing Message Sequences
+
+```java
+@Test
+void shouldProcessMessageSequence() {
+    try (TestKit testKit = TestKit.create()) {
+        MessageCapture<String> capture = MessageCapture.create();
+        TestPid<String> actor = testKit.spawn(capture.handler());
+        
+        // Send sequence
+        actor.tell("start");
+        actor.tell("process");
+        actor.tell("end");
+        
+        // Verify exact sequence
+        AsyncAssertion.awaitValue(capture::size, 3, Duration.ofSeconds(1));
+        assertEquals(List.of("start", "process", "end"), capture.all());
+    }
+}
+```
+
+### Testing with Pattern Matching
+
+```java
+@Test
+void shouldFilterMessagesByType() {
+    try (TestKit testKit = TestKit.create()) {
+        MessageCapture<Object> capture = MessageCapture.create();
+        TestPid<Object> actor = testKit.spawn(capture.handler());
+        
+        actor.tell(new SuccessResponse(42));
+        actor.tell(new ErrorResponse("failed"));
+        actor.tell(new SuccessResponse(100));
+        
+        // Filter using MessageMatcher
+        List<Object> successes = capture.filter(
+            MessageMatcher.instanceOf(SuccessResponse.class)
+        );
+        
+        assertEquals(2, successes.size());
+    }
+}
+```
+
+### Testing Performance Requirements
+
+```java
+@Test
+void shouldMeetPerformanceRequirements() {
+    try (TestKit testKit = TestKit.create()) {
+        TestPid<Message> actor = testKit.spawn(FastHandler.class);
+        
+        // Assert operation completes quickly
+        PerformanceAssertion.assertWithinTime(
+            () -> {
+                actor.tell(new Message());
+                actor.mailboxInspector().awaitEmpty(Duration.ofSeconds(1));
+            },
+            Duration.ofMillis(100)
+        );
+        
+        // Assert throughput
+        PerformanceAssertion.assertThroughput(
+            () -> actor.tell(new Message()),
+            10000,  // 10k messages
+            50000   // min 50k ops/sec
+        );
+    }
+}
+```
+
+### Testing Error Conditions
+
+```java
+@Test
+void shouldHandleErrors() {
+    try (TestKit testKit = TestKit.create()) {
+        TestPid<String> actor = testKit.spawn(ErrorProneHandler.class);
+        MailboxInspector mailbox = actor.mailboxInspector();
+        
+        actor.tell("cause-error");
+        
+        // Verify actor recovers and continues processing
+        actor.tell("normal-message");
+        
+        AsyncAssertion.eventually(
+            () -> mailbox.isEmpty(),
+            Duration.ofSeconds(2)
+        );
+    }
+}
+```
+
+### Testing with Custom Timeouts
+
+```java
+@Test
+void shouldUseCustomTimeouts() {
+    // Configure TestKit with longer timeout for slow operations
+    try (TestKit testKit = TestKit.builder()
+            .withTimeout(Duration.ofSeconds(30))
+            .build()) {
+        
+        TestPid<Object> slowActor = testKit.spawnStateful(SlowHandler.class, 0);
+        StateInspector<Integer> state = slowActor.stateInspector();
+        
+        slowActor.tell(new SlowOperation());
+        
+        // Uses default timeout from TestKit
+        AsyncAssertion.awaitValue(
+            state::current,
+            42,
+            testKit.getDefaultTimeout()
+        );
+    }
+}
+```
 
 ## Best Practices
 
