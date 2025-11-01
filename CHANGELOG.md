@@ -5,6 +5,32 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.1.4] - 2025-11-01
+
+### Added
+- **Test-Utils Module**: New dedicated testing utilities module for writing cleaner, more reliable async tests
+  - `AsyncAssertion`: Utility for polling conditions with configurable timeouts and intervals, replacing manual `Thread.sleep()` and polling loops
+  - `MessageCapture`: Helper for capturing and asserting on messages sent to actors
+  - `PerformanceAssertion`: Utilities for performance testing and benchmarking
+  - `AskTestHelper`: Simplified testing utilities for ask pattern interactions
+  - `TestPid`: Mock Pid implementation for testing without a full ActorSystem
+- **ActorContext Logger**: Added `getLogger()` method to `ActorContext` that provides a pre-configured logger with automatic actor ID context for consistent logging across all actors
+- **ReplyingMessage Interface**: Added standardized interface for request-response patterns with strong type contracts. Includes `reply()` convenience method on `ActorContext` for cleaner code
+- **Documentation**: Added "ActorContext Convenience Features" section to README documenting `tellSelf()`, `getLogger()`, and `ReplyingMessage` patterns
+
+### Changed
+- **Actor Logging**: Each actor now has a dedicated logger instance initialized with the actor's class name and ID for better traceability
+- **Test Refactoring**: Refactored 5 core test files to use test-utils library
+  - Replaced 20+ `Thread.sleep()` calls with `AsyncAssertion.eventually()`
+  - Replaced 6 `CountDownLatch` patterns with `AtomicBoolean` + `AsyncAssertion`
+  - Eliminated manual polling loops in favor of declarative async assertions
+  - Tests are now faster, more reliable, and easier to understand
+
+### Fixed
+- **Test Reliability**: Improved test stability by removing arbitrary sleep delays and using condition-based waiting
+
 ## [0.1.3] - 2025-10-28
 
 ### Fixed

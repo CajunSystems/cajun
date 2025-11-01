@@ -1,0 +1,118 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+group = 'com.cajunsystems'
+version = project.findProperty('cajunVersion') ?: '0.1.4'
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Cajun core library
+    // Use project dependency for local development, published artifact for Maven Central
+    if (project.hasProperty('usePublishedDeps')) {
+        api "com.cajunsystems:cajun:${version}"
+    } else {
+        api project(':lib')
+    }
+    
+    // JUnit 5 for test framework integration
+    api 'org.junit.jupiter:junit-jupiter-api:5.10.0'
+    
+    // Awaitility for eventually assertions
+    implementation 'org.awaitility:awaitility:4.2.0'
+    
+    // SLF4J for logging
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    
+    // Test dependencies
+    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.4.11'
+}
+
+tasks.withType(JavaCompile) {
+    options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Javadoc) {
+    options.addBooleanOption('-enable-preview', true)
+    options.addStringOption('source', '21')
+}
+
+tasks.withType(Test) {
+    jvmArgs += '--enable-preview'
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaExec) {
+    jvmArgs += '--enable-preview'
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId = 'com.cajunsystems'
+            artifactId = 'cajun-test'
+            
+            pom {
+                name.set('Cajun Test Utilities')
+                description.set('Testing utilities for the Cajun actor system - includes async assertions, message capture, and performance testing helpers')
+                url.set('https://github.com/cajunsystems/cajun')
+                
+                licenses {
+                    license {
+                        name.set('MIT License')
+                        url.set('https://opensource.org/licenses/MIT')
+                    }
+                }
+                
+                developers {
+                    developer {
+                        id.set('cajunsystems')
+                        name.set('CajunSystems')
+                        email.set('info@cajunsystems.io')
+                    }
+                }
+                
+                scm {
+                    connection.set('scm:git:git://github.com/cajunsystems/cajun.git')
+                    developerConnection.set('scm:git:ssh://github.com:cajunsystems/cajun.git')
+                    url.set('https://github.com/cajunsystems/cajun')
+                }
+            }
+        }
+    }
+    
+    repositories {
+        maven {
+            name = 'CentralPortal'
+            url = layout.buildDirectory.dir('repo')
+        }
+    }
+}
+
+signing {
+    required { gradle.taskGraph.hasTask("publish") }
+        sign publishing.publications.mavenJava
+}
+
+// Task to create a bundle for Central Portal upload
+tasks.register('createCentralBundle', Zip) {
+    from layout.buildDirectory.dir('repo')
+    archiveFileName = "cajun-test-${version}-bundle.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    dependsOn 'publishMavenJavaPublicationToCentralPortalRepository'
+}

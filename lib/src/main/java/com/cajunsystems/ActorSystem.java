@@ -73,7 +73,7 @@ public class ActorSystem {
                   system.getBackpressureConfig(), 
                   system.getMailboxConfig(), 
                   system.getThreadPoolFactory(), 
-                  (MailboxProvider<Message>) system.getMailboxProvider());
+                  system.getMailboxProvider());
             this.receiver = receiver;
         }
 
@@ -699,12 +699,16 @@ public class ActorSystem {
     }
 
     /**
-     * Gets the mailbox provider for this actor system.
+     * Gets the mailbox provider for this actor system with a specific type parameter.
+     * This method performs an unchecked cast, which is safe because MailboxProvider
+     * implementations are typically stateless factories.
      *
-     * @return The mailbox provider
+     * @param <T> The message type
+     * @return The mailbox provider cast to the specified type
      */
-    public MailboxProvider<?> getMailboxProvider() {
-        return mailboxProvider;
+    @SuppressWarnings("unchecked")
+    public <T> MailboxProvider<T> getMailboxProvider() {
+        return (MailboxProvider<T>) mailboxProvider;
     }
 
     /**

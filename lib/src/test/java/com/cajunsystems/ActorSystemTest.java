@@ -1,6 +1,7 @@
 package com.cajunsystems;
 
 import com.cajunsystems.helper.*;
+import com.cajunsystems.test.AsyncAssertion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -82,12 +83,10 @@ class ActorSystemTest {
     }
 
     @Test
-    void shouldBeAbleToBeDelayInSendingAMessage() throws InterruptedException {
-        // Create a latch to wait for the test to complete
-        java.util.concurrent.CountDownLatch testCompletionLatch = new java.util.concurrent.CountDownLatch(1);
-
+    void shouldBeAbleToBeDelayInSendingAMessage() {
         // Create a mutable counter to track state outside the actor
         final int[] finalCount = {0};
+        final int[] receivedCount = {0};
 
         // Create a counter actor with direct state tracking
         var counter = actorSystem.register((message) -> {
@@ -103,14 +102,10 @@ class ActorSystemTest {
         // Create a functional actor for receiving the count
         var receiverActor = actorSystem.register((message) -> {
             if (message instanceof HelloCount hc) {
-                assertEquals(4, hc.count(), "Expected count to be 4, but was " + hc.count());
-                testCompletionLatch.countDown(); // Signal that we received the message
+                receivedCount[0] = hc.count();
             }
             return null;
         }, "count-receiver-with-delay");
-
-        // Give actors time to initialize
-        Thread.sleep(100);
 
         // Send messages with increasing delays
         counter.tell(new CounterProtocol.CountUp(), 100, TimeUnit.MILLISECONDS);
@@ -118,18 +113,24 @@ class ActorSystemTest {
         counter.tell(new CounterProtocol.CountUp(), 300, TimeUnit.MILLISECONDS);
         counter.tell(new CounterProtocol.CountUp(), 400, TimeUnit.MILLISECONDS);
 
-        // Wait for a sufficient time for all delayed messages to be processed
-        Thread.sleep(1000);
+        // Wait for all delayed messages to be processed
+        AsyncAssertion.eventually(
+            () -> finalCount[0] == 4,
+            Duration.ofSeconds(2)
+        );
 
         // Now send the GetCount message
         counter.tell(new CounterProtocol.GetCount(receiverActor));
 
-        // Wait for the test to complete with a timeout
-        boolean completed = testCompletionLatch.await(5, TimeUnit.SECONDS);
-        assertTrue(completed, "Test did not complete within the expected time");
+        // Wait for the receiver to get the count
+        AsyncAssertion.eventually(
+            () -> receivedCount[0] == 4,
+            Duration.ofSeconds(2)
+        );
 
         // Final verification
         assertEquals(4, finalCount[0], "Expected final count to be 4");
+        assertEquals(4, receivedCount[0], "Expected received count to be 4");
     }
 
     // Tests for the ask method
@@ -161,10 +162,7 @@ class ActorSystemTest {
                     Thread.currentThread().interrupt();
                 }
                 // Get the sender from context and reply
-                Pid sender = getSender();
-                if (sender != null) {
-                    sender.tell("pong");
-                }
+                getSender().ifPresent(sender -> sender.tell("pong"));
             } else if ("ping-wrong-type".equals(message)) {
                 // Add a small delay to ensure the reply actor is ready
                 try {
@@ -173,10 +171,7 @@ class ActorSystemTest {
                     Thread.currentThread().interrupt();
                 }
                 // Send an Integer instead of String to trigger ClassCastException
-                Pid sender = getSender();
-                if (sender != null) {
-                    sender.tell(Integer.valueOf(123));
-                }
+                getSender().ifPresent(sender -> sender.tell(Integer.valueOf(123)));
             }
         }
     }
@@ -184,17 +179,13 @@ class ActorSystemTest {
     @Test
     void askShouldReceiveSuccessfulReply() throws Exception {
         Pid pongActorPid = actorSystem.register(PongActor.class, "pong-actor");
-        // Give actor time to initialize
-        Thread.sleep(100);
         CompletableFuture<String> future = actorSystem.ask(pongActorPid, "ping", Duration.ofSeconds(3));
         assertEquals("pong", future.get(4, TimeUnit.SECONDS));
     }
 
     @Test
-    void askShouldTimeoutWhenNoReply() throws InterruptedException {
+    void askShouldTimeoutWhenNoReply() {
         Pid pingActorPid = actorSystem.register(PingActor.class, "ping-actor-no-reply"); // This actor won't reply
-        // Give actor time to initialize
-        Thread.sleep(100);
         CompletableFuture<String> future = actorSystem.ask(pingActorPid, "ping", Duration.ofMillis(300));
 
         assertThrows(TimeoutException.class, () -> {
@@ -210,10 +201,8 @@ class ActorSystemTest {
     }
 
     @Test
-    void askShouldHandleIncorrectReplyType() throws InterruptedException {
+    void askShouldHandleIncorrectReplyType() {
         Pid pongActorPid = actorSystem.register(PongActor.class, "pong-actor-wrong-type");
-        // Give actor time to initialize
-        Thread.sleep(300);
         CompletableFuture<String> future = actorSystem.ask(pongActorPid, "ping-wrong-type", Duration.ofSeconds(5));
 
         boolean exceptionThrown = false;

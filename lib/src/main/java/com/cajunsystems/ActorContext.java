@@ -1,6 +1,9 @@
 package com.cajunsystems;
 
+import org.slf4j.Logger;
+
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -31,6 +34,16 @@ public interface ActorContext {
      * @param message The message to send
      */
     <T> void tell(Pid target, T message);
+    
+    /**
+     * Replies to a message that implements {@link ReplyingMessage}.
+     * This is a convenience method that extracts the replyTo PID and sends the response.
+     *
+     * @param <T> The type of the response message
+     * @param request The original request message that implements ReplyingMessage
+     * @param response The response message to send
+     */
+    <T> void reply(ReplyingMessage request, T response);
     
     /**
      * Sends a message to this actor after a delay.
@@ -98,9 +111,28 @@ public interface ActorContext {
     /**
      * Gets the sender of the current message being processed.
      * This is useful for the ask pattern where the sender is the temporary reply actor.
-     * Returns null if there is no sender context (e.g., for messages sent via tell without ask).
+     * Returns an empty Optional if there is no sender context (e.g., for messages sent via tell without ask).
      *
-     * @return The PID of the sender, or null if no sender context
+     * @return An Optional containing the PID of the sender, or empty if no sender context
      */
-    Pid getSender();
+    Optional<Pid> getSender();
+    
+    /**
+     * Forwards a message to another actor, preserving the original sender context.
+     * This is useful when an actor acts as an intermediary and wants the final recipient
+     * to know about the original sender (e.g., for ask pattern replies).
+     * 
+     * @param <T> The type of the message
+     * @param target The target actor PID
+     * @param message The message to forward
+     */
+    <T> void forward(Pid target, T message);
+    
+    /**
+     * Gets a logger for this actor with the actor ID as context.
+     * This provides consistent logging output across all actors.
+     *
+     * @return A logger instance configured for this actor
+     */
+    Logger getLogger();
 }
