@@ -41,6 +41,15 @@ public class TestPid<T> {
     }
     
     /**
+     * Gets the actor system.
+     * 
+     * @return the actor system
+     */
+    public ActorSystem system() {
+        return system;
+    }
+    
+    /**
      * Sends a message to the actor (fire-and-forget).
      * 
      * @param message the message to send
@@ -119,6 +128,26 @@ public class TestPid<T> {
      */
     public String actorId() {
         return pid.actorId();
+    }
+    
+    /**
+     * Creates a StateInspector for this actor (only works for stateful actors).
+     * 
+     * @param <S> the state type
+     * @return a StateInspector for examining actor state
+     * @throws IllegalArgumentException if this is not a stateful actor
+     */
+    public <S> StateInspector<S> stateInspector() {
+        return StateInspector.create(this, system);
+    }
+    
+    /**
+     * Creates a MailboxInspector for this actor.
+     * 
+     * @return a MailboxInspector for examining mailbox state
+     */
+    public MailboxInspector mailboxInspector() {
+        return MailboxInspector.create(this, system);
     }
     
     @Override

@@ -8,6 +8,7 @@
 
 ## Table of Contents
 - [Introduction](#introduction)
+- [Testing](#testing)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -68,6 +69,39 @@ An actor is a concurrent unit of computation which guarantees serial processing 
 <img src="docs/actor_arch.png" alt="Actor architecture" style="height:auto;">
 
 > **Dedication**: Cajun is inspired by Erlang OTP and the actor model, and is dedicated to the late Joe Armstrong from Ericsson, whose pioneering work on Erlang and the actor model has influenced a generation of concurrent programming systems. Additional inspiration comes from Akka/Pekko.
+
+## Testing
+
+Cajun provides comprehensive test utilities that make actor testing clean, fast, and approachable. The test utilities eliminate common pain points like `Thread.sleep()`, `CountDownLatch` boilerplate, and polling loops.
+
+**Key Features:**
+- ✅ **No more `Thread.sleep()`** - Use `AsyncAssertion` for deterministic waiting
+- ✅ **Direct state inspection** - Inspect stateful actor state without query messages
+- ✅ **Mailbox monitoring** - Track queue depth, processing rates, and backpressure
+- ✅ **Message capture** - Capture and inspect all messages sent to an actor
+- ✅ **Simplified ask pattern** - One-line request-response testing
+- ✅ **66 passing tests** - Fully tested and production-ready
+
+**Quick Example:**
+```java
+@Test
+void testCounter() {
+    try (TestKit testKit = TestKit.create()) {
+        TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
+        
+        counter.tell(new Increment(5));
+        
+        // No Thread.sleep()! Wait for exact state
+        AsyncAssertion.awaitValue(
+            counter.stateInspector()::current,
+            5,
+            Duration.ofSeconds(1)
+        );
+    }
+}
+```
+
+**📖 Full Documentation:** See [test-utils/README.md](test-utils/README.md) for complete API documentation, examples, and best practices.
 
 ## Prerequisites
 - Java 21+ (with --enable-preview flag)

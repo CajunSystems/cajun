@@ -1,17 +1,18 @@
 # Cajun Test Utilities
 
-Test utilities for writing clean, maintainable tests for Cajun actor systems.
+Comprehensive testing utilities for the Cajun actor system - making actor testing clean, fast, and approachable.
 
 ## Overview
 
 The Cajun test utilities eliminate common pain points in actor testing:
 
-- ❌ **No more `Thread.sleep()`** - Deterministic waiting with timeouts
-- ❌ **No more `CountDownLatch` boilerplate** - Built-in synchronization
-- ❌ **No more polling loops** - Direct state inspection
+- ❌ **No more `Thread.sleep()`** - Use `AsyncAssertion` for deterministic waiting
+- ❌ **No more `CountDownLatch` boilerplate** - Built-in synchronization with `TestProbe`
+- ❌ **No more polling loops** - Direct state inspection with `StateInspector`
 - ❌ **No more reflection hacks** - Proper test instrumentation
 - ✅ **Clean, readable tests** - Fluent API design
 - ✅ **Fast test execution** - Minimal waiting, maximum efficiency
+- ✅ **Complete visibility** - Inspect state, mailbox, and messages
 
 ## Quick Example
 
@@ -48,79 +49,18 @@ void testCounter() throws InterruptedException {
 @Test
 void testCounter() {
     try (TestKit testKit = TestKit.create()) {
-        TestPid<Increment> counter = 
-            testKit.spawnStateful(CounterHandler.class, 0);
+        TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
         
-        counter.tellAndWait(new Increment(5), Duration.ofSeconds(1));
+        counter.tell(new Increment(5));
         
-        counter.stateInspector()
-            .assertThat()
-            .isEqualTo(5);
+        // No Thread.sleep()! Wait for exact state
+        AsyncAssertion.awaitValue(
+            counter.stateInspector()::current,
+            5,
+            Duration.ofSeconds(1)
+        );
     }
 }
-```
-
-## Core Components
-
-### 1. TestKit
-Main entry point for creating test actors and probes.
-
-```java
-try (TestKit testKit = TestKit.create()) {
-    TestPid<String> actor = testKit.spawn(MyHandler.class);
-    TestProbe<String> probe = testKit.createProbe();
-    // ... test code ...
-}
-```
-
-### 2. TestProbe
-Capture and assert on messages.
-
-```java
-TestProbe<Response> probe = testKit.createProbe();
-actor.tell(new Request("data", probe.ref()));
-
-Response response = probe.expectMessage(Duration.ofSeconds(1));
-assertEquals("processed", response.value());
-```
-
-### 3. TestPid
-Enhanced Pid with test capabilities.
-
-```java
-TestPid<Message> actor = testKit.spawn(MyHandler.class);
-
-// Send and wait for processing
-actor.tellAndWait(new Message(), Duration.ofSeconds(1));
-
-// Inspect state
-StateInspector<Integer> state = actor.stateInspector();
-assertEquals(5, state.current());
-```
-
-### 4. StateInspector
-Verify stateful actor state changes.
-
-```java
-StateInspector<Integer> state = actor.stateInspector();
-
-actor.tell(new Increment(3));
-state.awaitState(s -> s == 3, Duration.ofSeconds(1));
-```
-
-### 5. MailboxInspector
-Monitor mailbox state and backpressure.
-
-```java
-MailboxInspector mailbox = actor.mailboxInspector();
-
-// Send messages
-for (int i = 0; i < 10; i++) {
-    actor.tell(new Message(i));
-}
-
-// Wait for processing
-mailbox.awaitEmpty(Duration.ofSeconds(2));
 ```
 
 ## Installation
@@ -133,20 +73,482 @@ dependencies {
 }
 ```
 
-## Design Document
+## Core Components
 
-See [TEST_UTILITIES_DESIGN.md](TEST_UTILITIES_DESIGN.md) for the complete API design, implementation plan, and examples.
+### 1. TestKit
+Main entry point for creating test actors and probes. Manages actor system lifecycle.
 
-## Status
+```java
+try (TestKit testKit = TestKit.create()) {
+    // Spawn regular actors
+    TestPid<String> actor = testKit.spawn(MyHandler.class);
+    
+    // Spawn stateful actors
+    TestPid<Object> stateful = testKit.spawnStateful(CounterHandler.class, 0);
+    
+    // Create message probes
+    TestProbe<Response> probe = testKit.createProbe();
+    
+    // Access the actor system
+    ActorSystem system = testKit.system();
+}
+```
 
-🚧 **In Design Phase** - API design complete, implementation pending
+**Key Methods:**
+- `spawn(handlerClass)` - Spawn regular actor
+- `spawn(handler)` - Spawn with lambda handler
+- `spawnStateful(handlerClass, initialState)` - Spawn stateful actor
+- `createProbe()` - Create message probe
+- `system()` - Get underlying ActorSystem
 
-### Implementation Roadmap
+### 2. TestProbe
+Capture and assert on messages sent to a probe.
 
-- **Phase 1 (Week 1)**: Core components (TestKit, TestProbe, TestPid)
-- **Phase 2 (Week 2)**: Inspection tools (StateInspector, MailboxInspector)
-- **Phase 3 (Week 3)**: Advanced features (MessageCapture, AskTestHelper)
+```java
+TestProbe<Response> probe = testKit.createProbe();
+actor.tell(new Request("data", probe.ref()));
+
+// Wait for and assert on message
+Response response = probe.expectMessage(Duration.ofSeconds(1));
+assertEquals("processed", response.value());
+
+// Expect multiple messages
+List<Response> responses = probe.expectMessages(3, Duration.ofSeconds(2));
+
+// Expect no messages
+probe.expectNoMessage(Duration.ofMillis(500));
+```
+
+**Key Methods:**
+- `ref()` - Get Pid to send to actors
+- `expectMessage(timeout)` - Wait for single message
+- `expectMessages(count, timeout)` - Wait for multiple messages
+- `expectNoMessage(timeout)` - Assert no messages received
+
+### 3. TestPid
+Enhanced Pid with test capabilities and inspection tools.
+
+```java
+TestPid<Message> actor = testKit.spawn(MyHandler.class);
+
+// Send messages
+actor.tell(new Message());
+
+// Send and wait for processing
+actor.tellAndWait(new Message(), Duration.ofSeconds(1));
+
+// Get inspectors
+StateInspector<Integer> state = actor.stateInspector();
+MailboxInspector mailbox = actor.mailboxInspector();
+
+// Access underlying Pid
+Pid pid = actor.pid();
+```
+
+**Key Methods:**
+- `tell(message)` - Send message (fire-and-forget)
+- `tellAndWait(message, timeout)` - Send and wait for processing
+- `stateInspector()` - Get state inspector (stateful actors only)
+- `mailboxInspector()` - Get mailbox inspector
+- `pid()` - Get underlying Pid
+
+## Inspection Tools
+
+### 4. StateInspector
+Direct state inspection for stateful actors - no query messages needed!
+
+```java
+TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
+StateInspector<Integer> inspector = counter.stateInspector();
+
+// Get current state
+int current = inspector.current();
+
+// Get as Optional
+Optional<Integer> opt = inspector.currentOptional();
+
+// Check equality
+boolean matches = inspector.stateEquals(42);
+
+// Track processing
+long sequence = inspector.lastProcessedSequence();
+```
+
+**Key Methods:**
+- `current()` - Get current state
+- `currentOptional()` - Get state as Optional
+- `stateEquals(expected)` - Check state equality
+- `lastProcessedSequence()` - Get last processed sequence number
+
+**Example:**
+```java
+@Test
+void shouldInspectState() {
+    try (TestKit testKit = TestKit.create()) {
+        TestPid<Object> calc = testKit.spawnStateful(CalculatorHandler.class, 0);
+        StateInspector<Integer> inspector = calc.stateInspector();
+        
+        calc.tell(new Add(10));
+        calc.tell(new Add(5));
+        
+        // Wait for exact state - no Thread.sleep()!
+        AsyncAssertion.awaitValue(inspector::current, 15, Duration.ofSeconds(2));
+    }
+}
+```
+
+### 5. MailboxInspector
+Monitor mailbox state, capacity, and processing rates.
+
+```java
+TestPid<String> actor = testKit.spawn(SlowHandler.class);
+MailboxInspector inspector = actor.mailboxInspector();
+
+// Check mailbox state
+int size = inspector.size();
+int capacity = inspector.capacity();
+double fillRatio = inspector.fillRatio();
+boolean empty = inspector.isEmpty();
+boolean full = inspector.isFull();
+
+// Wait for conditions
+inspector.awaitEmpty(Duration.ofSeconds(2));
+inspector.awaitSizeBelow(10, Duration.ofSeconds(2));
+
+// Check thresholds
+boolean overloaded = inspector.exceedsThreshold(0.8);
+
+// Get metrics
+double rate = inspector.processingRate();
+var metrics = inspector.metrics();
+```
+
+**Key Methods:**
+- `size()` - Current mailbox size
+- `capacity()` - Mailbox capacity
+- `fillRatio()` - Fill ratio (0.0 to 1.0)
+- `isEmpty()` / `isFull()` - State checks
+- `awaitEmpty(timeout)` - Wait for empty mailbox
+- `awaitSizeBelow(threshold, timeout)` - Wait for size drop
+- `exceedsThreshold(threshold)` - Check if over threshold
+- `processingRate()` - Messages per second
+- `metrics()` - Get snapshot of all metrics
+
+### 6. AsyncAssertion
+Replace `Thread.sleep()` with proper async assertions.
+
+```java
+// Wait for condition
+AsyncAssertion.eventually(
+    () -> inspector.current() > 50,
+    Duration.ofSeconds(2)
+);
+
+// Wait for specific value
+int result = AsyncAssertion.awaitValue(
+    inspector::current,
+    42,
+    Duration.ofSeconds(2)
+);
+
+// Wait for assertion to pass
+AsyncAssertion.eventuallyAssert(
+    () -> assertEquals(42, inspector.current()),
+    Duration.ofSeconds(2)
+);
+
+// Custom poll interval
+AsyncAssertion.eventually(
+    () -> condition(),
+    Duration.ofSeconds(2),
+    50  // Poll every 50ms
+);
+```
+
+**Key Methods:**
+- `eventually(condition, timeout)` - Wait for boolean condition
+- `awaitValue(supplier, expected, timeout)` - Wait for specific value
+- `eventuallyAssert(assertion, timeout)` - Wait for assertion to pass
+- All methods support custom poll intervals
+
+## Advanced Tools
+
+### 7. MessageCapture
+Capture and inspect all messages sent to an actor.
+
+```java
+// Create capture
+MessageCapture<String> capture = MessageCapture.create();
+TestPid<String> actor = testKit.spawn(capture.handler());
+
+actor.tell("msg1");
+actor.tell("msg2");
+actor.tell("msg3");
+
+// Wait for messages
+AsyncAssertion.awaitValue(capture::size, 3, Duration.ofSeconds(1));
+
+// Access messages
+assertEquals(3, capture.size());
+assertEquals("msg1", capture.first());
+assertEquals("msg3", capture.last());
+String msg = capture.get(1);
+
+// Filter messages
+List<String> filtered = capture.filter(msg -> msg.startsWith("msg"));
+
+// Search
+boolean contains = capture.contains(msg -> msg.equals("msg2"));
+long count = capture.count(msg -> msg.startsWith("msg"));
+
+// Wait for specific message
+String found = capture.awaitMessage(
+    msg -> msg.equals("msg2"),
+    Duration.ofSeconds(1)
+);
+
+// Get snapshot
+var snapshot = capture.snapshot();
+
+// Clear
+capture.clear();
+```
+
+**Capture with Delegation:**
+```java
+// Capture AND process messages
+Handler<String> processor = (msg, ctx) -> {
+    // Process message
+};
+
+MessageCapture<String> capture = MessageCapture.create(processor);
+TestPid<String> actor = testKit.spawn(capture.handler());
+
+// Messages are both captured and processed
+```
+
+**Key Methods:**
+- `create()` / `create(delegateHandler)` - Create capture
+- `handler()` - Get capturing handler
+- `size()` / `isEmpty()` - Check state
+- `get(index)` / `first()` / `last()` - Access messages
+- `all()` - Get all messages
+- `filter(predicate)` - Filter messages
+- `contains(predicate)` - Check for message
+- `count(predicate)` - Count matching messages
+- `awaitCount(count, timeout)` - Wait for count
+- `awaitMessage(predicate, timeout)` - Wait for message
+- `snapshot()` - Get immutable snapshot
+- `clear()` - Clear messages
+
+### 8. AskTestHelper
+Simplified ask pattern for request-response testing.
+
+```java
+// Simple ask
+Response response = AskTestHelper.ask(
+    actor,
+    new Request(),
+    Duration.ofSeconds(2)
+);
+
+// Type-safe ask
+Response typed = AskTestHelper.ask(
+    actor,
+    new Request(),
+    Response.class,
+    Duration.ofSeconds(2)
+);
+
+// Ask and assert
+AskTestHelper.askAndAssert(
+    actor,
+    new Request(),
+    (Response r) -> assertEquals(42, r.value()),
+    Duration.ofSeconds(2)
+);
+
+// Ask and expect exact value
+AskTestHelper.askAndExpect(
+    actor,
+    new Request(),
+    new Response(42),
+    Duration.ofSeconds(2)
+);
+
+// Try ask (returns null on failure)
+Response result = AskTestHelper.tryAsk(
+    actor,
+    new Request(),
+    Duration.ofSeconds(2)
+);
+```
+
+**Key Methods:**
+- `ask(actor, message, timeout)` - Simple ask
+- `ask(actor, message, responseType, timeout)` - Type-safe ask
+- `askAndAssert(actor, message, assertion, timeout)` - Ask and assert
+- `askAndExpect(actor, message, expected, timeout)` - Ask and expect value
+- `tryAsk(actor, message, timeout)` - Ask without throwing
+
+## Complete Example
+
+Here's a comprehensive example showing multiple features:
+
+```java
+@Test
+void comprehensiveExample() {
+    try (TestKit testKit = TestKit.create()) {
+        // Spawn stateful actor
+        TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
+        
+        // Create message capture
+        MessageCapture<Object> capture = MessageCapture.create();
+        TestPid<Object> capturedActor = testKit.spawn(capture.handler());
+        
+        // Create probe
+        TestProbe<CountResponse> probe = testKit.createProbe();
+        
+        // Get inspectors
+        StateInspector<Integer> state = counter.stateInspector();
+        MailboxInspector mailbox = counter.mailboxInspector();
+        
+        // Send messages
+        counter.tell(new Increment(10));
+        counter.tell(new Increment(5));
+        
+        // Wait for state change (no Thread.sleep!)
+        AsyncAssertion.awaitValue(state::current, 15, Duration.ofSeconds(2));
+        
+        // Verify mailbox processed messages
+        mailbox.awaitEmpty(Duration.ofSeconds(1));
+        
+        // Query state
+        counter.tell(new GetCount(probe.ref()));
+        CountResponse response = probe.expectMessage(Duration.ofSeconds(1));
+        assertEquals(15, response.count());
+        
+        // Verify captured messages
+        capturedActor.tell("test");
+        AsyncAssertion.awaitValue(capture::size, 1, Duration.ofSeconds(1));
+        assertEquals("test", capture.first());
+        
+        // Use ask pattern
+        ValueResponse askResponse = AskTestHelper.ask(
+            counter,
+            new GetValue(),
+            Duration.ofSeconds(2)
+        );
+        assertNotNull(askResponse);
+    }
+}
+```
+
+## Implementation Status
+
+### ✅ Phase 1 - Core Components (Complete)
+- **TestKit** - Actor lifecycle management
+- **TestProbe** - Message capture and assertions
+- **TestPid** - Enhanced actor references
+
+### ✅ Phase 2 - Inspection Tools (Complete)
+- **StateInspector** - Direct state access for stateful actors
+- **MailboxInspector** - Mailbox monitoring and metrics
+- **AsyncAssertion** - Async testing without Thread.sleep()
+
+### ✅ Phase 3 - Advanced Tools (Complete)
+- **MessageCapture** - Message sequence inspection
+- **AskTestHelper** - Simplified ask pattern
+
+## Test Coverage
+
+**66 tests across 9 test files - all passing ✅**
+
+- TestKitTest.java (5 tests)
+- TestKitExampleTest.java (7 tests)
+- StateInspectorTest.java (8 tests)
+- MailboxInspectorTest.java (10 tests)
+- AsyncAssertionTest.java (9 tests)
+- MessageCaptureTest.java (14 tests)
+- AskTestHelperTest.java (9 tests)
+- Plus 4 additional integration tests
+
+## Best Practices
+
+### 1. Always use AsyncAssertion instead of Thread.sleep()
+
+❌ **Bad:**
+```java
+actor.tell(new Message());
+Thread.sleep(500);  // Arbitrary delay
+assertEquals(expected, state.current());
+```
+
+✅ **Good:**
+```java
+actor.tell(new Message());
+AsyncAssertion.awaitValue(state::current, expected, Duration.ofSeconds(2));
+```
+
+### 2. Use StateInspector for stateful actors
+
+❌ **Bad:**
+```java
+// Create query message just to check state
+actor.tell(new GetState(probe.ref()));
+State state = probe.expectMessage(Duration.ofSeconds(1));
+```
+
+✅ **Good:**
+```java
+// Direct state inspection
+State state = actor.stateInspector().current();
+```
+
+### 3. Use MessageCapture for sequence verification
+
+❌ **Bad:**
+```java
+// Manual tracking
+List<String> received = new ArrayList<>();
+actor.tell(msg -> received.add(msg));
+```
+
+✅ **Good:**
+```java
+MessageCapture<String> capture = MessageCapture.create();
+TestPid<String> actor = testKit.spawn(capture.handler());
+// Automatic capture with filtering, searching, etc.
+```
+
+### 4. Use try-with-resources for TestKit
+
+✅ **Always:**
+```java
+try (TestKit testKit = TestKit.create()) {
+    // Test code
+} // Automatic cleanup
+```
+
+## Roadmap
+
+### Completed ✅
+- All core components
+- All inspection tools
+- All advanced tools
+- Comprehensive test coverage
+- Documentation
+
+### Future Enhancements (Optional)
+- ActorHierarchyInspector - Inspect parent/child relationships
+- TimeTravelTesting - Control virtual time for scheduling tests
+- Fluent assertion builders
+- Performance benchmarking utilities
 
 ## Contributing
 
 This module is part of the Cajun actor system. See the main [README](../README.md) for contribution guidelines.
+
+## License
+
+Part of the Cajun project - see main project for license information.

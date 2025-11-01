@@ -97,6 +97,37 @@ class TestKitExampleTest {
     }
     
     @Test
+    void exampleStateInspector() throws InterruptedException {
+        try (TestKit testKit = TestKit.create()) {
+            // Spawn a stateful counter
+            TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
+            
+            // Give time to initialize
+            Thread.sleep(100);
+            
+            // Create state inspector
+            StateInspector<Integer> inspector = counter.stateInspector();
+            
+            // Verify initial state
+            assertEquals(0, inspector.current());
+            
+            // Perform operations
+            counter.tell(new Increment(10));
+            counter.tell(new Increment(5));
+            Thread.sleep(200);
+            
+            // Inspect state directly (no need for query messages!)
+            assertEquals(15, inspector.current());
+            
+            // More operations
+            counter.tell(new Decrement(3));
+            Thread.sleep(200);
+            
+            assertEquals(12, inspector.current());
+        }
+    }
+    
+    @Test
     void exampleMultipleMessages() {
         try (TestKit testKit = TestKit.create()) {
             TestPid<Request> handler = testKit.spawn(RequestHandler.class);
