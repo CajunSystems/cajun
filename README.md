@@ -629,12 +629,19 @@ Cajun supports batched processing of messages to improve throughput:
 
 - By default, each actor processes messages in batches of 10 messages at a time
 - Batch processing can significantly improve throughput by reducing context switching overhead
-- You can configure the batch size for any actor using the `withBatchSize()` method
+- You can configure the batch size for any actor using the `withBatchSize()` method in the builder
 
 ```java
 // Create an actor with custom batch size
-var myActor = actorSystem.register(MyActor.class, "my-actor");
-((MyActor)actorSystem.getActor(myActor)).withBatchSize(50);  // Process 50 messages at a time
+Pid myActor = system.actorOf(MyHandler.class)
+    .withId("high-throughput-actor")
+    .withBatchSize(50)  // Process 50 messages at a time
+    .spawn();
+
+// For stateful actors
+Pid statefulActor = system.statefulActorOf(MyStatefulHandler.class, initialState)
+    .withBatchSize(100)  // Larger batches for high-throughput scenarios
+    .spawn();
 ```
 
 #### Tuning Considerations:
