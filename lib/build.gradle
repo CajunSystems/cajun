@@ -65,7 +65,7 @@ application {
 }
 
 group = 'com.cajunsystems'
-version = '0.1.3'
+version = project.findProperty('cajunVersion') ?: '0.1.3'
 
 java {
     withJavadocJar()
@@ -178,7 +178,7 @@ tasks.register('runExample', JavaExec) {
 // Task to create a bundle for Central Portal upload
 tasks.register('createCentralBundle', Zip) {
     from layout.buildDirectory.dir('repo')
-    archiveFileName = "cajun-0.1.3-bundle.zip"
+    archiveFileName = "cajun-${version}-bundle.zip"
     destinationDirectory = layout.buildDirectory.dir('distributions')
     dependsOn 'publishMavenJavaPublicationToCentralPortalRepository'
 }
