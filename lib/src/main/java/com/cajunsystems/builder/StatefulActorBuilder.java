@@ -160,7 +160,7 @@ public class StatefulActorBuilder<State, Message> {
                                        : system.getThreadPoolFactory();
         MailboxProvider<Message> mpToUse = (this.mailboxProvider != null) 
                                            ? this.mailboxProvider 
-                                           : (MailboxProvider<Message>) system.getMailboxProvider();
+                                           : system.getMailboxProvider();
         ResizableMailboxConfig mbConfigToUse = (this.mailboxConfig != null) 
                                                 ? this.mailboxConfig 
                                                 : new ResizableMailboxConfig(); // Or pass null and let Actor constructor use system.getMailboxConfig()

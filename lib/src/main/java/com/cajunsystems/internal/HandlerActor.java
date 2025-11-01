@@ -41,7 +41,7 @@ public class HandlerActor<Message> extends Actor<Message> {
               backpressureConfig, 
               mailboxConfig, 
               system.getThreadPoolFactory(), 
-              (MailboxProvider<Message>) system.getMailboxProvider());
+              system.getMailboxProvider());
         this.handler = handler;
         this.context = new ActorContextImpl(this);
     }

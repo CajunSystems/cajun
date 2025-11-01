@@ -24,7 +24,7 @@ public class MailboxProcessor<T> {
     private final int batchSize;
     private final List<T> batchBuffer;
     private final BiConsumer<T, Throwable> exceptionHandler;
-    private final ActorLifecycle lifecycle;
+    private final ActorLifecycle<T> lifecycle;
     private final ThreadPoolFactory threadPoolFactory;
 
     private volatile boolean running = false;
@@ -44,7 +44,7 @@ public class MailboxProcessor<T> {
             BlockingQueue<T> mailbox,
             int batchSize,
             BiConsumer<T, Throwable> exceptionHandler,
-            ActorLifecycle lifecycle) {
+            ActorLifecycle<T> lifecycle) {
         this(actorId, mailbox, batchSize, exceptionHandler, lifecycle, null);
     }
     
@@ -63,7 +63,7 @@ public class MailboxProcessor<T> {
             BlockingQueue<T> mailbox,
             int batchSize,
             BiConsumer<T, Throwable> exceptionHandler,
-            ActorLifecycle lifecycle,
+            ActorLifecycle<T> lifecycle,
             ThreadPoolFactory threadPoolFactory) {
         this.actorId = actorId;
         this.mailbox = mailbox;

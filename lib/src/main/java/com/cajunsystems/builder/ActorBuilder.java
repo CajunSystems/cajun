@@ -133,7 +133,7 @@ public class ActorBuilder<Message> {
                                        : system.getThreadPoolFactory();
         MailboxProvider<Message> mpToUse = (this.mailboxProvider != null) 
                                            ? this.mailboxProvider 
-                                           : (MailboxProvider<Message>) system.getMailboxProvider();
+                                           : system.getMailboxProvider();
 
         // Ensure mailboxConfig is initialized if not set, Actor constructor expects non-null or will use system default
         ResizableMailboxConfig mbConfigToUse = (this.mailboxConfig != null) 

@@ -11,7 +11,6 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 /**
  * Core Actor class for the Cajun actor system.
@@ -144,7 +143,7 @@ public abstract class Actor<Message> {
                 backpressureConfig,
                 system.getMailboxConfig(), // Use system's default MailboxConfig
                 system.getThreadPoolFactory(),
-                (MailboxProvider<Message>) system.getMailboxProvider());
+                system.getMailboxProvider());
     }
 
     /**
@@ -162,7 +161,7 @@ public abstract class Actor<Message> {
                 system.getBackpressureConfig(), // Use system's default BackpressureConfig
                 mailboxConfig,
                 system.getThreadPoolFactory(),
-                (MailboxProvider<Message>) system.getMailboxProvider());
+                system.getMailboxProvider());
     }
 
     /**
@@ -179,7 +178,7 @@ public abstract class Actor<Message> {
                 backpressureConfig,
                 mailboxConfig,
                 system.getThreadPoolFactory(),
-                (MailboxProvider<Message>) system.getMailboxProvider());
+                system.getMailboxProvider());
     }
 
     /**
@@ -207,9 +206,9 @@ public abstract class Actor<Message> {
 
         // Use provided instances or fallback to system's defaults if they are null (though system should pass non-null)
         ThreadPoolFactory effectiveTpf = (threadPoolFactory != null) ? threadPoolFactory : system.getThreadPoolFactory();
-        MailboxProvider<Message> effectiveMp = (MailboxProvider<Message>) ((mailboxProviderInstance != null)
+        MailboxProvider<Message> effectiveMp = (mailboxProviderInstance != null)
                 ? mailboxProviderInstance
-                : system.getMailboxProvider());
+                : system.getMailboxProvider();
         MailboxConfig effectiveMailboxConfig = (mailboxConfig != null) ? mailboxConfig : system.getMailboxConfig();
 
         this.actorMailboxMaxCapacity = effectiveMailboxConfig.getMaxCapacity(); // Initialize actorMailboxMaxCapacity

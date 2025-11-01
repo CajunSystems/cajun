@@ -173,7 +173,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @param mailboxConfig The mailbox configuration
      */
     protected StatefulActor(ActorSystem system, String actorId, State initialState, BackpressureConfig backpressureConfig, ResizableMailboxConfig mailboxConfig) {
-        this(system, actorId, initialState, backpressureConfig, mailboxConfig, null, (MailboxProvider<Message>) system.getMailboxProvider());
+        this(system, actorId, initialState, backpressureConfig, mailboxConfig, null, system.getMailboxProvider());
     }
     
     /**
@@ -248,7 +248,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                          SnapshotStore<State> snapshotStore,
                          BackpressureConfig backpressureConfig,
                          ResizableMailboxConfig mailboxConfig) {
-        this(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig, null, (MailboxProvider<Message>) system.getMailboxProvider());
+        this(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig, null, system.getMailboxProvider());
     }
     
     /**
