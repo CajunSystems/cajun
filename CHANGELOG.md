@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2025-11-01
+
 ### Added
 - **Test-Utils Module**: New dedicated testing utilities module for writing cleaner, more reliable async tests
   - `AsyncAssertion`: Utility for polling conditions with configurable timeouts and intervals, replacing manual `Thread.sleep()` and polling loops
