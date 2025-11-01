@@ -1,0 +1,46 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'com.cajunsystems'
+version = '0.1.4-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Cajun core library
+    api project(':lib')
+    
+    // JUnit 5 for test framework integration
+    api 'org.junit.jupiter:junit-jupiter-api:5.10.0'
+    
+    // Awaitility for eventually assertions
+    implementation 'org.awaitility:awaitility:4.2.0'
+    
+    // SLF4J for logging
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    
+    // Test dependencies
+    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.4.11'
+}
+
+tasks.withType(JavaCompile) {
+    options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Test) {
+    jvmArgs += '--enable-preview'
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaExec) {
+    jvmArgs += '--enable-preview'
+}

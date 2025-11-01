@@ -12,3 +12,4 @@ plugins {
 
 rootProject.name = 'cajun'
 include('lib')
+include('test-utils')

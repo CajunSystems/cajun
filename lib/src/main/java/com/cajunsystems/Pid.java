@@ -4,14 +4,48 @@ import com.cajunsystems.cluster.ClusterActorSystem;
 import com.cajunsystems.cluster.DeliveryGuarantee;
 import com.cajunsystems.persistence.MessageAdapter;
 
-import java.io.Serializable;
+import java.io.*;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Process ID (Pid) for an actor, used to send messages to the actor.
  * This class handles both local and remote actor references.
+ * 
+ * Note: Pid implements Serializable for use with stateful actors.
+ * The ActorSystem reference is not serialized and will be null after deserialization.
+ * This is acceptable for stateful actor persistence where Pids are used as message addresses.
  */
-public record Pid(String actorId, ActorSystem system) {
+public record Pid(String actorId, ActorSystem system) implements Serializable {
+    
+    // Serialization proxy pattern for records
+    @Serial
+    private Object writeReplace() {
+        return new SerializationProxy(this);
+    }
+    
+    @Serial
+    private void readObject(ObjectInputStream stream) throws InvalidObjectException {
+        throw new InvalidObjectException("Proxy required");
+    }
+    
+    // Serialization proxy that only serializes the actorId
+    private static class SerializationProxy implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        
+        private final String actorId;
+        
+        SerializationProxy(Pid pid) {
+            this.actorId = pid.actorId;
+        }
+        
+        @Serial
+        private Object readResolve() {
+            // Reconstruct Pid with null ActorSystem after deserialization
+            // This is acceptable for persistence scenarios where Pids are message addresses
+            return new Pid(actorId, null);
+        }
+    }
 
     /**
      * Sends a message to the actor.
