@@ -86,16 +86,6 @@ void testCounter() {
 }
 ```
 
-## Installation
-
-Add to your test dependencies:
-
-```gradle
-dependencies {
-    testImplementation project(':test-utils')
-}
-```
-
 ## Core Components
 
 ### 1. TestKit
