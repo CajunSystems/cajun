@@ -1371,6 +1371,8 @@ protected void receive(Message msg) {
 
 Cajun provides a `StatefulActor` class that maintains and persists its state. This is useful for actors that need to maintain state across restarts or system failures.
 
+**Important**: All messages handled by a stateful actor must be serializable. This is required for message persistence and replay functionality. Ensure your message types implement `Serializable` or use serialization-friendly formats (e.g., records, POJOs with serializable fields).
+
 ### State Persistence
 
 Stateful actors can persist their state to disk or other storage backends. This allows actors to recover their state after a restart or crash.
