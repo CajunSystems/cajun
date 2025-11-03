@@ -131,6 +131,8 @@ public class MailboxProcessor<T> {
 
     /**
      * Returns true if the mailbox processor is running.
+     *
+     * @return true if running, false otherwise
      */
     public boolean isRunning() {
         return running;
@@ -138,6 +140,8 @@ public class MailboxProcessor<T> {
 
     /**
      * Gets the current number of messages in the mailbox.
+     *
+     * @return The current size of the mailbox
      */
     public int getCurrentSize() {
         return mailbox.size();
@@ -145,6 +149,8 @@ public class MailboxProcessor<T> {
 
     /**
      * Gets the remaining capacity of the mailbox.
+     *
+     * @return The remaining capacity
      */
     public int getRemainingCapacity() {
         return mailbox.remainingCapacity();

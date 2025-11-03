@@ -8,6 +8,13 @@ package com.cajunsystems.persistence;
 public class MessageUnwrapper {
     
     /**
+     * Private constructor to prevent instantiation of this utility class.
+     */
+    private MessageUnwrapper() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+    
+    /**
      * Unwraps a message if it's a MessageAdapter, otherwise returns the original message.
      * This is useful in the processMessage method of a stateful actor to get the original
      * message regardless of whether it was sent directly or via the tellStateful/tellReadOnly methods.

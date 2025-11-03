@@ -223,100 +223,221 @@ public class ThreadPoolFactory {
 
     // Getters and setters
 
+    /**
+     * Gets the number of scheduler threads.
+     *
+     * @return The number of scheduler threads
+     */
     public int getSchedulerThreads() {
         return schedulerThreads;
     }
 
+    /**
+     * Sets the number of scheduler threads.
+     *
+     * @param schedulerThreads The number of scheduler threads
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setSchedulerThreads(int schedulerThreads) {
         this.schedulerThreads = schedulerThreads;
         return this;
     }
 
+    /**
+     * Gets the scheduler shutdown timeout in seconds.
+     *
+     * @return The scheduler shutdown timeout in seconds
+     */
     public int getSchedulerShutdownTimeoutSeconds() {
         return schedulerShutdownTimeoutSeconds;
     }
 
+    /**
+     * Sets the scheduler shutdown timeout in seconds.
+     *
+     * @param schedulerShutdownTimeoutSeconds The scheduler shutdown timeout in seconds
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setSchedulerShutdownTimeoutSeconds(int schedulerShutdownTimeoutSeconds) {
         this.schedulerShutdownTimeoutSeconds = schedulerShutdownTimeoutSeconds;
         return this;
     }
 
+    /**
+     * Checks if named threads are enabled.
+     *
+     * @return true if named threads are enabled
+     */
     public boolean isUseNamedThreads() {
         return useNamedThreads;
     }
 
+    /**
+     * Sets whether to use named threads.
+     *
+     * @param useNamedThreads true to enable named threads
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setUseNamedThreads(boolean useNamedThreads) {
         this.useNamedThreads = useNamedThreads;
         return this;
     }
 
+    /**
+     * Checks if shared executor is enabled.
+     *
+     * @return true if shared executor is enabled
+     */
     public boolean isUseSharedExecutor() {
         return useSharedExecutor;
     }
 
+    /**
+     * Sets whether to use a shared executor.
+     *
+     * @param useSharedExecutor true to enable shared executor
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setUseSharedExecutor(boolean useSharedExecutor) {
         this.useSharedExecutor = useSharedExecutor;
         return this;
     }
 
+    /**
+     * Checks if virtual threads are preferred.
+     *
+     * @return true if virtual threads are preferred
+     */
     public boolean isPreferVirtualThreads() {
         return preferVirtualThreads;
     }
 
+    /**
+     * Sets whether to prefer virtual threads.
+     *
+     * @param preferVirtualThreads true to prefer virtual threads
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setPreferVirtualThreads(boolean preferVirtualThreads) {
         this.preferVirtualThreads = preferVirtualThreads;
         return this;
     }
 
+    /**
+     * Checks if structured concurrency is enabled.
+     *
+     * @return true if structured concurrency is enabled
+     */
     public boolean isUseStructuredConcurrency() {
         return useStructuredConcurrency;
     }
 
+    /**
+     * Sets whether to use structured concurrency.
+     *
+     * @param useStructuredConcurrency true to enable structured concurrency
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setUseStructuredConcurrency(boolean useStructuredConcurrency) {
         this.useStructuredConcurrency = useStructuredConcurrency;
         return this;
     }
 
+    /**
+     * Gets the actor shutdown timeout in seconds.
+     *
+     * @return The actor shutdown timeout in seconds
+     */
     public int getActorShutdownTimeoutSeconds() {
         return actorShutdownTimeoutSeconds;
     }
 
+    /**
+     * Sets the actor shutdown timeout in seconds.
+     *
+     * @param actorShutdownTimeoutSeconds The actor shutdown timeout in seconds
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setActorShutdownTimeoutSeconds(int actorShutdownTimeoutSeconds) {
         this.actorShutdownTimeoutSeconds = actorShutdownTimeoutSeconds;
         return this;
     }
 
+    /**
+     * Gets the actor batch size.
+     *
+     * @return The actor batch size
+     */
     public int getActorBatchSize() {
         return actorBatchSize;
     }
 
+    /**
+     * Sets the actor batch size.
+     *
+     * @param actorBatchSize The actor batch size
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setActorBatchSize(int actorBatchSize) {
         this.actorBatchSize = actorBatchSize;
         return this;
     }
 
+    /**
+     * Gets the executor type.
+     *
+     * @return The executor type
+     */
     public ThreadPoolType getExecutorType() {
         return executorType;
     }
 
+    /**
+     * Sets the executor type.
+     *
+     * @param executorType The executor type
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setExecutorType(ThreadPoolType executorType) {
         this.executorType = executorType;
         return this;
     }
 
+    /**
+     * Gets the fixed pool size.
+     *
+     * @return The fixed pool size
+     */
     public int getFixedPoolSize() {
         return fixedPoolSize;
     }
 
+    /**
+     * Sets the fixed pool size.
+     *
+     * @param fixedPoolSize The fixed pool size
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setFixedPoolSize(int fixedPoolSize) {
         this.fixedPoolSize = fixedPoolSize;
         return this;
     }
 
+    /**
+     * Gets the work stealing parallelism level.
+     *
+     * @return The work stealing parallelism level
+     */
     public int getWorkStealingParallelism() {
         return workStealingParallelism;
     }
 
+    /**
+     * Sets the work stealing parallelism level.
+     *
+     * @param workStealingParallelism The work stealing parallelism level
+     * @return This factory for method chaining
+     */
     public ThreadPoolFactory setWorkStealingParallelism(int workStealingParallelism) {
         this.workStealingParallelism = workStealingParallelism;
         return this;

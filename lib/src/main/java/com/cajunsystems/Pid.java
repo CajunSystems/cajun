@@ -14,15 +14,29 @@ import java.util.concurrent.TimeUnit;
  * Note: Pid implements Serializable for use with stateful actors.
  * The ActorSystem reference is not serialized and will be null after deserialization.
  * This is acceptable for stateful actor persistence where Pids are used as message addresses.
+ *
+ * @param actorId The unique identifier for the actor
+ * @param system The actor system this Pid belongs to
  */
 public record Pid(String actorId, ActorSystem system) implements Serializable {
     
-    // Serialization proxy pattern for records
+    /**
+     * Serialization proxy pattern for records.
+     * Replaces this object with a serialization proxy during serialization.
+     *
+     * @return The serialization proxy
+     */
     @Serial
     private Object writeReplace() {
         return new SerializationProxy(this);
     }
     
+    /**
+     * Prevents direct deserialization, enforcing use of the serialization proxy.
+     *
+     * @param stream The object input stream
+     * @throws InvalidObjectException Always thrown to enforce proxy usage
+     */
     @Serial
     private void readObject(ObjectInputStream stream) throws InvalidObjectException {
         throw new InvalidObjectException("Proxy required");

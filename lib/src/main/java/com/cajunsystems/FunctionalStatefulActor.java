@@ -19,14 +19,15 @@ import java.util.function.BiFunction;
 public record FunctionalStatefulActor<State, Message extends OperationAwareMessage>() {
 
     /**
-     * Creates a chain of functional stateful actors that process messages in sequence.
-     * Each actor in the chain forwards messages to the next actor after processing.
+     * Creates a chain of stateful actors with persistence.
      *
+     * @param <S> The type of the actor state
+     * @param <M> The type of messages (must extend OperationAwareMessage)
      * @param system The actor system
-     * @param baseId The base ID for the actors
+     * @param baseId The base ID for the actors (will be suffixed with -0, -1, etc.)
      * @param count The number of actors in the chain
-     * @param initialStates Array of initial states for each actor
-     * @param actions Array of action functions for each actor
+     * @param initialStates The initial states for each actor
+     * @param actions The state transition functions for each actor
      * @param messageJournal The batched message journal to use for persistence
      * @param snapshotStore The snapshot store to use for persistence
      * @return The PID of the first actor in the chain
@@ -85,8 +86,10 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
     }
     
     /**
-     * Creates a chain of functional stateful actors with default persistence.
+     * Creates a chain of stateful actors using default persistence.
      *
+     * @param <S> The type of the actor state
+     * @param <M> The type of messages (must extend OperationAwareMessage)
      * @param system The actor system
      * @param baseId The base ID for the actors
      * @param count The number of actors in the chain
@@ -109,6 +112,8 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
     /**
      * Creates a stateful actor with the given parameters.
      *
+     * @param <S> The type of the actor state
+     * @param <M> The type of messages (must extend OperationAwareMessage)
      * @param system The actor system
      * @param actorId The actor ID
      * @param initialState The initial state
@@ -141,6 +146,8 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
     /**
      * Registers a stateful actor with the actor system.
      *
+     * @param <S> The type of the actor state
+     * @param <M> The type of messages (must extend OperationAwareMessage)
      * @param system The actor system
      * @param actorId The actor ID
      * @param initialState The initial state
@@ -165,6 +172,8 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
     /**
      * Registers a stateful actor with the actor system using default persistence.
      *
+     * @param <S> The type of the actor state
+     * @param <M> The type of messages (must extend OperationAwareMessage)
      * @param system The actor system
      * @param actorId The actor ID
      * @param initialState The initial state

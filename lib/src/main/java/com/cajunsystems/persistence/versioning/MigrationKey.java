@@ -88,7 +88,7 @@ public record MigrationKey(
     /**
      * Checks if this is a backward migration (rollback).
      *
-     * @return true if toVersion < fromVersion
+     * @return true if toVersion &lt; fromVersion
      */
     public boolean isBackwardMigration() {
         return toVersion < fromVersion;

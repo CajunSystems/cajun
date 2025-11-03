@@ -119,7 +119,7 @@ public final class PersistenceVersion {
      * Checks if a version needs migration to the current version.
      *
      * @param version The version to check
-     * @return true if migration is needed (version < CURRENT_VERSION)
+     * @return true if migration is needed (version &lt; CURRENT_VERSION)
      */
     public static boolean needsMigration(int version) {
         validateVersion(version);

@@ -17,10 +17,19 @@ public class RetryStrategy implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final Logger logger = LoggerFactory.getLogger(RetryStrategy.class);
     
+    /** Maximum number of retry attempts. */
     private final int maxRetries;
+    
+    /** Initial delay between retries in milliseconds. */
     private final long initialDelayMs;
+    
+    /** Maximum delay between retries in milliseconds. */
     private final long maxDelayMs;
+    
+    /** Multiplier for exponential backoff. */
     private final double backoffMultiplier;
+    
+    /** Predicate to determine if an exception is retryable. */
     private final Predicate<Throwable> retryableExceptionPredicate;
     
     /**

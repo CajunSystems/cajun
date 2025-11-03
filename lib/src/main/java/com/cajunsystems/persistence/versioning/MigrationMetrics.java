@@ -39,6 +39,13 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public class MigrationMetrics {
     
+    /**
+     * Creates a new MigrationMetrics instance for tracking migration performance.
+     */
+    public MigrationMetrics() {
+        // Default constructor
+    }
+    
     private final LongAdder migrationsPerformed = new LongAdder();
     private final LongAdder migrationErrors = new LongAdder();
     private final LongAdder totalMigrationTimeNanos = new LongAdder();

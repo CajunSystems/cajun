@@ -29,8 +29,13 @@ public class MigrationException extends RuntimeException {
     
     private static final long serialVersionUID = 1L;
     
+    /** The fully qualified class name of the message type. */
     private final String messageType;
+    
+    /** The source version of the migration. */
     private final int fromVersion;
+    
+    /** The target version of the migration. */
     private final int toVersion;
     
     /**
@@ -187,7 +192,7 @@ public class MigrationException extends RuntimeException {
     /**
      * Checks if this was a backward migration (rollback).
      *
-     * @return true if toVersion < fromVersion
+     * @return true if toVersion &lt; fromVersion
      */
     public boolean isBackwardMigration() {
         return toVersion < fromVersion;

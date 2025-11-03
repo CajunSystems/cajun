@@ -6,6 +6,7 @@ package com.cajunsystems;
  */
 public class ActorException extends RuntimeException {
 
+    /** The ID of the actor where the exception occurred. */
     private final String actorId;
 
     /**

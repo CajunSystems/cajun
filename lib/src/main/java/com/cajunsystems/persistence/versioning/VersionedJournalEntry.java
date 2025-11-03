@@ -31,6 +31,7 @@ import java.time.Instant;
 public class VersionedJournalEntry<M> extends JournalEntry<M> {
     private static final long serialVersionUID = 1L;
     
+    /** The schema version of the message. */
     private final int version;
     
     /**
@@ -97,7 +98,7 @@ public class VersionedJournalEntry<M> extends JournalEntry<M> {
      * Checks if this entry needs migration to the specified target version.
      *
      * @param targetVersion The target schema version
-     * @return true if migration is needed (current version < target version)
+     * @return true if migration is needed (current version &lt; target version)
      */
     public boolean needsMigration(int targetVersion) {
         return version < targetVersion;
