@@ -35,6 +35,7 @@
   - [Backpressure Monitoring and Callbacks](#backpressure-monitoring-and-callbacks)
   - [High Priority Messages](#high-priority-messages)
 - [Cluster Mode](#cluster-mode)
+- [Benchmarks](#benchmarks)
 - [Feature Roadmap](#feature-roadmap)
 
 ## Introduction
@@ -1648,6 +1649,71 @@ public class CustomMessagingSystem implements MessagingSystem {
 ```
 
 For more details, see the [Cluster Mode Improvements documentation](docs/cluster_mode_improvements.md).
+
+## Benchmarks
+
+The Cajun project includes comprehensive benchmarks comparing the performance of **Actors**, **Threads**, and **Structured Concurrency** (Java 21+) for various concurrent programming patterns.
+
+### Running Benchmarks
+
+Run the full benchmark suite:
+
+```bash
+./gradlew :benchmarks:jmh
+```
+
+For quick development iterations:
+
+```bash
+./gradlew :benchmarks:jmhQuick
+```
+
+### What Gets Benchmarked
+
+The benchmarks compare all three concurrency approaches across common patterns:
+
+- **Message Passing Throughput**: How many messages can be processed per second
+- **Request-Reply Latency**: End-to-end time for request/response patterns
+- **Actor/Thread Creation**: Overhead of spawning new actors vs threads
+- **Batch Processing**: Parallel processing of 100+ tasks
+- **Pipeline Processing**: Sequential processing stages
+- **Scatter-Gather**: Parallel work with result aggregation
+
+### Benchmark Results
+
+Results are available in two formats after running benchmarks:
+
+- **JSON format**: `benchmarks/build/reports/jmh/results.json`
+- **Human-readable**: `benchmarks/build/reports/jmh/human.txt`
+
+### Understanding the Results
+
+The benchmarks measure:
+
+- **Throughput** (`thrpt`): Operations per millisecond - higher is better
+- **Average Time** (`avgt`): Time per operation in milliseconds - lower is better
+
+### When to Use Each Approach
+
+**Use Actors when:**
+- You need fault isolation and supervision
+- State management is complex
+- You want location transparency (clustering)
+- Message-based thinking fits your domain
+
+**Use Threads when:**
+- You need maximum raw throughput
+- Shared state with locks is acceptable
+- You're integrating with thread-based libraries
+- Simplicity is more important than isolation
+
+**Use Structured Concurrency when:**
+- Task relationships are hierarchical
+- You need guaranteed cleanup on scope exit
+- Error propagation scope is important
+- Task cancellation is critical
+
+For more details, see [benchmarks/README.md](benchmarks/README.md).
 
 ## Feature Roadmap
 
