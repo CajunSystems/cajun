@@ -125,10 +125,13 @@ public class ComparisonBenchmark {
             .withId("worker-" + System.nanoTime())
             .spawn();
 
-        CompletableFuture<Long> result = new CompletableFuture<>();
-        worker.tell(new WorkMessage.Compute(COMPUTE_ITERATIONS, result));
-
-        return result.get(5, TimeUnit.SECONDS);
+        try {
+            CompletableFuture<Long> result = new CompletableFuture<>();
+            worker.tell(new WorkMessage.Compute(COMPUTE_ITERATIONS, result));
+            return result.get(5, TimeUnit.SECONDS);
+        } finally {
+            actorSystem.stopActor(worker);
+        }
     }
 
     @Benchmark
@@ -164,6 +167,11 @@ public class ComparisonBenchmark {
         }
 
         latch.await(10, TimeUnit.SECONDS);
+
+        // Clean up actors
+        for (Pid worker : workers) {
+            actorSystem.stopActor(worker);
+        }
     }
 
     @Benchmark
@@ -207,10 +215,13 @@ public class ComparisonBenchmark {
             .withId("rr-worker-" + System.nanoTime())
             .spawn();
 
-        CompletableFuture<Long> result = new CompletableFuture<>();
-        worker.tell(new WorkMessage.Compute(COMPUTE_ITERATIONS, result));
-
-        return result.get(5, TimeUnit.SECONDS);
+        try {
+            CompletableFuture<Long> result = new CompletableFuture<>();
+            worker.tell(new WorkMessage.Compute(COMPUTE_ITERATIONS, result));
+            return result.get(5, TimeUnit.SECONDS);
+        } finally {
+            actorSystem.stopActor(worker);
+        }
     }
 
     @Benchmark
@@ -253,6 +264,10 @@ public class ComparisonBenchmark {
         stage2.tell(new WorkMessage.Compute(10, result2));
         long r2 = result2.get(5, TimeUnit.SECONDS);
 
+        // Clean up actors
+        actorSystem.stopActor(stage1);
+        actorSystem.stopActor(stage2);
+
         return r1 + r2;
     }
 
@@ -293,23 +308,29 @@ public class ComparisonBenchmark {
     @Benchmark
     @OperationsPerInvocation(10)
     public long scatterGather_Actors() throws Exception {
-        CountDownLatch latch = new CountDownLatch(10);
+        Pid[] workers = new Pid[10];
         CompletableFuture<Long>[] results = new CompletableFuture[10];
 
         for (int i = 0; i < 10; i++) {
-            Pid worker = actorSystem.actorOf(WorkHandler.class)
+            workers[i] = actorSystem.actorOf(WorkHandler.class)
                 .withId("sg-worker-" + i + "-" + System.nanoTime())
                 .spawn();
 
             results[i] = new CompletableFuture<>();
             final int index = i;
-            worker.tell(new WorkMessage.Compute(10, results[index]));
+            workers[i].tell(new WorkMessage.Compute(10, results[index]));
         }
 
         long sum = 0;
         for (CompletableFuture<Long> result : results) {
             sum += result.get(5, TimeUnit.SECONDS);
         }
+
+        // Clean up actors
+        for (Pid worker : workers) {
+            actorSystem.stopActor(worker);
+        }
+
         return sum;
     }
 

@@ -30,6 +30,9 @@ public class ActorBenchmark {
     private Pid counterActor;
     private Pid computeActor;
 
+    // Track actors created for cleanup
+    private final java.util.List<Pid> actorsToCleanup = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     // Message types
     public sealed interface PingPongMessage extends Serializable {
         record Ping() implements PingPongMessage {
@@ -162,7 +165,6 @@ public class ActorBenchmark {
      */
     @Benchmark
     @BenchmarkMode(Mode.AverageTime)
-    @OperationsPerInvocation(100)
     public void pingPongLatency() throws Exception {
         CountDownLatch latch = new CountDownLatch(2);
 
@@ -174,7 +176,7 @@ public class ActorBenchmark {
             .withId("pong-" + System.nanoTime())
             .spawn();
 
-        // Start ping-pong exchange
+        // Start ping-pong exchange (50 rounds = 100 messages)
         for (int i = 0; i < 50; i++) {
             actor1.tell(new PingPongMessage.Ping());
             actor2.tell(new PingPongMessage.Pong());
@@ -185,6 +187,10 @@ public class ActorBenchmark {
         actor2.tell(new PingPongMessage.Stop(latch));
 
         latch.await(5, TimeUnit.SECONDS);
+
+        // Clean up actors
+        system.stopActor(actor1);
+        system.stopActor(actor2);
     }
 
     /**
@@ -205,8 +211,23 @@ public class ActorBenchmark {
         Pid pid = system.actorOf(PingPongHandler.class)
             .withId("temp-" + System.nanoTime())
             .spawn();
-        // Note: We don't clean up here as it would affect the benchmark
-        // In real usage, actors would be long-lived
+        // Track for cleanup to prevent memory leaks
+        actorsToCleanup.add(pid);
+    }
+
+    /**
+     * Clean up actors created during actorCreation benchmark
+     */
+    @TearDown(Level.Iteration)
+    public void cleanupCreatedActors() {
+        for (Pid pid : actorsToCleanup) {
+            try {
+                system.stopActor(pid);
+            } catch (Exception e) {
+                // Ignore cleanup errors
+            }
+        }
+        actorsToCleanup.clear();
     }
 
     /**
@@ -240,7 +261,7 @@ public class ActorBenchmark {
     @Benchmark
     @OperationsPerInvocation(100)
     public void multiActorConcurrency() throws Exception {
-        CountDownLatch latch = new CountDownLatch(100);
+        CountDownLatch latch = new CountDownLatch(10);
 
         // Create 10 actors
         Pid[] actors = new Pid[10];
@@ -250,7 +271,7 @@ public class ActorBenchmark {
                 .spawn();
         }
 
-        // Send 10 messages to each
+        // Send 10 messages to each (100 total messages)
         for (int i = 0; i < 10; i++) {
             for (Pid actor : actors) {
                 actor.tell(new PingPongMessage.Ping());
@@ -263,5 +284,10 @@ public class ActorBenchmark {
         }
 
         latch.await(5, TimeUnit.SECONDS);
+
+        // Clean up actors
+        for (Pid actor : actors) {
+            system.stopActor(actor);
+        }
     }
 }
