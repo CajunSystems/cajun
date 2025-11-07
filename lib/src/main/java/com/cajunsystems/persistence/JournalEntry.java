@@ -12,9 +12,16 @@ import java.time.Instant;
 public class JournalEntry<M> implements Serializable {
     private static final long serialVersionUID = 1L;
     
+    /** The sequence number of this journal entry. */
     private final long sequenceNumber;
+    
+    /** The message contained in this entry. */
     private final M message;
+    
+    /** The timestamp when the message was journaled. */
     private final Instant timestamp;
+    
+    /** The ID of the actor this message is for. */
     private final String actorId;
     
     /**

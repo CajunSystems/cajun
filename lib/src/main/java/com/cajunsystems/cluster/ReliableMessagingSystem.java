@@ -366,6 +366,8 @@ public class ReliableMessagingSystem implements MessagingSystem {
     
     /**
      * Represents a message sent between actor systems.
+     *
+     * @param <T> The type of the message payload
      */
     private static class RemoteMessage<T> implements Serializable {
         private static final long serialVersionUID = 1L;

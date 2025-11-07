@@ -4,10 +4,16 @@ package com.cajunsystems.config;
  * Configuration for actor mailbox settings.
  */
 public class MailboxConfig {
-    // Default values for mailbox configuration
+    /** Default initial capacity for mailboxes. */
     public static final int DEFAULT_INITIAL_CAPACITY = 64;
+    
+    /** Default maximum capacity for mailboxes. */
     public static final int DEFAULT_MAX_CAPACITY = 10_000;
+    
+    /** Default resize threshold (75% full). */
     public static final float DEFAULT_RESIZE_THRESHOLD = 0.75f;
+    
+    /** Default resize factor (doubles capacity). */
     public static final float DEFAULT_RESIZE_FACTOR = 2.0f;
 
     private int initialCapacity;

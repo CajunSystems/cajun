@@ -11,7 +11,10 @@ import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
 import com.cajunsystems.persistence.BatchedMessageJournal;
+import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.persistence.versioning.MessageMigrator;
+import com.cajunsystems.persistence.versioning.VersionedPersistenceProvider;
 
 import java.util.UUID;
 
@@ -108,6 +111,50 @@ public class StatefulActorBuilder<State, Message> {
             SnapshotStore<State> snapshotStore) {
         this.messageJournal = messageJournal;
         this.snapshotStore = snapshotStore;
+        this.customPersistence = true;
+        return this;
+    }
+    
+    /**
+     * Sets versioned persistence for the actor using the provided persistence provider and migrator.
+     * This wraps the base provider with versioning support, enabling automatic migration of old
+     * messages and state during recovery.
+     * 
+     * @param basePersistenceProvider The base persistence provider to wrap
+     * @param migrator The message migrator with registered migration functions
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withVersionedPersistence(
+            PersistenceProvider basePersistenceProvider,
+            MessageMigrator migrator) {
+        VersionedPersistenceProvider versionedProvider = 
+            new VersionedPersistenceProvider(basePersistenceProvider, migrator);
+        
+        this.messageJournal = versionedProvider.createBatchedMessageJournal(id);
+        this.snapshotStore = versionedProvider.createSnapshotStore(id);
+        this.customPersistence = true;
+        return this;
+    }
+    
+    /**
+     * Sets versioned persistence for the actor with custom version and auto-migration settings.
+     * 
+     * @param basePersistenceProvider The base persistence provider to wrap
+     * @param migrator The message migrator with registered migration functions
+     * @param currentVersion The current schema version
+     * @param autoMigrate Whether to automatically migrate old data during recovery
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withVersionedPersistence(
+            PersistenceProvider basePersistenceProvider,
+            MessageMigrator migrator,
+            int currentVersion,
+            boolean autoMigrate) {
+        VersionedPersistenceProvider versionedProvider = 
+            new VersionedPersistenceProvider(basePersistenceProvider, migrator, currentVersion, autoMigrate);
+        
+        this.messageJournal = versionedProvider.createBatchedMessageJournal(id);
+        this.snapshotStore = versionedProvider.createSnapshotStore(id);
         this.customPersistence = true;
         return this;
     }

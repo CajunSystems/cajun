@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Versioned Persistence System**: Complete implementation of automatic schema evolution for stateful actors
+  - `VersionedJournalEntry` and `VersionedSnapshotEntry`: Wrapper classes that add version metadata to persisted data
+  - `MessageMigrator`: Central registry for migration functions with support for single-step and multi-hop migrations
+  - `MigrationKey`: Composite key for efficient migration lookup
+  - `MigrationMetrics`: Thread-safe performance tracking for migration operations
+  - `VersionedPersistenceProvider`: Wraps any persistence provider to add versioning capabilities
+  - `VersionedMessageJournal` and `VersionedBatchedMessageJournal`: Auto-migrate messages during recovery
+  - `VersionedSnapshotStore`: Auto-migrate state snapshots during recovery
+  - `StatefulActorBuilder.withVersionedPersistence()`: Fluent API for enabling versioned persistence
+  - Comprehensive documentation in `docs/versioned_persistence_guide.md`
+  - Real-world examples demonstrating schema evolution (OrderMessage V0→V1)
+
+### Changed
+- **StatefulActorBuilder**: Added two new convenience methods for versioned persistence configuration
+  - `withVersionedPersistence(provider, migrator)`: Simple setup with defaults
+  - `withVersionedPersistence(provider, migrator, version, autoMigrate)`: Advanced configuration
+- **README**: Added comprehensive "Versioned Persistence (Schema Evolution)" section with:
+  - Quick start guide
+  - Comparison table (versioned vs unversioned)
+  - Advanced usage examples (bidirectional migration, multi-hop, metrics)
+  - Clear guidance on when to use versioned persistence
+
+### Fixed
+- **Javadoc Warnings**: Reduced Javadoc warnings from 100 to 53 by adding comprehensive documentation
+  - All versioned persistence classes now have complete Javadoc
+  - Fixed malformed HTML in Javadoc comments (escaped `<` characters)
+  - Added missing `@param` tags for generic type parameters
+  - Added field documentation for private fields in core classes
+
+### Documentation
+- **Versioned Persistence Guide** (`docs/versioned_persistence_guide.md`): Complete user guide covering:
+  - Quick start and core concepts
+  - Best practices and migration patterns
+  - Troubleshooting guide
+  - Performance considerations
+  - Complete API reference
+- **Implementation Plan** (`docs/versioned_persistence_implementation_plan.md`): Updated with all completed phases
+- **Message Versioning Strategies** (`docs/message_versioning_strategies.md`): Design rationale and strategy comparison
+
+### Testing
+- **91 New Tests**: Comprehensive test coverage for versioned persistence
+  - Phase 1: 34 tests for core versioning infrastructure
+  - Phase 2: 33 tests for message migrator with multi-hop migrations
+  - Phase 3: 18 tests for versioned persistence provider
+  - Phase 4: 3 integration tests with real-world examples
+  - All tests passing ✅
+
 ## [0.1.4] - 2025-11-01
 
 ### Added

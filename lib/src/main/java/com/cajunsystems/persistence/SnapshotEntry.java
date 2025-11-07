@@ -12,9 +12,16 @@ import java.time.Instant;
 public class SnapshotEntry<S> implements Serializable {
     private static final long serialVersionUID = 1L;
     
+    /** The ID of the actor this snapshot belongs to. */
     private final String actorId;
+    
+    /** The state snapshot. */
     private final S state;
+    
+    /** The sequence number of the last message processed. */
     private final long sequenceNumber;
+    
+    /** The timestamp when the snapshot was taken. */
     private final Instant timestamp;
     
     /**

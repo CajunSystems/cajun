@@ -30,6 +30,7 @@
 - [Stateful Actors](#stateful-actors-and-persistence)
   - [State Management](#state-persistence)
   - [Persistence and Recovery](#message-persistence-and-replay)
+  - [Versioned Persistence (Schema Evolution)](#versioned-persistence-schema-evolution)
 - [Error Handling and Supervision](#error-handling-and-supervision-strategy)
 - [Testing Your Actors](#testing)
 
@@ -1371,6 +1372,8 @@ protected void receive(Message msg) {
 
 Cajun provides a `StatefulActor` class that maintains and persists its state. This is useful for actors that need to maintain state across restarts or system failures.
 
+**Important**: All messages handled by a stateful actor must be serializable. This is required for message persistence and replay functionality. Ensure your message types implement `Serializable` or use serialization-friendly formats (e.g., records, POJOs with serializable fields).
+
 ### State Persistence
 
 Stateful actors can persist their state to disk or other storage backends. This allows actors to recover their state after a restart or crash.
@@ -1481,6 +1484,142 @@ public class CustomPersistenceProvider implements PersistenceProvider {
 ```
 
 The actor system uses `FileSystemPersistenceProvider` by default if no custom provider is specified.
+
+### Versioned Persistence (Schema Evolution)
+
+As your application evolves, message and state schemas change. Versioned persistence provides automatic migration of old data to new formats during actor recovery, preventing deserialization errors and data corruption.
+
+#### Why Versioned Persistence?
+
+When schemas evolve (adding fields, changing types, restructuring data), loading old persisted data with new code can cause:
+- Deserialization errors
+- Data corruption  
+- Application crashes
+- Loss of historical data
+
+Versioned persistence solves this by:
+- **Tracking versions** of all persisted data
+- **Automatically migrating** old data during recovery
+- **Maintaining backward compatibility** with legacy data
+- **Providing metrics** on migration performance
+
+#### Quick Start with Versioned Persistence
+
+**1. Define your message versions:**
+
+```java
+// Version 0 (original)
+public record OrderMessageV0(String orderId, double amount) {}
+
+// Version 1 (added currency field)
+public record OrderMessageV1(String orderId, BigDecimal amount, String currency) {}
+```
+
+**2. Create a message migrator and register migrations:**
+
+```java
+MessageMigrator migrator = new MessageMigrator();
+
+// Register migration from V0 to V1
+migrator.register(OrderMessageV0.class.getName(), 0, 1, msg -> {
+    OrderMessageV0 v0 = (OrderMessageV0) msg;
+    return new OrderMessageV1(
+        v0.orderId(),
+        BigDecimal.valueOf(v0.amount()),
+        "USD"  // Default currency for old orders
+    );
+});
+```
+
+**3. Create actor with versioned persistence:**
+
+```java
+// Get your base persistence provider
+PersistenceProvider baseProvider = new FileSystemPersistenceProvider("./data");
+
+// Create actor with versioned persistence using the builder
+Pid actorPid = new StatefulActorBuilder<>(system, handler, initialState)
+    .withId("order-processor")
+    .withVersionedPersistence(baseProvider, migrator)
+    .spawn();
+
+// That's it! Old messages are automatically migrated during recovery
+```
+
+#### Versioned vs Unversioned Persistence
+
+| Feature | Unversioned (Default) | Versioned (Opt-in) |
+|---------|----------------------|-------------------|
+| **Schema Evolution** | Manual handling required | Automatic migration |
+| **Backward Compatibility** | Must maintain old code | Old data automatically upgraded |
+| **Setup Complexity** | Simple | Requires migration functions |
+| **Performance** | Baseline | Zero overhead for current version |
+| **Use Case** | Stable schemas | Evolving schemas |
+
+**When to use versioned persistence:**
+- Your message/state schemas evolve over time
+- You need to maintain backward compatibility with old data
+- You want zero-downtime schema upgrades
+- You have long-lived actors with historical data
+
+**When unversioned is sufficient:**
+- Schemas are stable and rarely change
+- You can afford to discard old data on schema changes
+- Simpler setup is preferred
+
+#### Advanced Versioned Persistence
+
+**Bidirectional migration (for rollbacks):**
+
+```java
+// Forward migration (V0 → V1)
+migrator.register(OrderMessageV0.class.getName(), 0, 1, msg -> {
+    OrderMessageV0 v0 = (OrderMessageV0) msg;
+    return new OrderMessageV1(v0.orderId(), BigDecimal.valueOf(v0.amount()), "USD");
+});
+
+// Backward migration (V1 → V0) for rollback support
+migrator.register(OrderMessageV1.class.getName(), 1, 0, msg -> {
+    OrderMessageV1 v1 = (OrderMessageV1) msg;
+    return new OrderMessageV0(v1.orderId(), v1.amount().doubleValue());
+});
+```
+
+**Multi-hop migration (automatic chaining):**
+
+```java
+// Cajun automatically chains migrations: V0 → V1 → V2
+migrator.register(OrderMessageV0.class.getName(), 0, 1, /* V0 to V1 */);
+migrator.register(OrderMessageV1.class.getName(), 1, 2, /* V1 to V2 */);
+```
+
+**Custom version and settings:**
+
+```java
+Pid actorPid = new StatefulActorBuilder<>(system, handler, initialState)
+    .withId("order-processor")
+    .withVersionedPersistence(
+        baseProvider,
+        migrator,
+        2,      // Current version
+        true    // Auto-migrate enabled
+    )
+    .spawn();
+```
+
+**Migration metrics:**
+
+```java
+VersionedPersistenceProvider versionedProvider = 
+    new VersionedPersistenceProvider(baseProvider, migrator);
+
+MigrationMetrics.MigrationStats stats = versionedProvider.getMigrationStats();
+System.out.println("Total migrations: " + stats.totalMigrations());
+System.out.println("Success rate: " + stats.successRate() + "%");
+System.out.println("Average time: " + stats.averageMigrationTimeMillis() + "ms");
+```
+
+**See the [Versioned Persistence Guide](docs/versioned_persistence_guide.md) for complete documentation, best practices, and troubleshooting.**
 
 ### Stateful Actor Recovery
 
