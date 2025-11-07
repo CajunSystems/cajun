@@ -30,6 +30,7 @@
 - [Stateful Actors](#stateful-actors-and-persistence)
   - [State Management](#state-persistence)
   - [Persistence and Recovery](#message-persistence-and-replay)
+  - [Versioned Persistence (Schema Evolution)](#versioned-persistence-schema-evolution)
 - [Error Handling and Supervision](#error-handling-and-supervision-strategy)
 - [Testing Your Actors](#testing)
 
