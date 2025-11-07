@@ -7,64 +7,95 @@
 </div>
 
 ## Table of Contents
-- [Introduction](#introduction)
+
+### Getting Started
+- [What is Cajun?](#what-is-cajun)
+- [Quick Start (5 Minutes)](#quick-start-5-minutes)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Usage](#usage)
-  - [Quick Start Example](#quick-start-example)
-  - [Actor System Lifecycle](#actor-system-lifecycle)
-- [Testing](#testing)
-  - [Creating Actors](#creating-actors)
-- [Running examples](#running-examples)
-- [Message Processing and Performance Tuning](#message-processing-and-performance-tuning)
-- [Configurable Thread Pools](#configurable-thread-pools)
-- [Mailbox Configuration](#mailbox-configuration)
-- [Request-Response with Ask Pattern](#request-response-with-ask-pattern)
-- [Sender Context and Message Forwarding](#sender-context-and-message-forwarding)
-- [Error Handling and Supervision Strategy](#error-handling-and-supervision-strategy)
-- [Stateful Actors and Persistence](#stateful-actors-and-persistence)
-  - [State Persistence](#state-persistence)
-  - [Message Persistence and Replay](#message-persistence-and-replay)
-  - [Stateful Actor Recovery](#stateful-actor-recovery)
-  - [Adaptive Snapshot Strategy](#adaptive-snapshot-strategy)
-- [Backpressure Support in Actors](#backpressure-support-in-actors)
-  - [Backpressure States](#backpressure-states)
-  - [Backpressure Strategies](#backpressure-strategies)
-  - [Using Backpressure in StatefulActor](#using-backpressure-in-statefulactor)
-  - [Custom Backpressure Handlers](#custom-backpressure-handlers)
-  - [Backpressure Monitoring and Callbacks](#backpressure-monitoring-and-callbacks)
-  - [High Priority Messages](#high-priority-messages)
-- [Cluster Mode](#cluster-mode)
-- [Benchmarks](#benchmarks)
+
+### Core Concepts
+- [Understanding Actors](#understanding-actors)
+- [Creating Your First Actors](#creating-your-first-actors)
+  - [Stateless Actors](#stateless-actors-with-handler-interface)
+  - [Stateful Actors](#stateful-actors-with-statefulhandler-interface)
+  - [Actor Hierarchies](#creating-actor-hierarchies)
+- [Actor Communication](#actor-communication)
+  - [Sending Messages (tell)](#sending-messages-to-self)
+  - [Request-Response (ask)](#request-response-with-ask-pattern)
+  - [Message Forwarding](#sender-context-and-message-forwarding)
+- [Actor Lifecycle](#actor-system-lifecycle)
+
+### Essential Features
+- [Stateful Actors](#stateful-actors-and-persistence)
+  - [State Management](#state-persistence)
+  - [Persistence and Recovery](#message-persistence-and-replay)
+- [Error Handling and Supervision](#error-handling-and-supervision-strategy)
+- [Testing Your Actors](#testing)
+
+### Intermediate Topics
+- [Performance and Tuning](#message-processing-and-performance-tuning)
+  - [Batch Processing](#batched-message-processing)
+  - [Thread Pool Configuration](#configurable-thread-pools)
+  - [Mailbox Configuration](#mailbox-configuration)
+- [Advanced Communication Patterns](#actorcontext-convenience-features)
+  - [Sender Context](#sender-context-and-message-forwarding)
+  - [ReplyingMessage Interface](#standardized-reply-pattern-with-replyingmessage)
+
+### Advanced Features
+- [Backpressure Management](#backpressure-support-in-actors)
+- [Cluster Mode (Distributed Actors)](#cluster-mode)
+
+### Reference
+- [Performance Benchmarks](#benchmarks)
+- [Running Examples](#running-examples)
 - [Feature Roadmap](#feature-roadmap)
 
-## Introduction
+## What is Cajun?
 
-Cajun (**C**oncurrency **A**nd **J**ava **UN**locked) is a lightweight actor system for Java applications that leverages Java 21+ virtual threads to provide a simple yet powerful concurrency model. It's designed to make concurrent programming easier and more reliable by using the actor model - unlocking Java's concurrency potential through message isolation rather than explicit locks.
+Cajun (**C**oncurrency **A**nd **J**ava **UN**locked) is a lightweight actor system for Java that makes concurrent programming **simple and safe**. Instead of managing threads, locks, and shared state yourself, you write simple actors that communicate through messages.
 
-### Predictable Concurrency Without User-Level Locks
+### Why Actors?
 
-Cajun provides **predictable concurrency** through the actor model, eliminating the need for user-level locks and synchronization. Unlike traditional threading where shared state requires explicit locks and synchronization, actors achieve concurrency through:
+**Traditional concurrent programming is hard:**
+- 🔒 Managing locks and synchronization
+- 🐛 Avoiding race conditions and deadlocks
+- 🔍 Debugging concurrent issues
+- 📊 Coordinating shared state
 
-- **Message Passing**: Actors communicate exclusively through asynchronous messages, eliminating shared mutable state
-- **Isolated State**: Each actor owns its state privately - no user-level locks or synchronization primitives needed in your code
-- **Serial Message Processing**: Messages are processed one at a time in order, guaranteeing predictable behavior
-- **No Race Conditions**: State isolation eliminates data races and concurrent modification issues at the application level
-- **Deterministic Execution**: Message ordering ensures reproducible behavior, making testing and debugging easier
+**Actors make it simple:**
+- ✅ Each actor processes one message at a time
+- ✅ No shared state = no race conditions
+- ✅ Built-in error handling and recovery
+- ✅ Easy to test and reason about
 
-**Note**: While your application code is lock-free, the JVM and underlying mailbox implementations may use locks internally. The key benefit is that you don't need to manage locks, mutexes, or synchronization in your application code.
+### When Should You Use Cajun?
 
-**Performance Characteristics** (from comprehensive JMH benchmarks):
-- **Message Throughput**: ~75,000 messages/ms for fire-and-forget patterns
-- **Stateful Updates**: ~120,000 state changes/ms
-- **Batch Processing**: Actors excel at parallel batch workloads, outperforming structured concurrency by 40,000x in some scenarios
-- **Pipeline Processing**: 140x faster than traditional thread pools for message-based pipelines
-- **Actor Creation**: Comparable to virtual thread creation (~165 ops/ms)
-- **Request-Reply Latency**: 0.009 ms/op average, competitive with direct thread-based approaches
+**✅ Great fit for:**
+- Message-driven applications (event processing, workflows)
+- Systems with complex stateful logic
+- Applications that need fault tolerance
+- Distributed systems and microservices
+- High-throughput event processing
 
-### The Actor Model
+**❌ Consider alternatives for:**
+- Simple computational tasks (use plain threads)
+- Applications requiring direct memory sharing
+- Pure CPU-bound number crunching
 
-An actor is a concurrent unit of computation which guarantees serial processing of messages with no need for state synchronization and coordination. This guarantee comes from how actors communicate - each actor sends asynchronous messages to other actors and only reads messages from its own mailbox.
+### How Cajun Works
+
+Cajun uses the **actor model** to provide predictable concurrency:
+
+1. **Message Passing**: Actors communicate by sending messages (no shared state)
+2. **Isolated State**: Each actor owns its state privately
+3. **Serial Processing**: Messages are processed one at a time, in order
+4. **No User-Level Locks**: You write lock-free code - the actor model handles isolation
+
+**Built on Java 21+ Virtual Threads:**
+Cajun leverages virtual threads for efficient I/O-bound workloads with minimal overhead. Each actor runs on a virtual thread, allowing you to create millions of actors without the cost of traditional platform threads.
+
+**Note**: While your application code doesn't use locks, the JVM and mailbox implementations may use locks internally. The key benefit is that **you** don't need to manage synchronization.
 
 ### Key Benefits
 
@@ -81,10 +112,14 @@ An actor is a concurrent unit of computation which guarantees serial processing 
 
 > **Dedication**: Cajun is inspired by Erlang OTP and the actor model, and is dedicated to the late Joe Armstrong from Ericsson, whose pioneering work on Erlang and the actor model has influenced a generation of concurrent programming systems. Additional inspiration comes from Akka/Pekko.
 
-## Prerequisites
+## Quick Start (5 Minutes)
+
+Get up and running with Cajun in just a few minutes!
+
+### Prerequisites
 - Java 21+ (with --enable-preview flag)
 
-## Installation
+### Installation
 
 Cajun is available on Maven Central. Add it to your project using Gradle:
 
@@ -147,11 +182,9 @@ tasks.withType(Test) {
 </build>
 ```
 
-## Usage
+### Your First Actor
 
-### Quick Start Example
-
-Here's a complete example to get you started with Cajun using the basic building blocks:
+Here's a complete, runnable example to get you started:
 
 ```java
 import com.cajunsystems.*;
@@ -208,9 +241,31 @@ public class HelloWorld {
 }
 ```
 
-**For request-response patterns**, Cajun provides the `ask` pattern that handles the reply mechanism automatically. See [Request-Response with Ask Pattern](#request-response-with-ask-pattern) for a simpler approach when you need synchronous replies.
+**What's happening here?**
+1. We create an `ActorSystem` - the container for all actors
+2. We spawn two actors using `actorOf()` - one greeter and one receiver
+3. We send a message using `tell()` - fire-and-forget messaging
+4. The greeter processes the message and replies to the receiver
+5. We shut down the system when done
 
-### Actor System Lifecycle
+**Next steps:** See [Request-Response with Ask Pattern](#request-response-with-ask-pattern) for a simpler approach to request-response, or continue reading to understand actors in depth.
+
+---
+
+## Understanding Actors
+
+### What is an Actor?
+
+An **actor** is a lightweight concurrent unit that:
+- Has its own private state (no sharing with other actors)
+- Processes messages one at a time, in order
+- Communicates only through asynchronous messages
+- Can create other actors (children)
+- Never blocks other actors
+
+Think of actors like people in an organization - they each have their own desk (state), inbox (mailbox), and can send memos (messages) to each other, but they never directly access another person's desk.
+
+### Actor Lifecycle
 
 **Important**: The Cajun actor system keeps the JVM alive after the main method completes. This is the expected behavior for a production actor system.
 
@@ -249,44 +304,11 @@ system.shutdown();
 system.stopActor(actorPid);
 ```
 
-## Testing
-
-Cajun provides comprehensive test utilities that make actor testing clean, fast, and approachable. The test utilities eliminate common pain points like `Thread.sleep()`, `CountDownLatch` boilerplate, and polling loops.
-
-**Key Features:**
-- ✅ **No more `Thread.sleep()`** - Use `AsyncAssertion` for deterministic waiting
-- ✅ **Direct state inspection** - Inspect stateful actor state without query messages
-- ✅ **Mailbox monitoring** - Track queue depth, processing rates, and backpressure
-- ✅ **Message capture** - Capture and inspect all messages sent to an actor
-- ✅ **Simplified ask pattern** - One-line request-response testing
-- ✅ **100 passing tests** - Fully tested and production-ready
-
-**Quick Example:**
-```java
-@Test
-void testCounter() {
-    try (TestKit testKit = TestKit.create()) {
-        TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
-        
-        counter.tell(new Increment(5));
-        
-        // No Thread.sleep()! Wait for exact state
-        AsyncAssertion.awaitValue(
-            counter.stateInspector()::current,
-            5,
-            Duration.ofSeconds(1)
-        );
-    }
-}
-```
-
-**📖 Full Documentation:** See [test-utils/README.md](test-utils/README.md) for complete API documentation, examples, and best practices.
-
-### Creating Actors
+## Creating Your First Actors
 
 Cajun provides a clean, interface-based approach for creating actors. This approach separates the message handling logic from the actor lifecycle management, making your code more maintainable and testable.
 
-#### 1. Stateless Actors with Handler Interface
+### Stateless Actors with Handler Interface
 
 For stateless actors, implement the `Handler<Message>` interface:
 
@@ -369,7 +391,7 @@ Pid actorPid = system.actorOf(handler).spawn();
 actorPid.tell(new HelloMessage());
 ```
 
-#### 2. Stateful Actors with StatefulHandler Interface
+### Stateful Actors with StatefulHandler Interface
 
 For actors that need to maintain and persist state, implement the `StatefulHandler<State, Message>` interface:
 
@@ -424,7 +446,7 @@ Pid counterPid = system.statefulActorOf(handler, 0).spawn();
 counterPid.tell(new Increment());
 ```
 
-#### 3. Advanced Configuration
+### Advanced Configuration
 
 Both actor builders support additional configuration options:
 
@@ -452,7 +474,7 @@ Pid computeActor = system.actorOf(ComputationHandler.class)
     .spawn();
 ```
 
-#### 4. Creating Actor Hierarchies
+### Creating Actor Hierarchies
 
 You can create parent-child relationships between actors:
 
@@ -479,11 +501,15 @@ public class ParentHandler implements Handler<ParentMessage> {
 }
 ```
 
+## Actor Communication
+
+Actors communicate through messages. Cajun provides several patterns for actor communication, from simple fire-and-forget to request-response.
+
 ### ActorContext Convenience Features
 
 The `ActorContext` provides several convenience features to simplify common actor patterns:
 
-#### 1. Sending Messages to Self
+### Sending Messages to Self
 
 Use `tellSelf()` to send messages to the current actor:
 
@@ -506,7 +532,7 @@ public class TimerHandler implements Handler<TimerMessage> {
 }
 ```
 
-#### 2. Built-in Logger with Actor Context
+### Built-in Logger with Actor Context
 
 Access a pre-configured logger through `context.getLogger()` that automatically includes the actor ID:
 
@@ -527,7 +553,7 @@ Benefits:
 - **Automatic actor ID context** for easier debugging
 - **No manual logger setup** required
 
-#### 3. Standardized Reply Pattern with ReplyingMessage
+### Standardized Reply Pattern with ReplyingMessage
 
 Use the `ReplyingMessage` interface to standardize request-response patterns:
 
@@ -659,7 +685,42 @@ public static void main(String[] args) {
 }
 ```
 
-## Running examples
+## Testing Your Actors
+
+Cajun provides comprehensive test utilities that make actor testing clean, fast, and approachable. The test utilities eliminate common pain points like `Thread.sleep()`, `CountDownLatch` boilerplate, and polling loops.
+
+**Key Features:**
+- ✅ **No more `Thread.sleep()`** - Use `AsyncAssertion` for deterministic waiting
+- ✅ **Direct state inspection** - Inspect stateful actor state without query messages
+- ✅ **Mailbox monitoring** - Track queue depth, processing rates, and backpressure
+- ✅ **Message capture** - Capture and inspect all messages sent to an actor
+- ✅ **Simplified ask pattern** - One-line request-response testing
+- ✅ **100 passing tests** - Fully tested and production-ready
+
+**Quick Example:**
+```java
+@Test
+void testCounter() {
+    try (TestKit testKit = TestKit.create()) {
+        TestPid<Object> counter = testKit.spawnStateful(CounterHandler.class, 0);
+        
+        counter.tell(new Increment(5));
+        
+        // No Thread.sleep()! Wait for exact state
+        AsyncAssertion.awaitValue(
+            counter.stateInspector()::current,
+            5,
+            Duration.ofSeconds(1)
+        );
+    }
+}
+```
+
+**📖 Full Documentation:** See [test-utils/README.md](test-utils/README.md) for complete API documentation, examples, and best practices.
+
+---
+
+## Running Examples
 To run examples in the project, you can leverage the gradle task runner (--enable-preview flag is already enabled 
 for gradle tasks)
 ```shell
