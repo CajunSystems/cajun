@@ -95,6 +95,10 @@ Cajun uses the **actor model** to provide predictable concurrency:
 **Built on Java 21+ Virtual Threads:**
 Cajun leverages virtual threads for efficient I/O-bound workloads with minimal overhead. Each actor runs on a virtual thread, allowing you to create millions of actors without the cost of traditional platform threads.
 
+**Configurable Scheduler:** Virtual threads are the default, but Cajun allows you to configure the scheduler per-actor based on workload characteristics. You can switch to platform threads (fixed or work-stealing pools) for CPU-intensive tasks while keeping virtual threads for I/O-bound actors.
+
+**Performance Profile:** Cajun excels at message-oriented patterns (75K+ msgs/ms throughput) while traditional threads excel at raw computation. See our [benchmarks](#benchmarks) for detailed comparisons and use case guidance.
+
 **Note**: While your application code doesn't use locks, the JVM and mailbox implementations may use locks internally. The key benefit is that **you** don't need to manage synchronization.
 
 ### Key Benefits

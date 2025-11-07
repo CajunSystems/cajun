@@ -215,9 +215,11 @@ Enable profilers for deeper analysis:
 
 Available profilers:
 - `gc`: Garbage collection impact
-- `stack`: Hottest stack traces
+- `stack`: Hottest stack traces  
 - `perf`: Linux perf integration (Linux only)
-- `async`: Async-profiler integration
+- `async`: Async-profiler integration (requires setup)
+- `cl`: Classloader profiling
+- `comp`: JIT compilation profiling
 
 ## System Requirements
 
