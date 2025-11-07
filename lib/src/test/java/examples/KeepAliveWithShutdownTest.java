@@ -1,3 +1,8 @@
+///usr/bin/env jbang "$0" "$@" ; exit $?
+//DEPS com.cajunsystems:cajun:0.1.4
+//JAVA 21+
+//PREVIEW
+
 package examples;
 
 import com.cajunsystems.ActorContext;

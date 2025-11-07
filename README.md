@@ -721,8 +721,67 @@ void testCounter() {
 ---
 
 ## Running Examples
-To run examples in the project, you can leverage the gradle task runner (--enable-preview flag is already enabled 
-for gradle tasks)
+
+Cajun examples can be run using [JBang](https://www.jbang.dev/), which makes it easy to run Java code without a full project setup.
+
+### Install JBang
+
+**macOS/Linux:**
+```shell
+curl -Ls https://sh.jbang.dev | bash -s - app setup
+```
+
+**Windows:**
+```shell
+iex "& { $(iwr https://ps.jbang.dev) } app setup"
+```
+
+Or use package managers:
+```shell
+# macOS
+brew install jbangdev/tap/jbang
+
+# Linux (SDKMAN)
+sdk install jbang
+
+# Windows (Scoop)
+scoop install jbang
+```
+
+### Run Examples with JBang
+
+All examples in the `lib/src/test/java/examples/` directory include JBang headers and can be run directly:
+
+```shell
+# Run the TimedCounter example
+jbang lib/src/test/java/examples/TimedCounter.java
+
+# Run the WorkflowExample
+jbang lib/src/test/java/examples/WorkflowExample.java
+
+# Run the StatefulActorExample
+jbang lib/src/test/java/examples/StatefulActorExample.java
+
+# Run the BackpressureActorExample
+jbang lib/src/test/java/examples/BackpressureActorExample.java
+```
+
+**Available Examples:**
+- `TimedCounter.java` - Simple periodic message sending
+- `WorkflowExample.java` - Multi-stage workflow with actors
+- `StatefulActorExample.java` - State persistence and recovery
+- `BackpressureActorExample.java` - Backpressure handling
+- `BackpressureStatefulActorExample.java` - Stateful actor with backpressure
+- `ActorVsThreadsExample.java` - Performance comparison
+- `FunctionalWorkflowExample.java` - Functional programming style
+- `SenderPropagationExample.java` - Sender context propagation
+- `StatefulShoppingCartExample.java` - Shopping cart with persistence
+- `ClusterWorkflowExample.java` - Distributed actor example
+- And more in `lib/src/test/java/examples/`
+
+### Alternative: Run with Gradle
+
+You can also use the Gradle task runner (--enable-preview flag is already enabled):
 ```shell
 ./gradlew -PmainClass=examples.TimedCounter run
 ```
