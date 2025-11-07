@@ -1,0 +1,112 @@
+/*
+ * Benchmarks module for Cajun Actor System
+ * Compares performance of actors, threads, and structured concurrency
+ */
+
+plugins {
+    id 'java'
+    id 'me.champeau.jmh' version '0.7.2'
+}
+
+repositories {
+    mavenCentral()
+}
+
+tasks.withType(JavaCompile).each {
+    it.options.compilerArgs.add('--enable-preview')
+}
+
+dependencies {
+    // Cajun actor system
+    implementation project(':lib')
+
+    // JMH for benchmarking
+    jmh 'org.openjdk.jmh:jmh-core:1.37'
+    jmh 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'ch.qos.logback:logback-classic:1.4.11'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+jmh {
+    // JMH version
+    jmhVersion = '1.37'
+
+    // Number of iterations
+    iterations = 5
+    warmupIterations = 3
+
+    // Forks
+    fork = 2
+
+    // Output format
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results.json")
+
+    // Human-readable output
+    humanOutputFile = project.file("${project.buildDir}/reports/jmh/human.txt")
+
+    // Benchmark mode
+    benchmarkMode = ['thrpt', 'avgt']
+
+    // Time unit
+    timeUnit = 'ms'
+
+    // Enable profilers (optional)
+    // profilers = ['gc', 'stack']
+
+    // JVM args
+    jvmArgs = ['--enable-preview']
+
+    // Include patterns
+    // includes = ['.*ActorBenchmark.*']
+
+    // Exclude patterns
+    // excludes = ['.*Pref01.*']
+}
+
+tasks.withType(JavaExec) {
+    jvmArgs += '--enable-preview'
+}
+
+// Ensure JMH bytecode generator also uses preview features
+tasks.named('jmhRunBytecodeGenerator') {
+    jvmArgs = ['--enable-preview']
+}
+
+// Custom task to run benchmarks with quick settings for development
+tasks.register('jmhQuick') {
+    description = 'Runs JMH benchmarks with quick settings for development'
+    group = 'benchmark'
+
+    doLast {
+        javaexec {
+            classpath = sourceSets.jmh.runtimeClasspath
+            mainClass = 'org.openjdk.jmh.Main'
+            args = ['-wi', '1', '-i', '2', '-f', '1']
+            jvmArgs = ['--enable-preview']
+        }
+    }
+}
+
+// Task to generate benchmark report
+tasks.register('benchmarkReport') {
+    description = 'Generates a benchmark comparison report'
+    group = 'benchmark'
+    dependsOn jmh
+
+    doLast {
+        def resultsFile = file("${project.buildDir}/reports/jmh/results.json")
+        if (resultsFile.exists()) {
+            println "Benchmark results available at: ${resultsFile.absolutePath}"
+            println "Human-readable report: ${project.buildDir}/reports/jmh/human.txt"
+        }
+    }
+}
