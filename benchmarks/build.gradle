@@ -76,6 +76,11 @@ tasks.withType(JavaExec) {
     jvmArgs += '--enable-preview'
 }
 
+// Ensure JMH bytecode generator also uses preview features
+tasks.named('jmhRunBytecodeGenerator') {
+    jvmArgs = ['--enable-preview']
+}
+
 // Custom task to run benchmarks with quick settings for development
 tasks.register('jmhQuick') {
     description = 'Runs JMH benchmarks with quick settings for development'

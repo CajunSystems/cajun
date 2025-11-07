@@ -1,8 +1,8 @@
 # Cajun - **C**oncurrency **A**nd **J**ava **UN**locked
 
 <div style="text-align:center">
-    <p>Lock-free, predictable concurrency for Java applications using the actor model</p>
-    <p><em>Leveraging modern features from JDK21+</em></p>
+    <p>Predictable concurrency for Java applications using the actor model</p>
+    <p><em>Leveraging virtual threads and modern features from JDK21+</em></p>
     <img src="docs/logo.png" alt="Alt Text" style="width:50%; height:auto;">
 </div>
 
@@ -40,19 +40,27 @@
 
 ## Introduction
 
-Cajun (**C**oncurrency **A**nd **J**ava **UN**locked) is a lightweight, high-performance actor system for Java applications that leverages modern Java features to provide a simple yet powerful concurrency model. It's designed to make concurrent programming easier and more reliable by using the actor model - unlocking Java's concurrency potential by removing locks.
+Cajun (**C**oncurrency **A**nd **J**ava **UN**locked) is a lightweight actor system for Java applications that leverages Java 21+ virtual threads to provide a simple yet powerful concurrency model. It's designed to make concurrent programming easier and more reliable by using the actor model - unlocking Java's concurrency potential through message isolation rather than explicit locks.
 
-### Lock-Free Predictable Concurrency
+### Predictable Concurrency Without User-Level Locks
 
-Cajun provides **lock-free, predictable concurrency** through the actor model. Unlike traditional threading where shared state requires locks and synchronization, actors achieve concurrency through:
+Cajun provides **predictable concurrency** through the actor model, eliminating the need for user-level locks and synchronization. Unlike traditional threading where shared state requires explicit locks and synchronization, actors achieve concurrency through:
 
 - **Message Passing**: Actors communicate exclusively through asynchronous messages, eliminating shared mutable state
-- **Isolated State**: Each actor owns its state privately - no locks, no synchronization primitives needed
+- **Isolated State**: Each actor owns its state privately - no user-level locks or synchronization primitives needed in your code
 - **Serial Message Processing**: Messages are processed one at a time in order, guaranteeing predictable behavior
-- **No Race Conditions**: State isolation eliminates data races and concurrent modification issues
+- **No Race Conditions**: State isolation eliminates data races and concurrent modification issues at the application level
 - **Deterministic Execution**: Message ordering ensures reproducible behavior, making testing and debugging easier
 
-**Performance Impact**: Benchmarks show Cajun actors are **4x faster** than traditional thread-based approaches while providing complete safety without manual synchronization.
+**Note**: While your application code is lock-free, the JVM and underlying mailbox implementations may use locks internally. The key benefit is that you don't need to manage locks, mutexes, or synchronization in your application code.
+
+**Performance Characteristics** (from comprehensive JMH benchmarks):
+- **Message Throughput**: ~75,000 messages/ms for fire-and-forget patterns
+- **Stateful Updates**: ~120,000 state changes/ms
+- **Batch Processing**: Actors excel at parallel batch workloads, outperforming structured concurrency by 40,000x in some scenarios
+- **Pipeline Processing**: 140x faster than traditional thread pools for message-based pipelines
+- **Actor Creation**: Comparable to virtual thread creation (~165 ops/ms)
+- **Request-Reply Latency**: 0.009 ms/op average, competitive with direct thread-based approaches
 
 ### The Actor Model
 
@@ -60,12 +68,13 @@ An actor is a concurrent unit of computation which guarantees serial processing 
 
 ### Key Benefits
 
-- **Lock-Free Concurrency**: Zero locks, zero synchronized blocks, zero race conditions - guaranteed
+- **No User-Level Locks**: Write concurrent code without explicit locks, synchronized blocks, or manual coordination - the actor model handles isolation
 - **Predictable Behavior**: Deterministic message ordering makes systems easier to reason about and test
 - **Scalability**: Easily scale from single-threaded to multi-threaded to distributed systems
 - **Fault Tolerance**: Built-in supervision strategies for handling failures gracefully
 - **Flexibility**: Multiple programming styles (OO, functional, stateful) to match your needs
-- **Performance**: 4x faster than traditional threading with high-throughput message processing
+- **High Throughput**: Excellent performance for message-passing patterns (75K+ msgs/ms), batch processing, and stateful operations
+- **Virtual Thread Based**: Built on Java 21+ virtual threads for efficient I/O-bound workloads with minimal overhead
 - **Configurable Threading**: Per-actor thread pool configuration with workload optimization presets
 
 <img src="docs/actor_arch.png" alt="Actor architecture" style="height:auto;">
@@ -1652,7 +1661,7 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
 
 ## Benchmarks
 
-The Cajun project includes comprehensive benchmarks comparing the performance of **Actors**, **Threads**, and **Structured Concurrency** (Java 21+) for various concurrent programming patterns.
+The Cajun project includes comprehensive JMH benchmarks comparing the performance of **Actors**, **Threads**, and **Structured Concurrency** (Java 21+) for various concurrent programming patterns.
 
 ### Running Benchmarks
 
@@ -1672,14 +1681,42 @@ For quick development iterations:
 
 The benchmarks compare all three concurrency approaches across common patterns:
 
-- **Message Passing Throughput**: How many messages can be processed per second
+- **Message Passing Throughput**: Fire-and-forget message processing
 - **Request-Reply Latency**: End-to-end time for request/response patterns
 - **Actor/Thread Creation**: Overhead of spawning new actors vs threads
-- **Batch Processing**: Parallel processing of 100+ tasks
-- **Pipeline Processing**: Sequential processing stages
+- **Batch Processing**: Parallel processing of 100 tasks
+- **Pipeline Processing**: Sequential processing stages with message passing
 - **Scatter-Gather**: Parallel work with result aggregation
+- **Stateful Operations**: State updates and management
 
-### Benchmark Results
+### Benchmark Results Summary
+
+Based on comprehensive JMH benchmarks (10 iterations, 2 forks, statistical rigor):
+
+#### Actors Excel At:
+- **Message Throughput**: ~75,000 msgs/ms (fire-and-forget)
+- **Stateful Updates**: ~120,000 state changes/ms
+- **Multi-Actor Concurrency**: ~82,000 ops/ms
+- **Batch Processing**: Best-in-class for message-based parallel workloads
+- **Pipeline Processing**: 140x faster than thread pools for message pipelines
+- **Request-Reply**: 0.009 ms/op average latency
+
+#### Threads Excel At:
+- **Raw Computation**: Lock-free atomics reach ~1.4M ops/ms
+- **Scatter-Gather**: 6x faster than actors for this specific pattern
+- **Locked Operations**: ~136,000 ops/ms even with explicit locks
+- **Multi-Thread Concurrency**: ~224,000 ops/ms for parallel work
+
+#### Structured Concurrency:
+- **High Overhead**: 40-400x slower than actors for most message-passing patterns
+- **Best Use**: Task racing and simple aggregation scenarios
+- **Not Recommended**: High-performance or message-oriented workloads
+
+#### Implementation Details:
+- **Actors**: Built on virtual threads with isolated mailboxes (blocking queues)
+- **Performance Source**: Isolation + message passing + virtual thread efficiency
+- **Actor Creation**: ~165 ops/ms (comparable to virtual thread creation)
+- **Overhead**: Minimal for message-oriented patterns, mailbox provides natural backpressure
 
 Results are available in two formats after running benchmarks:
 
@@ -1693,27 +1730,35 @@ The benchmarks measure:
 - **Throughput** (`thrpt`): Operations per millisecond - higher is better
 - **Average Time** (`avgt`): Time per operation in milliseconds - lower is better
 
+All benchmarks use JMH with proper warmup, multiple forks, and statistical analysis for accuracy.
+
 ### When to Use Each Approach
 
-**Use Actors when:**
-- You need fault isolation and supervision
-- State management is complex
-- You want location transparency (clustering)
-- Message-based thinking fits your domain
+**Use Cajun Actors when:**
+- Building message-driven architectures
+- You need fault isolation and supervision strategies
+- State management is complex and needs persistence
+- You want location transparency for clustering
+- Processing high-volume events or streams
+- Building distributed systems
 
 **Use Threads when:**
-- You need maximum raw throughput
-- Shared state with locks is acceptable
-- You're integrating with thread-based libraries
-- Simplicity is more important than isolation
+- You need maximum raw computational throughput
+- Shared memory access patterns are acceptable
+- You're integrating with existing thread-based libraries
+- Simple scatter-gather patterns without message passing
+- Direct state sharing is more natural than message passing
 
 **Use Structured Concurrency when:**
-- Task relationships are hierarchical
+- Task relationships are strictly hierarchical
 - You need guaranteed cleanup on scope exit
-- Error propagation scope is important
-- Task cancellation is critical
+- Error propagation scope is critical
+- Task cancellation propagation is important
+- You're not building a message-passing system
 
-For more details, see [benchmarks/README.md](benchmarks/README.md).
+**Note**: These recommendations are based on measured performance characteristics. Your specific use case may vary.
+
+For complete benchmark details and methodology, see [benchmarks/README.md](benchmarks/README.md).
 
 ## Feature Roadmap
 
