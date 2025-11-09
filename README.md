@@ -990,6 +990,163 @@ You can customize the mailbox for an actor in several ways:
 
 By understanding and utilizing these configuration options, you can fine-tune mailbox behavior to match the specific needs of your actors and the overall performance characteristics of your application.
 
+### Queue Type Alternatives
+
+Cajun provides multiple queue implementations optimized for different scenarios. Choose the right queue type based on your performance requirements and workload characteristics.
+
+#### Available Queue Types
+
+| Queue Type | Configuration | Best For | Characteristics |
+|-----------|--------------|----------|-----------------|
+| **LinkedBlockingQueue** | Default / `MailboxConfig` | General purpose, I/O-bound | Bounded, blocking, good for variable throughput |
+| **ArrayBlockingQueue** | CPU_BOUND workload hint | CPU-intensive processing | Bounded, blocking, better cache locality |
+| **ResizableBlockingQueue** | `ResizableMailboxConfig` | Dynamic workloads | Bounded, blocking, auto-resize based on load |
+| **MpscArrayQueue** | `HighThroughputMailboxConfig` | High throughput scenarios | Lock-free, bounded (power of 2), wait-free producers |
+| **ConcurrentLinkedQueue** | `UnboundedMailboxConfig` | Unbounded, non-blocking | Lock-free, truly unbounded, never blocks producers |
+
+#### High-Throughput Mailbox (MpscArrayQueue)
+
+For scenarios requiring maximum message throughput with multiple producers, use `HighThroughputMailboxConfig`:
+
+```java
+import com.cajunsystems.config.HighThroughputMailboxConfig;
+
+// Create high-throughput mailbox configuration
+HighThroughputMailboxConfig config = new HighThroughputMailboxConfig()
+    .setCapacity(16384); // Must be power of 2 (e.g., 1024, 2048, 4096, 8192, 16384, 32768)
+
+Pid highThroughputActor = system.actorOf(MyHandler.class)
+    .withId("high-throughput-processor")
+    .withMailboxConfig(config)
+    .spawn();
+```
+
+**MpscArrayQueue Features:**
+- **Multiple Producer Single Consumer (MPSC)**: Optimized for the actor model (many senders, one receiver)
+- **Lock-Free**: Uses CAS operations, no locks required
+- **Wait-Free Producers**: Single CAS operation per enqueue
+- **Better Throughput**: Outperforms `LinkedBlockingQueue` in multi-producer scenarios
+- **Lower Latency**: Reduced contention and better CPU cache locality
+
+**When to Use:**
+- High message throughput requirements (millions of messages/second)
+- Multiple actors sending messages to a single actor
+- Low-latency requirements
+- CPU-bound message processing
+- Known capacity requirements
+
+**Trade-offs:**
+- Capacity must be a power of 2
+- Fixed capacity (no dynamic resizing)
+- Higher memory usage due to pre-allocation
+- Requires JCTools dependency (included automatically)
+
+**Example Use Cases:**
+- Real-time event processing systems
+- High-frequency trading actors
+- Message aggregators with multiple sources
+- Performance-critical computation pipelines
+
+#### Unbounded Mailbox (ConcurrentLinkedQueue)
+
+For scenarios where producers should never block and capacity is unpredictable, use `UnboundedMailboxConfig`:
+
+```java
+import com.cajunsystems.config.UnboundedMailboxConfig;
+
+// Create unbounded mailbox configuration
+UnboundedMailboxConfig config = new UnboundedMailboxConfig();
+
+Pid unboundedActor = system.actorOf(MyHandler.class)
+    .withId("unbounded-processor")
+    .withMailboxConfig(config)
+    .spawn();
+```
+
+**ConcurrentLinkedQueue Features:**
+- **Truly Unbounded**: Limited only by available memory
+- **Lock-Free**: Uses CAS operations for thread-safety
+- **Non-Blocking Producers**: Enqueue operations never block
+- **Wait-Free Operations**: Both enqueue and dequeue are wait-free
+- **No Pre-Allocation**: Memory allocated as needed
+
+**When to Use:**
+- Producers must never block
+- Variable or unpredictable message rates
+- Bursty traffic patterns
+- Event logging or audit systems
+- When you want to avoid capacity tuning
+- Development and testing scenarios
+
+**Trade-offs:**
+- **No Backpressure**: Can lead to OutOfMemoryError if consumer is too slow
+- Higher memory overhead per element (linked nodes)
+- Slightly lower throughput than bounded queues in some scenarios
+- Queue size monitoring recommended in production
+
+**Example Use Cases:**
+- Event logging and audit trails
+- Telemetry and metrics collection
+- Development and testing environments
+- Systems with unpredictable load spikes
+- Asynchronous notification systems
+
+#### Queue Selection Guidelines
+
+Choose your mailbox queue type based on your requirements:
+
+```java
+// 1. Maximum throughput with known capacity
+HighThroughputMailboxConfig highThroughput = new HighThroughputMailboxConfig()
+    .setCapacity(32768);
+
+// 2. Unbounded, never block producers
+UnboundedMailboxConfig unbounded = new UnboundedMailboxConfig();
+
+// 3. Dynamic resizing based on load
+ResizableMailboxConfig resizable = new ResizableMailboxConfig()
+    .setInitialCapacity(100)
+    .setMaxCapacity(10000)
+    .setMinCapacity(50);
+
+// 4. Standard bounded with specific capacity
+MailboxConfig standard = new MailboxConfig()
+    .setInitialCapacity(100)
+    .setMaxCapacity(1000);
+
+// Apply to actors
+Pid actor = system.actorOf(MyHandler.class)
+    .withMailboxConfig(highThroughput) // or unbounded, resizable, standard
+    .spawn();
+```
+
+**Performance Considerations:**
+
+| Scenario | Recommended Queue | Rationale |
+|----------|------------------|-----------|
+| High-frequency trading | `HighThroughputMailboxConfig` | Maximum throughput, low latency |
+| Web request handlers | `ResizableMailboxConfig` | Dynamic load, automatic adaptation |
+| Background processing | Default `LinkedBlockingQueue` | Balanced performance, good backpressure |
+| Event logging | `UnboundedMailboxConfig` | Never block producers, handle bursts |
+| CPU-intensive tasks | `ArrayBlockingQueue` (CPU_BOUND hint) | Better cache locality |
+
+**Monitoring Unbounded Queues:**
+
+When using `UnboundedMailboxConfig`, monitor queue size to prevent memory issues:
+
+```java
+// Get mailbox metrics
+int currentSize = actor.getCurrentSize();
+int remainingCapacity = actor.getRemainingCapacity(); // Returns Integer.MAX_VALUE for unbounded
+
+// Log or alert if queue grows too large
+if (currentSize > 100000) {
+    logger.warn("Unbounded queue growing large: {} messages", currentSize);
+}
+```
+
+By understanding and utilizing these configuration options, you can fine-tune mailbox behavior to match the specific needs of your actors and the overall performance characteristics of your application.
+
 ## Request-Response with Ask Pattern
 
 While actors typically communicate through one-way asynchronous messages, Cajun provides an "ask pattern" for request-response interactions where you need to wait for a reply.

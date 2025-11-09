@@ -1,6 +1,8 @@
 package com.cajunsystems.config;
 
+import com.cajunsystems.MpscArrayBlockingQueue;
 import com.cajunsystems.ResizableBlockingQueue;
+import com.cajunsystems.UnboundedConcurrentBlockingQueue;
 import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
 
 import java.util.concurrent.ArrayBlockingQueue;
@@ -25,6 +27,21 @@ public class DefaultMailboxProvider<M> implements MailboxProvider<M> {
                      effectiveConfig.getClass().getName(), initialCapacity, maxCapacity);
         logger.debug("WorkloadType hint received: {}", workloadTypeHint);
 
+        // Priority 1: Check for high-throughput configuration (MpscArrayQueue)
+        if (effectiveConfig instanceof HighThroughputMailboxConfig) {
+            HighThroughputMailboxConfig htmc = (HighThroughputMailboxConfig) effectiveConfig;
+            logger.info("High-throughput mailbox requested. Creating MpscArrayBlockingQueue with capacity: {}",
+                        htmc.getCapacity());
+            return new MpscArrayBlockingQueue<>(htmc.getCapacity());
+        }
+
+        // Priority 2: Check for unbounded configuration (ConcurrentLinkedQueue)
+        if (effectiveConfig instanceof UnboundedMailboxConfig) {
+            logger.info("Unbounded mailbox requested. Creating UnboundedConcurrentBlockingQueue");
+            return new UnboundedConcurrentBlockingQueue<>();
+        }
+
+        // Priority 3: Check for resizable configuration
         if (effectiveConfig instanceof ResizableMailboxConfig) {
             ResizableMailboxConfig rmc = (ResizableMailboxConfig) effectiveConfig;
             logger.info("Prioritizing ResizableMailboxConfig. Creating ResizableBlockingQueue with initialCapacity: {}, maxCapacity: {}, resizeThreshold: {}, resizeFactor: {}",
@@ -39,6 +56,7 @@ public class DefaultMailboxProvider<M> implements MailboxProvider<M> {
             return queue;
         }
 
+        // Priority 4: Use workload type hint
         if (workloadTypeHint != null) {
             switch (workloadTypeHint) {
                 case IO_BOUND:
@@ -48,8 +66,8 @@ public class DefaultMailboxProvider<M> implements MailboxProvider<M> {
                     int boundedCapacity = Math.min(maxCapacity, 1000);
                     logger.info("Workload hint CPU_BOUND. Creating ArrayBlockingQueue with capacity: {}", boundedCapacity);
                     return new ArrayBlockingQueue<>(boundedCapacity);
-                case MIXED: 
-                default: 
+                case MIXED:
+                default:
                     logger.info("Workload hint MIXED/UNKNOWN/Default. Creating LinkedBlockingQueue with capacity: {}", maxCapacity);
                     return new LinkedBlockingQueue<>(maxCapacity);
             }
