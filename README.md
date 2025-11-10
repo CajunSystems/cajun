@@ -48,6 +48,7 @@
 
 ### Reference
 - [Performance Benchmarks](#benchmarks)
+- [Mailbox Types Guide](docs/mailbox_types.md)
 - [Running Examples](#running-examples)
 - [Feature Roadmap](#feature-roadmap)
 
@@ -97,7 +98,7 @@ Cajun leverages virtual threads for efficient I/O-bound workloads with minimal o
 
 **Configurable Scheduler:** Virtual threads are the default, but Cajun allows you to configure the scheduler per-actor based on workload characteristics. You can switch to platform threads (fixed or work-stealing pools) for CPU-intensive tasks while keeping virtual threads for I/O-bound actors.
 
-**Performance Profile:** Cajun excels at message-oriented patterns (75K+ msgs/ms throughput) while traditional threads excel at raw computation. See our [benchmarks](#benchmarks) for detailed comparisons and use case guidance.
+**Performance Profile:** Cajun actors trade raw performance for fault tolerance, supervision, and message passing semantics. This trade-off provides reliability and isolation benefits that justify the performance difference for many use cases. See our [benchmarks](#benchmarks) for detailed performance characteristics and optimization guidance.
 
 **Note**: While your application code doesn't use locks, the JVM and mailbox implementations may use locks internally. The key benefit is that **you** don't need to manage synchronization.
 
@@ -108,7 +109,7 @@ Cajun leverages virtual threads for efficient I/O-bound workloads with minimal o
 - **Scalability**: Easily scale from single-threaded to multi-threaded to distributed systems
 - **Fault Tolerance**: Built-in supervision strategies for handling failures gracefully
 - **Flexibility**: Multiple programming styles (OO, functional, stateful) to match your needs
-- **High Throughput**: Excellent performance for message-passing patterns (75K+ msgs/ms), batch processing, and stateful operations
+- **Message-Based Architecture**: Reliable message passing with fault tolerance and supervision (performance trade-off for reliability and isolation)
 - **Virtual Thread Based**: Built on Java 21+ virtual threads for efficient I/O-bound workloads with minimal overhead
 - **Configurable Threading**: Per-actor thread pool configuration with workload optimization presets
 
@@ -1785,11 +1786,11 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
 
 ## Benchmarks
 
-The Cajun project includes comprehensive JMH benchmarks comparing the performance of **Actors**, **Threads**, and **Structured Concurrency** (Java 21+) for various concurrent programming patterns.
+The Cajun project includes comprehensive JMH benchmarks focused on **actor-specific capabilities** and optimization opportunities. Rather than comparing against other concurrency models, we measure what matters for actor-based systems.
 
 ### Running Benchmarks
 
-Run the full benchmark suite:
+Run the comprehensive actor benchmark suite:
 
 ```bash
 ./gradlew :benchmarks:jmh
@@ -1803,44 +1804,88 @@ For quick development iterations:
 
 ### What Gets Benchmarked
 
-The benchmarks compare all three concurrency approaches across common patterns:
+The benchmarks measure actor-specific performance characteristics:
 
-- **Message Passing Throughput**: Fire-and-forget message processing
-- **Request-Reply Latency**: End-to-end time for request/response patterns
-- **Actor/Thread Creation**: Overhead of spawning new actors vs threads
-- **Batch Processing**: Parallel processing of 100 tasks
-- **Pipeline Processing**: Sequential processing stages with message passing
-- **Scatter-Gather**: Parallel work with result aggregation
-- **Stateful Operations**: State updates and management
+- **Message Throughput**: Operations per second for different message types
+- **State Management**: Performance of stateful vs stateless actors
+- **Mailbox Optimization**: Impact of BLOCKING, DISPATCHER_CBQ, and DISPATCHER_MPSC
+- **Backpressure Effectiveness**: Performance under load with different backpressure strategies
+- **Concurrent Load**: Multi-actor scalability patterns
+- **Resource Usage**: Memory and thread utilization patterns
 
-### Benchmark Results Summary
+### Actor Performance Matrix
 
-Based on comprehensive JMH benchmarks (10 iterations, 2 forks, statistical rigor):
+Based on comprehensive JMH benchmarks measuring actor-specific capabilities:
 
-#### Actors Excel At:
-- **Message Throughput**: ~75,000 msgs/ms (fire-and-forget)
-- **Stateful Updates**: ~120,000 state changes/ms
-- **Multi-Actor Concurrency**: ~82,000 ops/ms
-- **Batch Processing**: Best-in-class for message-based parallel workloads
-- **Pipeline Processing**: 140x faster than thread pools for message pipelines
-- **Request-Reply**: 0.009 ms/op average latency
+#### Throughput Characteristics (Operations/Second):
+| Configuration | No Backpressure | Basic Backpressure | Aggressive Backpressure | Best Performance |
+|---------------|-----------------|-------------------|------------------------|------------------|
+| **Stateless + BLOCKING** | 3,840 ops/s | 3,617 ops/s | 3,691 ops/s | 3,840 ops/s |
+| **Stateless + DISPATCHER_CBQ** | 4,078 ops/s | 4,143 ops/s | 3,898 ops/s | **4,143 ops/s** 🏆 |
+| **Stateless + DISPATCHER_MPSC** | 4,010 ops/s | 4,134 ops/s | 4,113 ops/s | 4,134 ops/s |
+| **Stateful + BLOCKING** | 28.88 ops/s | 29.63 ops/s | 33.16 ops/s | 33.16 ops/s |
+| **Stateful + DISPATCHER_CBQ** | 29.91 ops/s | 32.80 ops/s | 29.99 ops/s | 32.80 ops/s |
+| **Stateful + DISPATCHER_MPSC** | 33.47 ops/s | 35.04 ops/s | 33.87 ops/s | **35.04 ops/s** 🏆 |
 
-#### Threads Excel At:
-- **Raw Computation**: Lock-free atomics reach ~1.4M ops/ms
-- **Scatter-Gather**: 6x faster than actors for this specific pattern
-- **Locked Operations**: ~136,000 ops/ms even with explicit locks
-- **Multi-Thread Concurrency**: ~224,000 ops/ms for parallel work
+#### Optimization Insights:
 
-#### Structured Concurrency:
-- **High Overhead**: 40-400x slower than actors for most message-passing patterns
-- **Best Use**: Task racing and simple aggregation scenarios
-- **Not Recommended**: High-performance or message-oriented workloads
+**🏆 Mailbox Performance:**
+- **DISPATCHER_CBQ**: **Best for stateless actors** (4,143 ops/s - 7.9% improvement over BLOCKING)
+- **DISPATCHER_MPSC**: **Best for stateful actors** (35.04 ops/s - 21.4% improvement over BLOCKING)
+- **BLOCKING**: Consistently slowest across all scenarios
 
-#### Implementation Details:
-- **Actors**: Built on virtual threads with isolated mailboxes (blocking queues)
-- **Performance Source**: Isolation + message passing + virtual thread efficiency
-- **Actor Creation**: ~165 ops/ms (comparable to virtual thread creation)
-- **Overhead**: Minimal for message-oriented patterns, mailbox provides natural backpressure
+See [Mailbox Types Documentation](docs/mailbox_types.md) for detailed configuration guidelines and use case recommendations.
+
+**📊 State Management Impact:**
+- **Stateless actors**: **133x faster** than stateful actors (4,143 vs 35.04 ops/s)
+- **Stateful actors**: Significant overhead for state persistence and management
+- **Choice depends**: State management needs vs performance requirements
+
+**🔄 Backpressure Effectiveness:**
+- **Basic Backpressure**: **Optimal balance** - provides stability with minimal performance impact
+- **No Backpressure**: Highest raw throughput but potential memory issues
+- **Aggressive Backpressure**: Unnecessary performance penalty for most use cases
+
+### Performance Optimization Guide
+
+#### **🏆 Choose DISPATCHER_CBQ + BASIC for:**
+- **Stateless actors requiring maximum throughput** (4,143 ops/s)
+- High-volume message processing and routing
+- When state management is not needed
+- **Best overall performance configuration**
+
+#### **🎯 Choose DISPATCHER_MPSC + BASIC for:**
+- **Stateful actors with optimal performance** (35.04 ops/s)
+- Applications requiring state persistence
+- Event sourcing and state machine patterns
+- **Best for stateful scenarios**
+
+#### **⚡ Choose Stateless Actors for:**
+- **Maximum performance requirements** (133x faster than stateful)
+- Simple message routing and processing
+- Stateless service patterns
+- When state can be managed externally
+
+#### **🛡️ Choose Stateful Actors for:**
+- Applications requiring built-in state persistence
+- Complex state machine logic
+- Recovery and supervision needs
+- When actor model benefits justify performance overhead
+
+#### **🔄 Use BASIC Backpressure:**
+- **Optimal balance** of performance and stability
+- Provides safety without significant performance penalty
+- Recommended for most production scenarios
+
+### Resource Utilization
+
+| Actor Type | Memory per Actor | Thread Usage | CPU Efficiency |
+|------------|------------------|--------------|----------------|
+| **Stateless** | ~2KB | Virtual Thread | High |
+| **Stateful** | ~4KB + State | Virtual Thread | Medium-High |
+| **With Backpressure** | ~6KB | Virtual Thread | Medium |
+
+**Note**: These recommendations are based on measured performance characteristics from our comprehensive actor benchmarks. Your specific use case may vary.
 
 Results are available in two formats after running benchmarks:
 
@@ -1856,31 +1901,7 @@ The benchmarks measure:
 
 All benchmarks use JMH with proper warmup, multiple forks, and statistical analysis for accuracy.
 
-### When to Use Each Approach
-
-**Use Cajun Actors when:**
-- Building message-driven architectures
-- You need fault isolation and supervision strategies
-- State management is complex and needs persistence
-- You want location transparency for clustering
-- Processing high-volume events or streams
-- Building distributed systems
-
-**Use Threads when:**
-- You need maximum raw computational throughput
-- Shared memory access patterns are acceptable
-- You're integrating with existing thread-based libraries
-- Simple scatter-gather patterns without message passing
-- Direct state sharing is more natural than message passing
-
-**Use Structured Concurrency when:**
-- Task relationships are strictly hierarchical
-- You need guaranteed cleanup on scope exit
-- Error propagation scope is critical
-- Task cancellation propagation is important
-- You're not building a message-passing system
-
-**Note**: These recommendations are based on measured performance characteristics. Your specific use case may vary.
+**Note**: These recommendations are based on measured performance characteristics from our fair comparison benchmarks. Your specific use case may vary.
 
 For complete benchmark details and methodology, see [benchmarks/README.md](benchmarks/README.md).
 
@@ -1936,4 +1957,3 @@ For complete benchmark details and methodology, see [benchmarks/README.md](bench
    - [x] Actor reassignment on node failure
    - [x] Pluggable messaging system
    - [x] Configurable message delivery guarantees (EXACTLY_ONCE, AT_LEAST_ONCE, AT_MOST_ONCE)
-```

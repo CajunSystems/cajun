@@ -49,7 +49,7 @@ public class StatefulActorBuilder<State, Message> {
         this.handler = handler;
         this.initialState = initialState;
         this.id = UUID.randomUUID().toString();
-        this.mailboxConfig = new ResizableMailboxConfig();
+        this.mailboxConfig = null; // Will use system config by default
     }
     
     /**
@@ -161,9 +161,9 @@ public class StatefulActorBuilder<State, Message> {
         MailboxProvider<Message> mpToUse = (this.mailboxProvider != null) 
                                            ? this.mailboxProvider 
                                            : system.getMailboxProvider();
-        ResizableMailboxConfig mbConfigToUse = (this.mailboxConfig != null) 
-                                                ? this.mailboxConfig 
-                                                : new ResizableMailboxConfig(); // Or pass null and let Actor constructor use system.getMailboxConfig()
+        // Use builder's config if set, otherwise delegate to system's config
+        // Actor constructor will use system.getMailboxConfig() if we pass null
+        ResizableMailboxConfig mbConfigToUse = this.mailboxConfig; // Can be null - Actor will use system config
         
         if (customPersistence) {
             actor = new StatefulHandlerActor<>(

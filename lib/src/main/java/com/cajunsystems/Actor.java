@@ -2,6 +2,7 @@ package com.cajunsystems;
 
 import com.cajunsystems.backpressure.*;
 import com.cajunsystems.config.*;
+import com.cajunsystems.dispatcher.DispatcherMailboxProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,7 +43,7 @@ public abstract class Actor<Message> {
     private final Map<String, Actor<?>> children = new ConcurrentHashMap<>();
     // Timeout in seconds for actor shutdown
     private int shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
-    private final MailboxProcessor<Message> mailboxProcessor;
+    private final Object mailboxProcessor; // Either MailboxProcessor<Message> or DispatcherMailboxProcessor<Message>
     private final int actorMailboxMaxCapacity; // Added to store configured max capacity
 
     // For tracking metrics
@@ -63,7 +64,11 @@ public abstract class Actor<Message> {
      * @return The current mailbox size
      */
     public int getCurrentSize() {
-        return mailboxProcessor.getCurrentSize();
+        if (mailboxProcessor instanceof MailboxProcessor) {
+            return ((MailboxProcessor<Message>) mailboxProcessor).getCurrentSize();
+        } else {
+            return ((DispatcherMailboxProcessor<Message>) mailboxProcessor).getCurrentSize();
+        }
     }
 
     /**
@@ -206,11 +211,17 @@ public abstract class Actor<Message> {
         this.actorLogger = LoggerFactory.getLogger(this.getClass().getName() + "." + this.actorId);
 
         // Use provided instances or fallback to system's defaults if they are null (though system should pass non-null)
+        logger.info("Actor {} constructor: mailboxConfig param is null={}, type={}", 
+                    this.actorId, 
+                    (mailboxConfig == null),
+                    (mailboxConfig != null ? mailboxConfig.getMailboxType() : "NULL"));
         ThreadPoolFactory effectiveTpf = (threadPoolFactory != null) ? threadPoolFactory : system.getThreadPoolFactory();
         MailboxProvider<Message> effectiveMp = (mailboxProviderInstance != null)
                 ? mailboxProviderInstance
                 : system.getMailboxProvider();
         MailboxConfig effectiveMailboxConfig = (mailboxConfig != null) ? mailboxConfig : system.getMailboxConfig();
+        logger.info("Actor {} after resolution: effectiveMailboxConfig.type={}", 
+                    this.actorId, effectiveMailboxConfig.getMailboxType());
 
         this.actorMailboxMaxCapacity = effectiveMailboxConfig.getMaxCapacity(); // Initialize actorMailboxMaxCapacity
 
@@ -238,46 +249,68 @@ public abstract class Actor<Message> {
             this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
         }
 
-        this.mailboxProcessor = new MailboxProcessor<>(
-                this.actorId, // Use this.actorId which is now definitely set
+        // Create lifecycle adapter for message processing
+        ActorLifecycle<Message> lifecycle = new ActorLifecycle<Message>() {
+            @Override
+            public void preStart() {
+                Actor.this.preStart();
+            }
+
+            @Override
+            public void receive(Message message) {
+                // Check if this is a MessageWithSender wrapper
+                if (message instanceof ActorSystem.MessageWithSender<?>) {
+                    ActorSystem.MessageWithSender<?> wrapper = (ActorSystem.MessageWithSender<?>) message;
+                    // Set sender context
+                    setSender(wrapper.sender());
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Message unwrapped = (Message) wrapper.message();
+                        Actor.this.receive(unwrapped);
+                    } finally {
+                        // Clear sender context
+                        clearSender();
+                    }
+                } else {
+                    Actor.this.receive(message);
+                }
+                lastProcessingTimestamp.set(System.currentTimeMillis());
+            }
+
+            @Override
+            public void postStop() {
+                Actor.this.postStop();
+            }
+        };
+        
+        // Detect if dispatcher mode is enabled via MailboxConfig
+        logger.info("Actor {} checking mailbox config: type={}, isDispatcherMode={}", 
+                    this.actorId, effectiveMailboxConfig.getMailboxType(), effectiveMailboxConfig.isDispatcherMode());
+        if (effectiveMailboxConfig.isDispatcherMode()) {
+            // Use dispatcher-based mailbox processor
+            logger.info("Actor {} using DISPATCHER mode with type {}", this.actorId, effectiveMailboxConfig.getMailboxType());
+            this.mailboxProcessor = new DispatcherMailboxProcessor<>(
+                this.actorId,
+                effectiveMailboxConfig.getMailboxType(),
+                effectiveMailboxConfig.getMaxCapacity(),
+                effectiveMailboxConfig.getOverflowStrategy(),
+                effectiveMailboxConfig.getThroughput(),
+                this::handleException,
+                lifecycle,
+                system.getDispatcher()
+            );
+        } else {
+            // Use traditional thread-per-actor mailbox processor
+            logger.info("Actor {} using BLOCKING mode (MailboxProcessor) with batch size {}", this.actorId, configuredBatchSize);
+            this.mailboxProcessor = new MailboxProcessor<>(
+                this.actorId,
                 mailbox,
                 configuredBatchSize,
                 this::handleException,
-                new ActorLifecycle<Message>() {
-                    @Override
-                    public void preStart() {
-                        Actor.this.preStart();
-                    }
-
-                    @Override
-                    public void receive(Message message) {
-                        // Check if this is a MessageWithSender wrapper
-                        if (message instanceof ActorSystem.MessageWithSender<?>) {
-                            ActorSystem.MessageWithSender<?> wrapper = (ActorSystem.MessageWithSender<?>) message;
-                            // Set sender context
-                            setSender(wrapper.sender());
-                            try {
-                                @SuppressWarnings("unchecked")
-                                Message unwrapped = (Message) wrapper.message();
-                                Actor.this.receive(unwrapped);
-                            } finally {
-                                // Clear sender context
-                                clearSender();
-                            }
-                        } else {
-                            Actor.this.receive(message);
-                        }
-                        lastProcessingTimestamp.set(System.currentTimeMillis());
-                    }
-
-                    @Override
-                    public void postStop() {
-                        Actor.this.postStop();
-                    }
-                },
-                effectiveTpf // Pass the effective ThreadPoolFactory to MailboxProcessor
-        );
-        logger.debug("Actor {} created with batch size {}", this.actorId, configuredBatchSize);
+                lifecycle,
+                effectiveTpf
+            );
+        }
     }
 
     protected abstract void receive(Message message);
@@ -331,7 +364,7 @@ public abstract class Actor<Message> {
      */
     private void updateMetrics() {
         if (backpressureManager != null) {
-            int currentSize = mailboxProcessor.getCurrentSize();
+            int currentSize = getCurrentSize(); // Use the public method which handles both processor types
             int capacity = getCapacity(); // This will now correctly use actorMailboxMaxCapacity
             long rate = calculateProcessingRate();
 
@@ -389,7 +422,11 @@ public abstract class Actor<Message> {
      * This should not be called directly for actors registered with an ActorSystem.
      */
     public void start() {
-        mailboxProcessor.start();
+        if (mailboxProcessor instanceof MailboxProcessor) {
+            ((MailboxProcessor<Message>) mailboxProcessor).start();
+        } else {
+            ((DispatcherMailboxProcessor<Message>) mailboxProcessor).start();
+        }
     }
 
     /**
@@ -424,7 +461,11 @@ public abstract class Actor<Message> {
     }
 
     public void tell(Message message) {
-        mailboxProcessor.tell(message);
+        if (mailboxProcessor instanceof MailboxProcessor) {
+            ((MailboxProcessor<Message>) mailboxProcessor).tell(message);
+        } else {
+            ((DispatcherMailboxProcessor<Message>) mailboxProcessor).tell(message);
+        }
 
         // Update metrics if backpressure is enabled
         if (backpressureManager != null) {
@@ -503,7 +544,11 @@ public abstract class Actor<Message> {
     }
 
     public boolean isRunning() {
-        return mailboxProcessor.isRunning();
+        if (mailboxProcessor instanceof MailboxProcessor) {
+            return ((MailboxProcessor<Message>) mailboxProcessor).isRunning();
+        } else {
+            return ((DispatcherMailboxProcessor<Message>) mailboxProcessor).isRunning();
+        }
     }
 
     /**
@@ -518,7 +563,7 @@ public abstract class Actor<Message> {
     }
 
     public void stop() {
-        if (!mailboxProcessor.isRunning()) {
+        if (!isRunning()) {
             return;
         }
         logger.debug("Stopping actor {}", actorId);
@@ -530,7 +575,11 @@ public abstract class Actor<Message> {
         }
 
         // Stop mailbox processing
-        mailboxProcessor.stop();
+        if (mailboxProcessor instanceof MailboxProcessor) {
+            ((MailboxProcessor<Message>) mailboxProcessor).stop();
+        } else {
+            ((DispatcherMailboxProcessor<Message>) mailboxProcessor).stop();
+        }
 
         // Clean up actor hierarchy and system
         children.clear();
@@ -666,7 +715,11 @@ public abstract class Actor<Message> {
      * @return true if a message was successfully dropped, false otherwise
      */
     public boolean dropOldestMessage() {
-        return mailboxProcessor.dropOldestMessage();
+        if (mailboxProcessor instanceof MailboxProcessor) {
+            return ((MailboxProcessor<Message>) mailboxProcessor).dropOldestMessage();
+        } else {
+            return ((DispatcherMailboxProcessor<Message>) mailboxProcessor).dropOldestMessage();
+        }
     }
 
     /**

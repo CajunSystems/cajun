@@ -1,4 +1,4 @@
-package com.cajunsystems.benchmarks;
+package com.cajunsystems.benchmarks.stateful;
 
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
@@ -7,9 +7,11 @@ import com.cajunsystems.handler.Handler;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.Serializable;
+import java.io.IOException;
+import java.nio.file.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * Direct comparison benchmarks running identical workloads across
@@ -93,6 +95,38 @@ public class ComparisonBenchmark {
         }
         if (executor != null) {
             executor.shutdown();
+        }
+        
+        // Clean up any temporary files created during benchmarks
+        cleanupTempFiles();
+    }
+    
+    /**
+     * Clean up any temporary files created during benchmarks.
+     */
+    private void cleanupTempFiles() {
+        String tempDir = System.getProperty("java.io.tmpdir");
+        try {
+            try (Stream<Path> paths = Files.list(Paths.get(tempDir))) {
+                paths.filter(path -> {
+                    String fileName = path.getFileName().toString();
+                    return fileName.startsWith("cajun-benchmark-") || 
+                           fileName.endsWith(".wal") || 
+                           fileName.endsWith(".snapshot") ||
+                           fileName.contains("cajun-test") ||
+                           fileName.contains("actor-");
+                })
+                .forEach(path -> {
+                    try {
+                        Files.deleteIfExists(path);
+                        System.out.println("Cleaned up: " + path);
+                    } catch (IOException e) {
+                        System.err.println("Failed to delete: " + path + " - " + e.getMessage());
+                    }
+                });
+            }
+        } catch (IOException e) {
+            System.err.println("Error during cleanup: " + e.getMessage());
         }
     }
 

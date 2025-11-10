@@ -55,9 +55,50 @@ Direct comparisons running identical workloads:
 - **Pipeline**: Sequential processing stages
 - **Scatter-Gather**: Parallel work with result aggregation
 
+### 5. Mailbox Type Benchmarks (`MailboxTypeBenchmark.java`)
+
+Compares different actor mailbox implementations:
+
+- **BLOCKING**: Traditional thread-per-actor with LinkedBlockingQueue (baseline)
+- **DISPATCHER_LBQ**: Dispatcher-based with LinkedBlockingQueue
+- **DISPATCHER_MPSC**: Dispatcher-based with lock-free JCTools MpscArrayQueue
+
+**Benchmark Patterns:**
+- **Single Actor Throughput**: Raw message processing performance
+- **Multiple Actors**: Concurrent actor scalability with dispatcher
+- **Fan-Out Pattern**: Broadcasting messages to multiple actors
+- **Burst Sending**: Handling rapid message bursts from producer
+
+**Parameters:**
+- Message counts: 1,000 and 10,000 messages
+- Actor counts: 1 and 4 actors
+- All combinations tested across all mailbox types
+
 ## Running Benchmarks
 
-### Full Benchmark Suite
+### Method 1: Direct JAR Execution (Recommended)
+
+**Step 1:** Build the JMH JAR:
+```bash
+./gradlew :benchmarks:jmhJar
+```
+
+**Step 2:** Run benchmarks:
+```bash
+# Run all benchmarks
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar
+
+# Run specific benchmark class
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*ActorBenchmark.*"
+
+# Quick test (1 warmup, 2 iterations, 1 fork)
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*ActorBenchmark.*" -wi 1 -i 2 -f 1
+
+# Save results to JSON
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*" -rf json -rff results.json
+```
+
+### Method 2: Using Gradle Tasks
 
 Run all benchmarks with full statistical rigor:
 
@@ -71,9 +112,7 @@ This will:
 - Fork the JVM 2 times for better accuracy
 - Output results to `benchmarks/build/reports/jmh/`
 
-### Quick Development Benchmarks
-
-For faster iteration during development:
+Quick development benchmarks:
 
 ```bash
 ./gradlew :benchmarks:jmhQuick
@@ -83,17 +122,45 @@ This runs with reduced iterations (1 warmup, 2 measurements, 1 fork).
 
 ### Running Specific Benchmarks
 
-To run only specific benchmark classes:
+**Using JAR (Recommended):**
+
+```bash
+# Run specific benchmark class
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*ActorBenchmark.*"
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*ComparisonBenchmark.*"
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*MailboxTypeBenchmark.*"
+
+# Run specific benchmark method
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*ActorBenchmark.messageThroughput"
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*MailboxTypeBenchmark.singleActorThroughput"
+```
+
+**Using Gradle (if needed):**
 
 ```bash
 ./gradlew :benchmarks:jmh -Pjmh.include='.*ActorBenchmark.*'
-./gradlew :benchmarks:jmh -Pjmh.include='.*ComparisonBenchmark.*'
 ```
 
-To run a specific benchmark method:
+### Running Mailbox Type Comparison
+
+**Using JAR (Recommended):**
 
 ```bash
-./gradlew :benchmarks:jmh -Pjmh.include='.*ActorBenchmark.messageThroughput'
+# All mailbox types
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*MailboxTypeBenchmark.*"
+
+# Only DISPATCHER_MPSC
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*MailboxTypeBenchmark.*" \
+  -p mailboxType=DISPATCHER_MPSC
+
+# Only high message count
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*MailboxTypeBenchmark.*" \
+  -p messageCount=10000
+
+# Specific combo
+java --enable-preview -jar benchmarks/build/libs/benchmarks-jmh.jar ".*singleActorThroughput" \
+  -p mailboxType=DISPATCHER_MPSC \
+  -p messageCount=10000
 ```
 
 ### Benchmark Reports

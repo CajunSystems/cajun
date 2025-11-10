@@ -38,6 +38,9 @@ dependencies {
     // Runtime implementation dependencies
     implementation "io.etcd:jetcd-core:0.7.6"
     implementation 'ch.qos.logback:logback-classic:1.4.11'
+    
+    // JCTools for high-performance lock-free queues
+    implementation libs.jctools
 
     // Use JUnit Jupiter for testing.
     testImplementation libs.junit.jupiter

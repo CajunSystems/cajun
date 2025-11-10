@@ -1,4 +1,4 @@
-package com.cajunsystems.benchmarks;
+package com.cajunsystems.benchmarks.stateless;
 
 import org.openjdk.jmh.annotations.*;
 

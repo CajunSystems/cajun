@@ -5,8 +5,10 @@
 commons-math3 = "3.6.1"
 guava = "33.3.1-jre"
 junit-jupiter = "5.11.1"
+jctools = "4.0.5"
 
 [libraries]
 commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commons-math3" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+jctools = { module = "org.jctools:jctools-core", version.ref = "jctools" }

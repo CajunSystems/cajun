@@ -40,7 +40,7 @@ public class ActorBuilder<Message> {
         this.system = system;
         this.handler = handler;
         this.id = UUID.randomUUID().toString();
-        this.mailboxConfig = new ResizableMailboxConfig();
+        this.mailboxConfig = null; // Will use system config by default
     }
     
     /**
@@ -135,16 +135,20 @@ public class ActorBuilder<Message> {
                                            ? this.mailboxProvider 
                                            : system.getMailboxProvider();
 
-        // Ensure mailboxConfig is initialized if not set, Actor constructor expects non-null or will use system default
-        ResizableMailboxConfig mbConfigToUse = (this.mailboxConfig != null) 
-                                                ? this.mailboxConfig 
-                                                : new ResizableMailboxConfig(); // Or pass null and let Actor constructor use system.getMailboxConfig()
+        // Use builder's config if set, otherwise delegate to system's config
+        // Actor constructor will use system.getMailboxConfig() if we pass null
+        ResizableMailboxConfig mbConfigToUse = this.mailboxConfig; // Can be null - Actor will use system config
+        
+        // Use builder's backpressure config if set, otherwise use system's config
+        BackpressureConfig bpConfigToUse = (this.backpressureConfig != null) 
+                                          ? this.backpressureConfig 
+                                          : system.getBackpressureConfig(); // Fall back to system config
 
         HandlerActor<Message> actor = new HandlerActor<>(
                 system, 
                 id, 
                 handler, 
-                backpressureConfig, // Can be null, Actor constructor handles it
+                bpConfigToUse,     // Use effective backpressure config (builder or system)
                 mbConfigToUse,      // Pass potentially defaulted ResizableMailboxConfig
                 tpfToUse,           // Pass effective ThreadPoolFactory
                 mpToUse             // Pass effective MailboxProvider

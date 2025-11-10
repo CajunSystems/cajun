@@ -17,6 +17,7 @@ import com.cajunsystems.config.MailboxConfig;
 import com.cajunsystems.config.MailboxProvider;
 import com.cajunsystems.config.DefaultMailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
+import com.cajunsystems.dispatcher.Dispatcher;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 import org.slf4j.Logger;
@@ -93,6 +94,12 @@ public class ActorSystem {
     private final MailboxProvider<?> mailboxProvider;
     private final SystemBackpressureMonitor backpressureMonitor;
     
+    // Constructor cache for handler classes to avoid repeated reflection lookups
+    private final ConcurrentHashMap<Class<?>, Constructor<?>> handlerConstructorCache;
+    
+    // Dispatcher for dispatcher-based actors (virtual thread pool)
+    private final Dispatcher dispatcher;
+    
     // Keep-alive mechanism for virtual threads
     private final Thread keepAliveThread;
     private final CountDownLatch shutdownLatch;
@@ -160,7 +167,13 @@ public class ActorSystem {
         this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
         this.backpressureConfig = backpressureConfig; // Allow null to disable backpressure
         this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
+        logger.info("ActorSystem initialized with mailboxConfig: type={}, isDispatcherMode={}", 
+                    this.mailboxConfig.getMailboxType(), this.mailboxConfig.isDispatcherMode());
         this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider<>();
+        this.handlerConstructorCache = new ConcurrentHashMap<>();
+        
+        // Initialize dispatcher with virtual threads for dispatcher-based actors
+        this.dispatcher = Dispatcher.virtualThreadDispatcher("actor-dispatcher");
         
         // Create the delay scheduler based on configuration
         this.delayScheduler = this.threadPoolConfig.createScheduledExecutorService("actor-system");
@@ -489,7 +502,17 @@ public class ActorSystem {
      */
     public <Message> ActorBuilder<Message> actorOf(Class<? extends Handler<Message>> handlerClass) {
         try {
-            Handler<Message> handler = handlerClass.getDeclaredConstructor().newInstance();
+            // Use cached constructor to avoid repeated reflection lookups
+            @SuppressWarnings("unchecked")
+            Constructor<Handler<Message>> constructor = (Constructor<Handler<Message>>) 
+                handlerConstructorCache.computeIfAbsent(handlerClass, clazz -> {
+                    try {
+                        return clazz.getDeclaredConstructor();
+                    } catch (NoSuchMethodException e) {
+                        throw new RuntimeException("Failed to find no-arg constructor for " + clazz.getName(), e);
+                    }
+                });
+            Handler<Message> handler = constructor.newInstance();
             return new ActorBuilder<Message>(this, handler);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
@@ -521,7 +544,17 @@ public class ActorSystem {
             Class<? extends StatefulHandler<State, Message>> handlerClass,
             State initialState) {
         try {
-            StatefulHandler<State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
+            // Use cached constructor to avoid repeated reflection lookups
+            @SuppressWarnings("unchecked")
+            Constructor<StatefulHandler<State, Message>> constructor = (Constructor<StatefulHandler<State, Message>>) 
+                handlerConstructorCache.computeIfAbsent(handlerClass, clazz -> {
+                    try {
+                        return clazz.getDeclaredConstructor();
+                    } catch (NoSuchMethodException e) {
+                        throw new RuntimeException("Failed to find no-arg constructor for " + clazz.getName(), e);
+                    }
+                });
+            StatefulHandler<State, Message> handler = constructor.newInstance();
             return new StatefulActorBuilder<State, Message>(this, handler, initialState);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
@@ -710,6 +743,16 @@ public class ActorSystem {
     public <T> MailboxProvider<T> getMailboxProvider() {
         return (MailboxProvider<T>) mailboxProvider;
     }
+    
+    /**
+     * Gets the dispatcher for this actor system.
+     * Used by dispatcher-based actors for scheduling.
+     * 
+     * @return The dispatcher instance
+     */
+    public Dispatcher getDispatcher() {
+        return dispatcher;
+    }
 
     /**
      * Shuts down all actors in the system.
@@ -769,6 +812,10 @@ public class ActorSystem {
 
                 // Shutdown the shared executor if it exists
                 safeShutdownScheduler(sharedExecutor);
+                
+                // Shutdown the dispatcher
+                dispatcher.shutdown();
+                dispatcher.awaitTermination(5, TimeUnit.SECONDS);
                 
                 // Signal the keep-alive thread to exit
                 shutdownLatch.countDown();

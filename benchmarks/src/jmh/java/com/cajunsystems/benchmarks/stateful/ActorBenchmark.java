@@ -1,4 +1,4 @@
-package com.cajunsystems.benchmarks;
+package com.cajunsystems.benchmarks.stateful;
 
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
