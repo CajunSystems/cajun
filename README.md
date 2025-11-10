@@ -1849,18 +1849,21 @@ See [Mailbox Types Documentation](docs/mailbox_types.md) for detailed configurat
 ### Performance Optimization Guide
 
 #### **🏆 Choose DISPATCHER_CBQ + BASIC for:**
+
 - **Stateless actors requiring maximum throughput** (4,143 ops/s)
 - High-volume message processing and routing
 - When state management is not needed
 - **Best overall performance configuration**
 
 #### **🎯 Choose DISPATCHER_MPSC + BASIC for:**
+
 - **Stateful actors with optimal performance** (35.04 ops/s)
 - Applications requiring state persistence
 - Event sourcing and state machine patterns
 - **Best for stateful scenarios**
 
 #### **⚡ Choose Stateless Actors for:**
+
 - **Maximum performance requirements** (133x faster than stateful)
 - Simple message routing and processing
 - Stateless service patterns

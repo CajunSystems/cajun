@@ -76,6 +76,36 @@ public class StatefulBenchmarkSuite {
      */
     @Benchmark
     public void runComparisonBenchmark() throws Exception {
-        // This will be implemented when we move the ComparisonBenchmark
+        // This delegates to the ComparisonBenchmark for traditional actor vs thread comparisons
+        ComparisonBenchmark comparison = new ComparisonBenchmark();
+        comparison.setup();
+        
+        try {
+            // Run a representative sample of comparison benchmarks
+            comparison.singleTask_Actors();
+            comparison.batchProcessing_Actors();
+            comparison.requestReply_Actors();
+        } finally {
+            comparison.tearDown();
+        }
+    }
+    
+    /**
+     * LMDB integration benchmark - compares file-based vs LMDB persistence
+     */
+    @Benchmark
+    public void runLmdbComparisonBenchmark() throws Exception {
+        LmdbStatefulBenchmark lmdbBenchmark = new LmdbStatefulBenchmark();
+        lmdbBenchmark.setup();
+        
+        try {
+            // Run a representative sample of LMDB benchmarks
+            lmdbBenchmark.singleStateUpdate_FileBased();
+            lmdbBenchmark.singleStateUpdate_LMDB();
+            lmdbBenchmark.stateRead_FileBased();
+            lmdbBenchmark.stateRead_LMDB();
+        } finally {
+            lmdbBenchmark.tearDown();
+        }
     }
 }

@@ -292,7 +292,7 @@ public abstract class Actor<Message> {
             this.mailboxProcessor = new DispatcherMailboxProcessor<>(
                 this.actorId,
                 effectiveMailboxConfig.getMailboxType(),
-                effectiveMailboxConfig.getMaxCapacity(),
+                effectiveMailboxConfig.getInitialCapacity(),
                 effectiveMailboxConfig.getOverflowStrategy(),
                 effectiveMailboxConfig.getThroughput(),
                 this::handleException,

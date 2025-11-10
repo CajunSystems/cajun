@@ -117,7 +117,7 @@ public class ChronicleMapPersistenceProvider implements PersistenceProvider {
 
 ## 2. Threading and Scheduling Optimizations
 
-### Current State Analysis
+### Threading Current State Analysis
 
 The current threading implementation is well-designed but has optimization opportunities:
 
@@ -204,7 +204,7 @@ public class ReactiveMailbox<T> {
 
 ## 3. Actor Passivation and Activation
 
-### Current State Analysis
+### Passivation Current State Analysis
 
 **Current Gap**: No passivation mechanism exists
 
