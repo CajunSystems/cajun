@@ -74,11 +74,13 @@ jmh {
 
 tasks.withType(JavaExec) {
     jvmArgs += '--enable-preview'
+    jvmArgs += '--add-opens=java.base/java.nio=ALL-UNNAMED'
+    jvmArgs += '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED'
 }
 
 // Ensure JMH bytecode generator also uses preview features
 tasks.named('jmhRunBytecodeGenerator') {
-    jvmArgs = ['--enable-preview']
+    jvmArgs = ['--enable-preview', '--add-opens=java.base/java.nio=ALL-UNNAMED', '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED']
 }
 
 // Custom task to run benchmarks with quick settings for development
@@ -91,7 +93,7 @@ tasks.register('jmhQuick') {
             classpath = sourceSets.jmh.runtimeClasspath
             mainClass = 'org.openjdk.jmh.Main'
             args = ['-wi', '1', '-i', '2', '-f', '1']
-            jvmArgs = ['--enable-preview']
+            jvmArgs = ['--enable-preview', '--add-opens=java.base/java.nio=ALL-UNNAMED', '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED']
         }
     }
 }

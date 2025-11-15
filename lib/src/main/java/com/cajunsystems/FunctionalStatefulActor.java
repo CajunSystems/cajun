@@ -4,8 +4,9 @@ package com.cajunsystems;
 import com.cajunsystems.metrics.ActorMetrics;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
+import com.cajunsystems.persistence.PersistenceProvider;
+import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import com.cajunsystems.persistence.SnapshotStore;
-import com.cajunsystems.runtime.persistence.PersistenceFactory;
 
 import java.util.function.BiFunction;
 
@@ -101,9 +102,11 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
             S[] initialStates,
             BiFunction<S, M, S>[] actions
     ) {
+        // Use default filesystem persistence provider via registry
+        PersistenceProvider provider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         return createChain(system, baseId, count, initialStates, actions, 
-                          PersistenceFactory.createBatchedFileMessageJournal(),
-                          PersistenceFactory.createFileSnapshotStore());
+                          provider.createBatchedMessageJournal(baseId),
+                          provider.createSnapshotStore(baseId));
     }
     
     /**
@@ -177,8 +180,10 @@ public record FunctionalStatefulActor<State, Message extends OperationAwareMessa
             S initialState,
             BiFunction<S, M, S> action
     ) {
+        // Use default filesystem persistence provider via registry
+        PersistenceProvider provider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         return register(system, actorId, initialState, action, 
-                       PersistenceFactory.createBatchedFileMessageJournal(),
-                       PersistenceFactory.createFileSnapshotStore());
+                       provider.createBatchedMessageJournal(actorId),
+                       provider.createSnapshotStore(actorId));
     }
 }

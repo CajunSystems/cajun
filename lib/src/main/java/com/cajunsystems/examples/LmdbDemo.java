@@ -5,7 +5,7 @@ import com.cajunsystems.persistence.MessageJournal;
 import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.impl.LmdbPersistenceProvider;
-import com.cajunsystems.runtime.persistence.LmdbConfig;
+import com.cajunsystems.persistence.runtime.persistence.LmdbConfig;
 
 import java.nio.file.Path;
 import java.util.List;

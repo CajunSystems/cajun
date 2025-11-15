@@ -19,8 +19,9 @@ import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
+import com.cajunsystems.persistence.PersistenceProvider;
+import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import com.cajunsystems.persistence.SnapshotStore;
-import com.cajunsystems.runtime.persistence.PersistenceFactory;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.backpressure.BackpressureStrategy;
 import org.slf4j.Logger;
@@ -158,10 +159,11 @@ public class StatefulActorExample {
         logger.info("Starting file-based counter example");
         
         // Create a file-based message journal and snapshot store
+        PersistenceProvider provider = PersistenceProviderRegistry.getInstance().getDefaultProvider();
         BatchedMessageJournal<CounterMessage> messageJournal =
-                PersistenceFactory.createBatchedFileMessageJournal(persistenceDir + "/journal");
+                provider.createBatchedMessageJournal(persistenceDir + "/journal");
         SnapshotStore<Integer> snapshotStore =
-                PersistenceFactory.createFileSnapshotStore(persistenceDir + "/snapshots");
+                provider.createSnapshotStore(persistenceDir + "/snapshots");
         
         // Create a counter actor with file-based persistence using the interface-based approach
         Pid counterPid = system.statefulActorOf(CounterHandler.class, 0)

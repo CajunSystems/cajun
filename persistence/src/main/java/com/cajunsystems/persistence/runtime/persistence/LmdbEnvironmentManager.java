@@ -1,13 +1,17 @@
-package com.cajunsystems.runtime.persistence;
+package com.cajunsystems.persistence.runtime.persistence;
 
+import org.lmdbjava.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  * LMDB Environment Manager - Production Implementation.
@@ -27,7 +31,8 @@ public class LmdbEnvironmentManager implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(LmdbEnvironmentManager.class);
     
     private final LmdbConfig config;
-    private final ConcurrentHashMap<String, Object> databases = new ConcurrentHashMap<>();
+    private final Env<ByteBuffer> environment;
+    private final ConcurrentHashMap<String, Dbi<ByteBuffer>> databases = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     
@@ -55,43 +60,39 @@ public class LmdbEnvironmentManager implements AutoCloseable {
             java.nio.file.Files.createDirectories(dbPath);
         }
         
+        // Create real LMDB environment
+        this.environment = createEnvironment();
         logger.info("LMDB Environment Manager initialized: {}", config);
+    }
+    
+    private Env<ByteBuffer> createEnvironment() {
+        Env.Builder<ByteBuffer> builder = Env.create()
+                .setMapSize(config.getMapSize())
+                .setMaxDbs(config.getMaxDatabases())
+                .setMaxReaders(config.getMaxReaders());
+        
+        return builder.open(config.getDbPath().toFile());
     }
     
     /**
      * Get or create a database handle.
      */
-    public Object getDatabase(String name) {
+    public Dbi<ByteBuffer> getDatabase(String name) {
         lock.readLock().lock();
         try {
             if (closed.get()) {
                 throw new IllegalStateException("Environment manager is closed");
             }
             
-            return databases.computeIfAbsent(name, dbName -> {
-                lock.readLock().unlock();
-                lock.writeLock().lock();
-                try {
-                    if (closed.get()) {
-                        throw new IllegalStateException("Environment manager is closed");
-                    }
-                    Object db = createDatabase(dbName);
-                    logger.debug("Opened LMDB database: {}", dbName);
-                    return db;
-                } finally {
-                    lock.writeLock().unlock();
-                    lock.readLock().lock();
-                }
-            });
+            return databases.computeIfAbsent(name, this::createDatabase);
         } finally {
             lock.readLock().unlock();
         }
     }
     
-    private Object createDatabase(String name) {
-        // Database creation with configuration (simulated for now)
-        databases.put(name, new Object()); // Placeholder for LMDB database
-        return databases.get(name);
+    private Dbi<ByteBuffer> createDatabase(String name) {
+        // Create real LMDB database with configuration
+        return environment.openDbi(name);
     }
     
     /**
@@ -99,14 +100,15 @@ public class LmdbEnvironmentManager implements AutoCloseable {
      */
     public <T> T readTransaction(TransactionCallback<T> callback) {
         lock.readLock().lock();
-        try {
+        try (Txn<ByteBuffer> txn = environment.txnRead()) {
             if (closed.get()) {
                 throw new IllegalStateException("Environment manager is closed");
             }
             
-            // Simulated transaction (would be real LMDB transaction in production)
-            T result = callback.execute(null);
+            // Real LMDB read transaction
+            T result = callback.execute(txn);
             readOperations++;
+            transactionCount++;
             return result;
         } catch (Exception e) {
             logger.error("Read transaction failed", e);
@@ -121,13 +123,14 @@ public class LmdbEnvironmentManager implements AutoCloseable {
      */
     public <T> T writeTransaction(TransactionCallback<T> callback) {
         lock.readLock().lock();
-        try {
+        try (Txn<ByteBuffer> txn = environment.txnWrite()) {
             if (closed.get()) {
                 throw new IllegalStateException("Environment manager is closed");
             }
             
-            // Simulated transaction (would be real LMDB transaction in production)
-            T result = callback.execute(null);
+            // Real LMDB write transaction
+            T result = callback.execute(txn);
+            txn.commit();
             writeOperations++;
             transactionCount++;
             return result;
@@ -174,7 +177,8 @@ public class LmdbEnvironmentManager implements AutoCloseable {
             if (closed.get()) {
                 throw new IllegalStateException("Environment manager is closed");
             }
-            // Simulated sync (currently using in-memory storage, would be real LMDB sync in production)
+            // Real LMDB sync to disk (force=true)
+            environment.sync(true);
             logger.debug("LMDB environment synced to disk");
         } finally {
             lock.readLock().unlock();
@@ -190,7 +194,8 @@ public class LmdbEnvironmentManager implements AutoCloseable {
             if (closed.get()) {
                 throw new IllegalStateException("Environment manager is closed");
             }
-            // Simulated stats (would be real LMDB stats in production)
+            // Real LMDB stats
+            EnvInfo info = environment.info();
             return new EnvStats(databases.size(), transactionCount, totalBytesRead, totalBytesWritten);
         } finally {
             lock.readLock().unlock();
@@ -236,6 +241,11 @@ public class LmdbEnvironmentManager implements AutoCloseable {
             // Close all databases
             databases.clear();
             
+            // Close the real LMDB environment
+            if (environment != null) {
+                environment.close();
+            }
+            
             logger.info("LMDB environment manager closed. Final metrics: {}", getMetrics());
         } finally {
             lock.writeLock().unlock();
@@ -247,7 +257,7 @@ public class LmdbEnvironmentManager implements AutoCloseable {
      */
     @FunctionalInterface
     public interface TransactionCallback<T> {
-        T execute(Object txn) throws Exception;
+        T execute(Txn<ByteBuffer> txn) throws Exception;
     }
     
     /**

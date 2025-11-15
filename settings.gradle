@@ -14,3 +14,4 @@ rootProject.name = 'cajun'
 include('lib')
 include('test-utils')
 include('benchmarks')
+include('persistence')

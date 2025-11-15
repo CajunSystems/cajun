@@ -42,8 +42,8 @@ dependencies {
     // JCTools for high-performance lock-free queues
     implementation libs.jctools
     
-    // Phase 2: LMDB Java bindings for production-ready persistence
-    implementation 'org.lmdbjava:lmdbjava:0.8.2'
+    // Persistence interfaces and implementations
+    api project(':persistence')
 
     // Use JUnit Jupiter for testing.
     testImplementation libs.junit.jupiter
@@ -56,12 +56,6 @@ dependencies {
     testImplementation project(':test-utils')
 
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-
-    // This dependency is exported to consumers, that is to say found on their compile classpath.
-    api libs.commons.math3
-
-    // This dependency is used internally, and not exposed to consumers on their own compile classpath.
-    implementation libs.guava
 }
 
 // Apply a specific Java toolchain to ease working on different environments.

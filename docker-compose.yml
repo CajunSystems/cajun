@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Flexible benchmark runner - can run any benchmark
+  benchmark-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64  # Use x86_64 architecture to avoid ARM64 native library issues
+    container_name: cajun-benchmark-runner
+    volumes:
+      - ./benchmark-results:/app/results  # Mount local directory for results
+      - /tmp/lmdb-benchmark:/tmp/lmdb-benchmark  # LMDB temporary directory
+    environment:
+      - TMPDIR=/tmp/lmdb-benchmark
+    # Default command - can be overridden with custom parameters
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "-h"]
+    profiles:
+      - runner  # Use profile to control when to run
+
+  # LMDB specific benchmarks
+  lmdb-benchmark:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "LmdbStatefulBenchmark", "-rf", "json", "-rff", "/app/results/lmdb_benchmark_results.json"]
+    profiles:
+      - lmdb
+
+  # Quick LMDB benchmarks
+  lmdb-benchmark-quick:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "LmdbStatefulBenchmark", "-wi", "1", "-i", "2", "-f", "1", "-rf", "json", "-rff", "/app/results/lmdb_benchmark_quick.json"]
+    profiles:
+      - quick
+
+  # All benchmarks
+  all-benchmarks:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", ".*", "-rf", "json", "-rff", "/app/results/all_benchmarks.json"]
+    profiles:
+      - all
+
+  # Lightweight stateful benchmarks
+  lightweight-benchmark:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "LightweightStatefulBenchmark", "-rf", "json", "-rff", "/app/results/lightweight_benchmark.json"]
+    profiles:
+      - lightweight
+
+  # Actor benchmarks
+  actor-benchmark:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "ActorBenchmark", "-rf", "json", "-rff", "/app/results/actor_benchmark.json"]
+    profiles:
+      - actor
+
+  # Mailbox benchmarks
+  mailbox-benchmark:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "MailboxTypeBenchmark", "-rf", "json", "-rff", "/app/results/mailbox_benchmark.json"]
+    profiles:
+      - mailbox
+
+  # Filesystem vs LMDB comparison benchmarks
+  persistence-comparison:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "OptimizedFileStatefulBenchmark", "-rf", "json", "-rff", "/app/results/persistence_comparison.json"]
+    profiles:
+      - persistence
+
+  # Quick persistence comparison (reduced operations)
+  persistence-comparison-quick:
+    extends: benchmark-runner
+    command: ["java", "--enable-preview", "--add-opens=java.base/java.nio=ALL-UNNAMED", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED", "-jar", "benchmarks/benchmarks-jmh.jar", "OptimizedFileStatefulBenchmark.singleStateUpdate", "-rf", "json", "-rff", "/app/results/persistence_comparison_quick.json"]
+    profiles:
+      - persistence-quick

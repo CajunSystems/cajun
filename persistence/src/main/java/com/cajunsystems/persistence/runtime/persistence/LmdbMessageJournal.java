@@ -1,24 +1,29 @@
-package com.cajunsystems.runtime.persistence;
+package com.cajunsystems.persistence.runtime.persistence;
 
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.MessageJournal;
+import org.lmdbjava.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 /**
  * LMDB Message Journal - Production Implementation.
  * 
  * This implementation provides a high-performance, persistent message journal
- * with enhanced configuration, metrics, and error handling. Currently uses a simplified
- * in-memory storage for demonstration, but the architecture is ready for real LMDB integration.
+ * using real LMDB for durable storage with zero-copy memory-mapped operations.
  * 
  * Features:
+ * - Real LMDB persistence with ACID transactions
  * - Async operations with CompletableFuture
  * - Comprehensive metrics collection
  * - Enhanced error handling and retry logic
@@ -30,21 +35,19 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     private static final Logger logger = LoggerFactory.getLogger(LmdbMessageJournal.class);
     
     private final LmdbEnvironmentManager envManager;
-    private final String actorId;
-    private final AtomicLong sequenceCounter = new AtomicLong(0);
-    private final LmdbConfig config;
-    
-    // Serialization
+    private final Dbi<ByteBuffer> journalDb;
     private final Serializer<M> serializer;
+    private final LmdbConfig config;
+    private final String actorId;
     
-    // In-memory storage for demonstration
-    private final List<JournalEntry<M>> entries = new ArrayList<>();
-    
-    // Metrics
+    // In-memory cache for sequence tracking
+    private final AtomicLong sequenceCounter = new AtomicLong(0);
     private volatile long appendCount = 0;
     private volatile long readCount = 0;
     private volatile long truncateCount = 0;
-    
+    private volatile long highestSequence = 0;
+    private volatile long currentSize = 0;
+
     /**
      * Creates a new LMDB message journal for the specified actor.
      *
@@ -55,9 +58,30 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
         this.actorId = actorId;
         this.envManager = envManager;
         this.config = envManager.getConfig();
+        this.journalDb = envManager.getDatabase("journal_" + actorId);
         this.serializer = createSerializer();
         
+        // Initialize sequence counter from existing data
+        initializeSequenceCounter();
+        
         logger.info("LMDB Message Journal initialized for actor: {} with config: {}", actorId, config);
+    }
+    
+    private void initializeSequenceCounter() {
+        try {
+            Long lastSeq = envManager.readTransaction(txn -> {
+                ByteBuffer key = bytesToBuffer("last_sequence");
+                ByteBuffer value = journalDb.get(txn, key);
+                if (value != null) {
+                    return value.getLong();
+                }
+                return 0L;
+            });
+            sequenceCounter.set(lastSeq);
+            highestSequence = lastSeq;
+        } catch (Exception e) {
+            logger.warn("Failed to initialize sequence counter for actor: {}, starting from 0", actorId, e);
+        }
     }
     
     private Serializer<M> createSerializer() {
@@ -67,6 +91,19 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
         };
     }
     
+    private ByteBuffer bytesToBuffer(String str) {
+        byte[] bytes = str.getBytes(UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocateDirect(bytes.length);
+        buffer.put(bytes).flip();
+        return buffer;
+    }
+    
+    private ByteBuffer bytesToBuffer(byte[] bytes) {
+        ByteBuffer buffer = ByteBuffer.allocateDirect(bytes.length);
+        buffer.put(bytes).flip();
+        return buffer;
+    }
+    
     @Override
     public CompletableFuture<Long> append(String actorId, M message) {
         return CompletableFuture.supplyAsync(() -> {
@@ -74,30 +111,38 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
                 long sequence = sequenceCounter.incrementAndGet();
                 JournalEntry<M> entry = new JournalEntry<>(sequence, actorId, message, java.time.Instant.now());
                 
-                // Enhanced serialization with metrics
-                byte[] messageBytes = serializer.serialize(entry.getMessage());
+                // Serialize the journal entry
+                byte[] entryBytes = serializer.serialize(entry.getMessage());
                 
-                // Simulate LMDB storage (in production, this would be real LMDB)
-                synchronized (entries) {
-                    entries.add(entry);
-                }
+                // Store in real LMDB
+                envManager.writeTransaction(txn -> {
+                    // Store the message with sequence as key
+                    ByteBuffer key = ByteBuffer.allocateDirect(8);
+                    key.putLong(sequence).flip();
+                    
+                    ByteBuffer value = bytesToBuffer(entryBytes);
+                    journalDb.put(txn, key, value);
+                    
+                    // Update last sequence counter
+                    ByteBuffer seqKey = bytesToBuffer("last_sequence");
+                    ByteBuffer seqValue = ByteBuffer.allocateDirect(8);
+                    seqValue.putLong(sequence).flip();
+                    journalDb.put(txn, seqKey, seqValue);
+                    
+                    return null;
+                });
                 
+                // Update metrics
                 appendCount++;
-                envManager.updateByteCounters(0, messageBytes.length);
+                highestSequence = sequence;
+                currentSize += entryBytes.length;
                 
-                // Batch sync optimization
-                if (appendCount % config.getBatchSize() == 0) {
-                    envManager.sync();
-                }
-                
-                logger.debug("Appended message for actor {} with sequence {} (total: {})", 
-                           actorId, sequence, appendCount);
-                
+                logger.debug("Appended entry {} for actor {} (size: {} bytes)", sequence, actorId, entryBytes.length);
                 return sequence;
                 
             } catch (Exception e) {
                 logger.error("Failed to append message for actor: {}", actorId, e);
-                throw new RuntimeException("Failed to append message", e);
+                throw new RuntimeException("Append failed", e);
             }
         });
     }
@@ -108,36 +153,33 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
             try {
                 List<JournalEntry<M>> result = new ArrayList<>();
                 
-                synchronized (entries) {
-                    for (JournalEntry<M> entry : entries) {
-                        if (entry.getSequenceNumber() >= sequenceNumber) {
-                            result.add(entry);
+                // Read from real LMDB
+                envManager.readTransaction(txn -> {
+                    // Create cursor for iteration
+                    try (Cursor<ByteBuffer> cursor = journalDb.openCursor(txn)) {
+                        while (cursor.next()) {
+                            ByteBuffer key = cursor.key();
+                            long seq = key.getLong();
+                            if (seq >= sequenceNumber) {
+                                ByteBuffer value = cursor.val();
+                                byte[] messageBytes = new byte[value.remaining()];
+                                value.get(messageBytes);
+                                M message = serializer.deserialize(messageBytes);
+                                JournalEntry<M> entry = new JournalEntry<>(seq, actorId, message, java.time.Instant.now());
+                                result.add(entry);
+                            }
                         }
                     }
-                }
+                    return null;
+                });
                 
                 readCount++;
-                
-                // Enhanced metrics tracking
-                long totalBytes = result.stream()
-                    .mapToLong(entry -> {
-                        try {
-                            return serializer.serialize(entry.getMessage()).length;
-                        } catch (IOException e) {
-                            return 0;
-                        }
-                    })
-                    .sum();
-                envManager.updateByteCounters(totalBytes, 0);
-                
-                logger.debug("Read {} messages for actor {} from sequence {} (total reads: {})", 
-                           result.size(), actorId, sequenceNumber, readCount);
-                
+                logger.debug("Read {} entries from sequence {} for actor {}", result.size(), sequenceNumber, actorId);
                 return result;
                 
             } catch (Exception e) {
-                logger.error("Failed to read messages from sequence {} for actor: {}", sequenceNumber, actorId, e);
-                throw new RuntimeException("Failed to read messages for actor: " + actorId, e);
+                logger.error("Failed to read messages for actor: {} from sequence: {}", actorId, sequenceNumber, e);
+                throw new RuntimeException("Read failed", e);
             }
         });
     }
@@ -146,28 +188,34 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     public CompletableFuture<Void> truncateBefore(String actorId, long sequenceNumber) {
         return CompletableFuture.runAsync(() -> {
             try {
-                int removedCount = 0;
-                
-                synchronized (entries) {
-                    var iterator = entries.iterator();
-                    while (iterator.hasNext()) {
-                        JournalEntry<M> entry = iterator.next();
-                        if (entry.getSequenceNumber() < sequenceNumber) {
-                            iterator.remove();
-                            removedCount++;
+                // Truncate in real LMDB
+                envManager.writeTransaction(txn -> {
+                    // Delete entries with sequence < sequenceNumber
+                    try (Cursor<ByteBuffer> cursor = journalDb.openCursor(txn)) {
+                        List<ByteBuffer> keysToDelete = new ArrayList<>();
+                        
+                        while (cursor.next()) {
+                            ByteBuffer key = cursor.key();
+                            long seq = key.getLong();
+                            if (seq < sequenceNumber) {
+                                keysToDelete.add(key);
+                            }
+                        }
+                        
+                        // Delete found keys
+                        for (ByteBuffer key : keysToDelete) {
+                            cursor.delete();
                         }
                     }
-                }
+                    return null;
+                });
                 
                 truncateCount++;
-                
-                logger.debug("Truncated {} entries before sequence {} for actor {} (total truncates: {})", 
-                            removedCount, sequenceNumber, actorId, truncateCount);
+                logger.debug("Truncated entries before sequence {} for actor {}", sequenceNumber, actorId);
                 
             } catch (Exception e) {
-                logger.error("Failed to truncate messages before sequence {} for actor: {}", 
-                            sequenceNumber, actorId, e);
-                throw new RuntimeException("Failed to truncate messages for actor: " + actorId, e);
+                logger.error("Failed to truncate messages for actor: {} before sequence: {}", actorId, sequenceNumber, e);
+                throw new RuntimeException("Truncate failed", e);
             }
         });
     }
@@ -175,9 +223,7 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     @Override
     public CompletableFuture<Long> getHighestSequenceNumber(String actorId) {
         return CompletableFuture.supplyAsync(() -> {
-            synchronized (entries) {
-                return entries.isEmpty() ? -1 : entries.get(entries.size() - 1).getSequenceNumber();
-            }
+            return highestSequence;
         });
     }
     
@@ -186,19 +232,14 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
         logger.info("Closing LMDB Message Journal for actor: {}. Final metrics: append={}, read={}, truncate={}", 
                    actorId, appendCount, readCount, truncateCount);
         
-        // Enhanced cleanup
-        synchronized (entries) {
-            entries.clear();
-        }
+        // No additional cleanup needed - LMDB environment is managed by envManager
     }
     
     /**
      * Get comprehensive journal metrics.
      */
     public JournalMetrics getMetrics() {
-        synchronized (entries) {
-            return new JournalMetrics(appendCount, readCount, truncateCount, sequenceCounter.get(), entries.size());
-        }
+        return new JournalMetrics(appendCount, readCount, truncateCount, sequenceCounter.get(), -1);
     }
     
     /**

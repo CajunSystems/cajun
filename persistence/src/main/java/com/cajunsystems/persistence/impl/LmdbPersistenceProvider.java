@@ -5,9 +5,9 @@ import com.cajunsystems.persistence.MessageJournal;
 import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;
-import com.cajunsystems.runtime.persistence.LmdbConfig;
-import com.cajunsystems.runtime.persistence.LmdbEnvironmentManager;
-import com.cajunsystems.runtime.persistence.LmdbMessageJournal;
+import com.cajunsystems.persistence.runtime.persistence.LmdbConfig;
+import com.cajunsystems.persistence.runtime.persistence.LmdbEnvironmentManager;
+import com.cajunsystems.persistence.runtime.persistence.LmdbMessageJournal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

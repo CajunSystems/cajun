@@ -1,7 +1,7 @@
 package com.cajunsystems.benchmarks.stateful;
 
 import com.cajunsystems.persistence.impl.LmdbPersistenceProvider;
-import com.cajunsystems.runtime.persistence.LmdbConfig;
+import com.cajunsystems.persistence.runtime.persistence.LmdbConfig;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.slf4j.Logger;
