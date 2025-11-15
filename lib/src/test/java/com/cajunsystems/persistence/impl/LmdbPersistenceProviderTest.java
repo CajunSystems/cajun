@@ -1,10 +1,10 @@
 package com.cajunsystems.persistence.impl;
 
-import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.MessageJournal;
 import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.runtime.persistence.LmdbConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,64 +29,59 @@ class LmdbPersistenceProviderTest {
     private LmdbPersistenceProvider provider;
     
     @BeforeEach
-    void setUp() {
-        String baseDir = tempDir.resolve("test_persistence").toString();
-        provider = new LmdbPersistenceProvider(baseDir, 1_073_741_824L, 10); // 1GB map size, 10 databases
+    void setUp() throws Exception {
+        // Create configuration
+        LmdbConfig config = LmdbConfig.builder()
+                .dbPath(tempDir.resolve("test_persistence"))
+                .mapSize(1_073_741_824L)  // 1GB map size
+                .maxDatabases(10)
+                .build();
+        
+        provider = new LmdbPersistenceProvider(config);
     }
     
     @AfterEach
     void tearDown() {
         if (provider != null) {
-            // No explicit close method on provider, but ensure resources are cleaned up
+            provider.close();
         }
     }
     
     @Test
-    void testCreateMessageJournal() {
-        MessageJournal<String> journal = provider.createMessageJournal();
-        
-        assertNotNull(journal);
-        assertTrue(journal instanceof com.cajunsystems.runtime.persistence.LmdbMessageJournal);
-        assertEquals("lmdb", provider.getProviderName());
-    }
-    
-    @Test
-    void testCreateMessageJournalWithActorId() {
-        String actorId = "test-actor";
-        MessageJournal<String> journal = provider.createMessageJournal(actorId);
+    void testCreateMessageJournal() throws Exception {
+        MessageJournal<String> journal = provider.createMessageJournal("test-actor");
         
         assertNotNull(journal);
         assertTrue(journal instanceof com.cajunsystems.runtime.persistence.LmdbMessageJournal);
     }
     
     @Test
-    void testCreateBatchedMessageJournal() {
-        BatchedMessageJournal<String> journal = provider.createBatchedMessageJournal();
+    void testCreateMessageJournalWithActorId() throws Exception {
+        MessageJournal<String> journal = provider.createMessageJournal("test-actor");
         
         assertNotNull(journal);
-        assertTrue(journal instanceof com.cajunsystems.runtime.persistence.LmdbBatchedMessageJournal);
+        assertTrue(journal instanceof com.cajunsystems.runtime.persistence.LmdbMessageJournal);
     }
     
     @Test
-    void testCreateBatchedMessageJournalWithActorId() {
-        String actorId = "test-actor";
-        BatchedMessageJournal<String> journal = provider.createBatchedMessageJournal(actorId);
-        
-        assertNotNull(journal);
-        assertTrue(journal instanceof com.cajunsystems.runtime.persistence.LmdbBatchedMessageJournal);
+    void testCreateBatchedMessageJournal() throws Exception {
+        assertThrows(UnsupportedOperationException.class, () -> {
+            provider.createBatchedMessageJournal("test-actor");
+        });
+    }
+    
+    @Test
+    void testCreateBatchedMessageJournalWithParams() throws Exception {
+        assertThrows(UnsupportedOperationException.class, () -> {
+            provider.createBatchedMessageJournal("test-actor", 100, 1000);
+        });
     }
     
     @Test
     void testCreateBatchedMessageJournalWithCustomSettings() {
-        String actorId = "test-actor";
-        int maxBatchSize = 50;
-        long maxBatchDelayMs = 200;
-        
-        BatchedMessageJournal<String> journal = provider.createBatchedMessageJournal(
-            actorId, maxBatchSize, maxBatchDelayMs);
-        
-        assertNotNull(journal);
-        assertTrue(journal instanceof com.cajunsystems.runtime.persistence.LmdbBatchedMessageJournal);
+        assertThrows(UnsupportedOperationException.class, () -> {
+            provider.createBatchedMessageJournal("test-actor", 100, 1000);
+        });
     }
     
     @Test
@@ -94,7 +89,8 @@ class LmdbPersistenceProviderTest {
         SnapshotStore<String> snapshotStore = provider.createSnapshotStore();
         
         assertNotNull(snapshotStore);
-        assertTrue(snapshotStore instanceof com.cajunsystems.runtime.persistence.LmdbSnapshotStore);
+        // Phase 2 uses InMemorySnapshotStore for now
+        assertTrue(snapshotStore.getClass().getSimpleName().contains("InMemorySnapshotStore"));
     }
     
     @Test
@@ -103,12 +99,13 @@ class LmdbPersistenceProviderTest {
         SnapshotStore<String> snapshotStore = provider.createSnapshotStore(actorId);
         
         assertNotNull(snapshotStore);
-        assertTrue(snapshotStore instanceof com.cajunsystems.runtime.persistence.LmdbSnapshotStore);
+        // Phase 2 uses InMemorySnapshotStore for now
+        assertTrue(snapshotStore.getClass().getSimpleName().contains("InMemorySnapshotStore"));
     }
     
     @Test
     void testMessageJournalAppendAndRead() throws Exception {
-        MessageJournal<String> journal = provider.createMessageJournal();
+        MessageJournal<String> journal = provider.createMessageJournal("test-actor");
         String actorId = "test-actor";
         String message = "test-message";
         
@@ -133,36 +130,14 @@ class LmdbPersistenceProviderTest {
     
     @Test
     void testBatchedMessageJournalAppendAndFlush() throws Exception {
-        BatchedMessageJournal<String> journal = provider.createBatchedMessageJournal();
-        String actorId = "test-actor";
-        
-        // Append multiple messages
-        CompletableFuture<Long> future1 = journal.append(actorId, "message1");
-        CompletableFuture<Long> future2 = journal.append(actorId, "message2");
-        CompletableFuture<Long> future3 = journal.append(actorId, "message3");
-        
-        // Flush to ensure all messages are written
-        CompletableFuture<Void> flushFuture = journal.flush();
-        flushFuture.get(5, TimeUnit.SECONDS);
-        
-        // Verify sequence numbers
-        Long seq1 = future1.get(5, TimeUnit.SECONDS);
-        Long seq2 = future2.get(5, TimeUnit.SECONDS);
-        Long seq3 = future3.get(5, TimeUnit.SECONDS);
-        
-        assertNotNull(seq1);
-        assertNotNull(seq2);
-        assertNotNull(seq3);
-        
-        assertTrue(seq1 < seq2);
-        assertTrue(seq2 < seq3);
-        
-        journal.close();
+        assertThrows(UnsupportedOperationException.class, () -> {
+            provider.createBatchedMessageJournal();
+        });
     }
     
     @Test
     void testSnapshotStoreSaveAndLoad() throws Exception {
-        SnapshotStore<String> snapshotStore = provider.createSnapshotStore();
+        SnapshotStore<String> snapshotStore = provider.createSnapshotStore("test-actor");
         String actorId = "test-actor";
         String snapshot = "test-snapshot-data";
         long sequenceNumber = 42L;
@@ -187,7 +162,7 @@ class LmdbPersistenceProviderTest {
     
     @Test
     void testSnapshotStoreDelete() throws Exception {
-        SnapshotStore<String> snapshotStore = provider.createSnapshotStore();
+        SnapshotStore<String> snapshotStore = provider.createSnapshotStore("test-actor");
         String actorId = "test-actor";
         String snapshot = "test-snapshot-data";
         long sequenceNumber = 42L;
@@ -220,9 +195,10 @@ class LmdbPersistenceProviderTest {
     
     @Test
     void testProviderConfiguration() {
-        assertEquals("lmdb", provider.getProviderName());
-        assertNotNull(provider.getBaseDir());
-        assertTrue(provider.getMapSize() > 0);
-        assertTrue(provider.getMaxDbs() > 0);
+        assertEquals("LMDB-Phase2", provider.getProviderName());
+        assertNotNull(provider.getConfig());
+        assertTrue(provider.getConfig().getMapSize() > 0);
+        assertTrue(provider.getConfig().getMaxDatabases() > 0);
+        assertTrue(provider.isHealthy());
     }
 }

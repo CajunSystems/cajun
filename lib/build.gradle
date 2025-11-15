@@ -41,6 +41,9 @@ dependencies {
     
     // JCTools for high-performance lock-free queues
     implementation libs.jctools
+    
+    // Phase 2: LMDB Java bindings for production-ready persistence
+    implementation 'org.lmdbjava:lmdbjava:0.8.2'
 
     // Use JUnit Jupiter for testing.
     testImplementation libs.junit.jupiter

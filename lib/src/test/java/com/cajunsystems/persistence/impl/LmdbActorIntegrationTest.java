@@ -2,6 +2,7 @@ package com.cajunsystems.persistence.impl;
 
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.SnapshotEntry;
+import com.cajunsystems.runtime.persistence.LmdbConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Integration test for LMDB persistence functionality.
- * Demonstrates the Phase 1 LMDB implementation working with message journaling and snapshots.
+ * Demonstrates the LMDB implementation working with message journaling and snapshots.
  */
 class LmdbActorIntegrationTest {
     
@@ -28,14 +29,22 @@ class LmdbActorIntegrationTest {
     private LmdbPersistenceProvider persistenceProvider;
     
     @BeforeEach
-    void setUp() {
-        String baseDir = tempDir.resolve("test_persistence").toString();
-        persistenceProvider = new LmdbPersistenceProvider(baseDir, 1_073_741_824L, 10);
+    void setUp() throws Exception {
+        // Create configuration
+        LmdbConfig config = LmdbConfig.builder()
+                .dbPath(tempDir.resolve("test_persistence"))
+                .mapSize(1_073_741_824L)  // 1GB map size
+                .maxDatabases(10)
+                .build();
+        
+        persistenceProvider = new LmdbPersistenceProvider(config);
     }
     
     @AfterEach
     void tearDown() {
-        // Provider cleanup is handled by individual components
+        if (persistenceProvider != null) {
+            persistenceProvider.close();
+        }
     }
     
     @Test
@@ -226,14 +235,14 @@ class LmdbActorIntegrationTest {
     @Test
     void testLmdbProviderConfiguration() {
         assertTrue(persistenceProvider.isHealthy());
-        assertEquals("lmdb", persistenceProvider.getProviderName());
-        assertNotNull(persistenceProvider.getBaseDir());
-        assertTrue(persistenceProvider.getMapSize() > 0);
-        assertTrue(persistenceProvider.getMaxDbs() > 0);
+        assertEquals("LMDB-Phase2", persistenceProvider.getProviderName());
+        assertNotNull(persistenceProvider.getConfig());
+        assertTrue(persistenceProvider.getConfig().getMapSize() > 0);
+        assertTrue(persistenceProvider.getConfig().getMaxDatabases() > 0);
         
         System.out.println("LMDB Provider Configuration:");
-        System.out.println("  Base Directory: " + persistenceProvider.getBaseDir());
-        System.out.println("  Map Size: " + persistenceProvider.getMapSize() + " bytes");
-        System.out.println("  Max Databases: " + persistenceProvider.getMaxDbs());
+        System.out.println("  Base Directory: " + persistenceProvider.getConfig().getDbPath());
+        System.out.println("  Map Size: " + persistenceProvider.getConfig().getMapSize() + " bytes");
+        System.out.println("  Max Databases: " + persistenceProvider.getConfig().getMaxDatabases());
     }
 }

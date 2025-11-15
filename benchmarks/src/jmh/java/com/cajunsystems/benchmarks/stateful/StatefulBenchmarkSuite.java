@@ -100,10 +100,10 @@ public class StatefulBenchmarkSuite {
         
         try {
             // Run a representative sample of LMDB benchmarks
-            lmdbBenchmark.singleStateUpdate_FileBased();
-            lmdbBenchmark.singleStateUpdate_LMDB();
-            lmdbBenchmark.stateRead_FileBased();
-            lmdbBenchmark.stateRead_LMDB();
+            lmdbBenchmark.benchmarkMessageJournalOperations();
+            lmdbBenchmark.benchmarkSnapshotStoreOperations();
+            lmdbBenchmark.benchmarkHealthCheck();
+            lmdbBenchmark.benchmarkSyncOperation();
         } finally {
             lmdbBenchmark.tearDown();
         }
