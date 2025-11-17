@@ -34,7 +34,10 @@ sourceSets {
 dependencies {
     // Core dependencies (abstract interfaces)
     api 'org.slf4j:slf4j-api:2.0.9'
-    
+
+    // High-performance data structures
+    api 'org.jctools:jctools-core:4.0.1'
+
     // Runtime implementation dependencies
     implementation "io.etcd:jetcd-core:0.7.6"
     implementation 'ch.qos.logback:logback-classic:1.4.11'
