@@ -7,6 +7,10 @@ import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.runtime.persistence.BatchedFileMessageJournal;
 import com.cajunsystems.persistence.runtime.persistence.FileMessageJournal;
 import com.cajunsystems.persistence.runtime.persistence.FileSnapshotStore;
+import com.cajunsystems.persistence.scavenger.PersistenceScavenger;
+import com.cajunsystems.persistence.scavenger.ScavengerConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -17,11 +21,13 @@ import java.nio.file.Paths;
  */
 public class FileSystemPersistenceProvider implements PersistenceProvider {
     
+    private static final Logger logger = LoggerFactory.getLogger(FileSystemPersistenceProvider.class);
     private static final String DEFAULT_BASE_DIR = "cajun_persistence";
     private static final String JOURNAL_DIR = "journal";
     private static final String SNAPSHOT_DIR = "snapshots";
     
     private final String baseDir;
+    private PersistenceScavenger scavenger;
     
     /**
      * Creates a new FileSystemPersistenceProvider with the default base directory.
@@ -93,5 +99,55 @@ public class FileSystemPersistenceProvider implements PersistenceProvider {
     @Override
     public boolean isHealthy() {
         return true;
+    }
+    
+    /**
+     * Enables the persistence scavenger for system-wide cleanup.
+     * 
+     * <p>The scavenger runs in the background, periodically cleaning up
+     * old journal entries and snapshots across all actors.
+     * 
+     * @param config the scavenger configuration
+     */
+    public void enableScavenger(ScavengerConfig config) {
+        if (scavenger != null) {
+            logger.warn("Scavenger already enabled");
+            return;
+        }
+        
+        Path basePath = Paths.get(baseDir);
+        SnapshotStore<?> snapshotStore = createSnapshotStore();
+        
+        scavenger = new PersistenceScavenger(basePath, snapshotStore, config);
+        scavenger.start();
+        
+        logger.info("Persistence scavenger enabled with config: {}", config);
+    }
+    
+    /**
+     * Disables the persistence scavenger if it's running.
+     */
+    public void disableScavenger() {
+        if (scavenger != null) {
+            scavenger.stop();
+            scavenger = null;
+            logger.info("Persistence scavenger disabled");
+        }
+    }
+    
+    /**
+     * Returns the scavenger if it's enabled.
+     * 
+     * @return the scavenger, or null if not enabled
+     */
+    public PersistenceScavenger getScavenger() {
+        return scavenger;
+    }
+    
+    /**
+     * Closes the persistence provider and stops the scavenger if running.
+     */
+    public void close() {
+        disableScavenger();
     }
 }

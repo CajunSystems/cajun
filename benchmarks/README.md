@@ -131,6 +131,36 @@ Direct comparison between filesystem-based and LMDB persistence for stateful act
 
 **Docker Recommended**: Filesystem benchmarks can create many temporary files. Use `./run-benchmark.sh persistence-quick` for a quick comparison or `./run-benchmark.sh persistence` for full analysis.
 
+### 8. Lightweight Stateful Benchmarks (`LightweightStatefulBenchmark.java`)
+
+Focused micro-benchmarks for stateful actors configured to minimize filesystem impact while still exercising snapshot- and journal-based persistence (with truncation enabled). These benchmarks are useful for understanding the overhead of state handling with very lightweight persistence settings.
+
+**Scenarios:**
+
+- `singleStateUpdate` – simple state increment on a single actor
+- `accumulatorUpdate` – integer accumulation in a stateful actor
+- `mixedOperations` – mix of updates and reads across multiple actors
+- `stateReset` – periodic reset of actor state (typically heavier work)
+
+**Sample quick-run results (Docker, 1 warmup / 2 measurement iterations, 1 fork, microsecond units):**
+
+```text
+Benchmark                                        Mode  Cnt     Score   Error   Units
+LightweightStatefulBenchmark.accumulatorUpdate  thrpt        134.263          ops/us
+LightweightStatefulBenchmark.mixedOperations    thrpt         25.185          ops/us
+LightweightStatefulBenchmark.singleStateUpdate  thrpt        153.249          ops/us
+LightweightStatefulBenchmark.accumulatorUpdate   avgt          0.007           us/op
+LightweightStatefulBenchmark.mixedOperations     avgt          0.033           us/op
+LightweightStatefulBenchmark.singleStateUpdate   avgt          0.009           us/op
+LightweightStatefulBenchmark.stateReset          avgt       1289.624           us/op
+```
+
+These numbers are illustrative for a single environment/run. For your own hardware and configuration, run:
+
+```bash
+./run-benchmark.sh custom LightweightStatefulBenchmark -wi 1 -i 2 -f 1 -t 1
+```
+
 ## Running Benchmarks
 
 ### Method 1: Direct JAR Execution (Recommended)

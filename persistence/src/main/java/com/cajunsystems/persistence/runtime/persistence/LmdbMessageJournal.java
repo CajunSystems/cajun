@@ -164,9 +164,16 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
                                 ByteBuffer value = cursor.val();
                                 byte[] messageBytes = new byte[value.remaining()];
                                 value.get(messageBytes);
-                                M message = serializer.deserialize(messageBytes);
-                                JournalEntry<M> entry = new JournalEntry<>(seq, actorId, message, java.time.Instant.now());
-                                result.add(entry);
+                                
+                                try {
+                                    M message = serializer.deserialize(messageBytes);
+                                    JournalEntry<M> entry = new JournalEntry<>(seq, actorId, message, java.time.Instant.now());
+                                    result.add(entry);
+                                } catch (IOException e) {
+                                    // Skip corrupted entries (e.g., from incomplete writes or stale data)
+                                    logger.warn("Skipping corrupted journal entry at sequence {} for actor {}: {}", 
+                                               seq, actorId, e.getMessage());
+                                }
                             }
                         }
                     }
@@ -192,19 +199,19 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
                 envManager.writeTransaction(txn -> {
                     // Delete entries with sequence < sequenceNumber
                     try (Cursor<ByteBuffer> cursor = journalDb.openCursor(txn)) {
-                        List<ByteBuffer> keysToDelete = new ArrayList<>();
-                        
+                        // Iterate and delete in one pass
                         while (cursor.next()) {
                             ByteBuffer key = cursor.key();
                             long seq = key.getLong();
                             if (seq < sequenceNumber) {
-                                keysToDelete.add(key);
+                                try {
+                                    cursor.delete();
+                                } catch (org.lmdbjava.Dbi.KeyNotFoundException e) {
+                                    // Key already deleted or doesn't exist (e.g., corrupted entry)
+                                    logger.debug("Key at sequence {} already deleted or not found for actor {}", 
+                                               seq, actorId);
+                                }
                             }
-                        }
-                        
-                        // Delete found keys
-                        for (ByteBuffer key : keysToDelete) {
-                            cursor.delete();
                         }
                     }
                     return null;
@@ -318,9 +325,17 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
         @Override
         @SuppressWarnings("unchecked")
         public T deserialize(byte[] bytes) throws IOException {
+            // Check for empty or corrupted data
+            if (bytes == null || bytes.length == 0) {
+                throw new IOException("Cannot deserialize null or empty byte array");
+            }
+            
             try (var bais = new java.io.ByteArrayInputStream(bytes);
                  var ois = new java.io.ObjectInputStream(bais)) {
                 return (T) ois.readObject();
+            } catch (java.io.StreamCorruptedException e) {
+                // Handle corrupted stream (e.g., from incomplete writes or stale data)
+                throw new IOException("Corrupted stream data - possibly from incomplete write", e);
             } catch (ClassNotFoundException e) {
                 throw new IOException("Class not found during deserialization", e);
             }

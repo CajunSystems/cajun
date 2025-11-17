@@ -12,6 +12,7 @@ import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.persistence.TruncationConfig;
 
 import java.util.UUID;
 
@@ -36,6 +37,7 @@ public class StatefulActorBuilder<State, Message> {
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
     private MailboxProvider<Message> mailboxProvider;
+    private TruncationConfig truncationConfig;
     
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -148,6 +150,20 @@ public class StatefulActorBuilder<State, Message> {
     }
     
     /**
+     * Sets the truncation configuration for the actor.
+     * 
+     * <p>Truncation helps manage disk space by removing old journal entries and snapshots.
+     * When enabled, truncation occurs automatically when snapshots are taken.
+     * 
+     * @param truncationConfig The truncation configuration to use
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withTruncationConfig(TruncationConfig truncationConfig) {
+        this.truncationConfig = truncationConfig;
+        return this;
+    }
+    
+    /**
      * Creates and starts the actor with the configured settings.
      * 
      * @return The PID of the created actor
@@ -198,6 +214,15 @@ public class StatefulActorBuilder<State, Message> {
         
         if (supervisionStrategy != null) {
             actor.withSupervisionStrategy(supervisionStrategy);
+        }
+        
+        // Apply truncation config: use provided config, or DEFAULT if persistence is enabled
+        if (truncationConfig != null) {
+            actor.withTruncationConfig(truncationConfig);
+        } else if (messageJournal != null || snapshotStore != null) {
+            // Persistence is enabled but no truncation config specified
+            // Apply sensible default to prevent unbounded growth
+            actor.withTruncationConfig(TruncationConfig.DEFAULT);
         }
         
         system.registerActor(actor);

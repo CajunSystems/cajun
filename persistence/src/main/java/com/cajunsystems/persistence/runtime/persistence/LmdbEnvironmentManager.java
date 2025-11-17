@@ -71,7 +71,26 @@ public class LmdbEnvironmentManager implements AutoCloseable {
                 .setMaxDbs(config.getMaxDatabases())
                 .setMaxReaders(config.getMaxReaders());
         
-        return builder.open(config.getDbPath().toFile());
+        // Apply sync and performance flags from config using EnvFlags
+        java.util.ArrayList<EnvFlags> flags = new java.util.ArrayList<>();
+        
+        if (config.isNoSync()) {
+            flags.add(EnvFlags.MDB_NOSYNC);
+        }
+        if (config.isNoMetaSync()) {
+            flags.add(EnvFlags.MDB_NOMETASYNC);
+        }
+        if (config.isWriteMap()) {
+            flags.add(EnvFlags.MDB_WRITEMAP);
+        }
+        if (config.isMapAsync()) {
+            flags.add(EnvFlags.MDB_MAPASYNC);
+        }
+        if (config.isReadOnly()) {
+            flags.add(EnvFlags.MDB_RDONLY_ENV);
+        }
+        
+        return builder.open(config.getDbPath().toFile(), flags.toArray(new EnvFlags[0]));
     }
     
     /**
@@ -91,8 +110,8 @@ public class LmdbEnvironmentManager implements AutoCloseable {
     }
     
     private Dbi<ByteBuffer> createDatabase(String name) {
-        // Create real LMDB database with configuration
-        return environment.openDbi(name);
+        // Create real LMDB database with MDB_CREATE flag to create if it doesn't exist
+        return environment.openDbi(name, DbiFlags.MDB_CREATE);
     }
     
     /**

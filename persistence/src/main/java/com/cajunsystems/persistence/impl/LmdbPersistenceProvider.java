@@ -198,12 +198,23 @@ public class LmdbPersistenceProvider implements PersistenceProvider {
      */
     public void close() {
         if (!closed) {
+            // Get metrics before closing
+            ProviderMetrics finalMetrics = null;
+            try {
+                finalMetrics = getMetrics();
+            } catch (Exception e) {
+                logger.debug("Could not retrieve final metrics", e);
+            }
+            
             closed = true;
             
             try {
                 environmentManager.close();
-                logger.info("LMDB Persistence Provider closed. Final metrics: {}", 
-                           getMetrics());
+                if (finalMetrics != null) {
+                    logger.info("LMDB Persistence Provider closed. Final metrics: {}", finalMetrics);
+                } else {
+                    logger.info("LMDB Persistence Provider closed");
+                }
             } catch (Exception e) {
                 logger.warn("Error closing LMDB environment manager", e);
             }

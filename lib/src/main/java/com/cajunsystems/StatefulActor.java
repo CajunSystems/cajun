@@ -84,6 +84,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     
     // Error hook for custom error handling
     private Consumer<Throwable> errorHook = ex -> {};
+    
+    // Truncation configuration for managing disk space
+    private TruncationConfig truncationConfig = TruncationConfig.builder().build();
 
     // Helper method removed as it's no longer needed with the standardized constructor signatures
 
@@ -820,7 +823,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
 
     /**
      * Takes a snapshot of the current state and persists it to the snapshot store.
-     * Also truncates the message journal to remove messages that are included in the snapshot.
+     * If truncation is enabled, also truncates the message journal and prunes old snapshots.
      *
      * @return A CompletableFuture that completes when the snapshot has been taken
      */
@@ -839,12 +842,33 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         logger.debug("Taking snapshot for actor {} at sequence {}", actorId, sequence);
         
         return snapshotStore.saveSnapshot(actorId, state, sequence)
-                .thenRun(() -> {
+                .thenCompose(v -> {
                     logger.debug("Snapshot taken for actor {} at sequence {}", actorId, sequence);
                     metrics.snapshotTaken();
+                    
+                    // Truncate journal if configured
+                    if (truncationConfig.isTruncateJournalOnSnapshot()) {
+                        logger.debug("Truncating journal before sequence {} for actor: {}", sequence, actorId);
+                        return messageJournal.truncateBefore(actorId, sequence);
+                    }
+                    return CompletableFuture.completedFuture(null);
+                })
+                .thenCompose(v -> {
+                    // Prune old snapshots if configured
+                    if (truncationConfig.isSnapshotBasedTruncationEnabled()) {
+                        int keepCount = truncationConfig.getSnapshotsToKeep();
+                        logger.debug("Pruning snapshots, keeping {} for actor: {}", keepCount, actorId);
+                        return snapshotStore.pruneOldSnapshots(actorId, keepCount)
+                                .thenAccept(deleted -> {
+                                    if (deleted > 0) {
+                                        logger.info("Pruned {} old snapshots for actor: {}", deleted, actorId);
+                                    }
+                                });
+                    }
+                    return CompletableFuture.completedFuture(null);
                 })
                 .exceptionally(e -> {
-                    logger.error("Error taking snapshot for actor {}", actorId, e);
+                    logger.error("Error taking snapshot or truncating for actor {}", actorId, e);
                     metrics.errorOccurred();
                     return null;
                 });
@@ -981,13 +1005,45 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     }
     
     /**
-     * Sets an error hook to be notified when exceptions occur.
+     * Sets a custom error hook for this actor.
      *
      * @param errorHook The error hook to invoke with exceptions
      * @return This actor instance for method chaining
      */
     public StatefulActor<State, Message> withErrorHook(Consumer<Throwable> errorHook) {
         this.errorHook = errorHook;
+        return this;
+    }
+    
+    /**
+     * Sets the truncation configuration for this actor.
+     * 
+     * <p>Truncation helps manage disk space by removing old journal entries and snapshots.
+     * When enabled, truncation occurs automatically when snapshots are taken.
+     * 
+     * <p>If the truncation config specifies snapshot intervals, they will be applied
+     * to override the actor's default snapshot strategy.
+     * 
+     * @param truncationConfig The truncation configuration to use
+     * @return This actor instance for method chaining
+     */
+    public StatefulActor<State, Message> withTruncationConfig(TruncationConfig truncationConfig) {
+        this.truncationConfig = truncationConfig != null ? truncationConfig : TruncationConfig.builder().build();
+        
+        // Apply snapshot configuration from truncation config if specified
+        if (truncationConfig != null) {
+            long intervalMs = truncationConfig.getSnapshotIntervalMs();
+            int changes = truncationConfig.getChangesBeforeSnapshot();
+            
+            // Only override if values are specified (non-zero)
+            if (intervalMs > 0 || changes > 0) {
+                configureSnapshotStrategy(
+                    intervalMs > 0 ? intervalMs : this.snapshotIntervalMs,
+                    changes > 0 ? changes : this.changesBeforeSnapshot
+                );
+            }
+        }
+        
         return this;
     }
     

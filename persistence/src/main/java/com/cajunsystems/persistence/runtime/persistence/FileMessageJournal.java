@@ -15,6 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * A file-based implementation of the MessageJournal interface.
@@ -109,28 +110,56 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
                 }
                 
                 // Find all journal files for this actor with sequence number >= fromSequenceNumber
-                List<Path> entryFiles = Files.list(actorJournalDir)
-                        .filter(Files::isRegularFile)
-                        .filter(p -> p.getFileName().toString().endsWith(".journal"))
-                        .filter(p -> {
-                            String fileName = p.getFileName().toString();
-                            try {
-                                long seqNum = Long.parseLong(fileName.substring(0, fileName.indexOf(".journal")));
-                                return seqNum >= fromSequenceNumber;
-                            } catch (NumberFormatException e) {
-                                return false;
-                            }
-                        })
-                        .sorted()
-                        .collect(Collectors.toList());
+                List<Path> entryFiles;
+                try (Stream<Path> paths = Files.list(actorJournalDir)) {
+                    entryFiles = paths
+                            .filter(Files::isRegularFile)
+                            .filter(p -> p.getFileName().toString().endsWith(".journal"))
+                            .filter(p -> {
+                                String fileName = p.getFileName().toString();
+                                try {
+                                    long seqNum = Long.parseLong(fileName.substring(0, fileName.indexOf(".journal")));
+                                    return seqNum >= fromSequenceNumber;
+                                } catch (NumberFormatException e) {
+                                    return false;
+                                }
+                            })
+                            .sorted()
+                            .collect(Collectors.toList());
+                } catch (java.nio.file.NoSuchFileException e) {
+                    // Directory was deleted between existence check and listing
+                    logger.debug("Journal directory no longer exists for actor: {}", actorId);
+                    return Collections.emptyList();
+                }
                 
                 // Read entries
                 List<JournalEntry<M>> entries = new ArrayList<>();
                 for (Path entryFile : entryFiles) {
+                    // Skip empty or corrupted files
+                    try {
+                        long fileSize = Files.size(entryFile);
+                        if (fileSize == 0) {
+                            logger.warn("Skipping empty journal file: {}", entryFile);
+                            continue;
+                        }
+                    } catch (IOException e) {
+                        logger.warn("Failed to check size of journal file {}, skipping", entryFile, e);
+                        continue;
+                    }
+                    
                     try (ObjectInputStream is = new ObjectInputStream(new FileInputStream(entryFile.toFile()))) {
                         @SuppressWarnings("unchecked")
                         JournalEntry<M> entry = (JournalEntry<M>) is.readObject();
                         entries.add(entry);
+                    } catch (EOFException e) {
+                        logger.warn("Skipping corrupted/incomplete journal file: {}", entryFile);
+                        // Optionally delete the corrupted file to prevent repeated warnings
+                        try {
+                            Files.deleteIfExists(entryFile);
+                            logger.debug("Deleted corrupted journal file: {}", entryFile);
+                        } catch (IOException deleteEx) {
+                            logger.debug("Failed to delete corrupted journal file: {}", entryFile, deleteEx);
+                        }
                     } catch (ClassNotFoundException e) {
                         logger.error("Failed to deserialize journal entry from file {}", entryFile, e);
                         throw new RuntimeException("Failed to deserialize journal entry", e);
@@ -157,29 +186,40 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
                 }
                 
                 // Find all journal files for this actor with sequence number < upToSequenceNumber
-                List<Path> filesToDelete = Files.list(actorJournalDir)
-                        .filter(Files::isRegularFile)
-                        .filter(p -> p.getFileName().toString().endsWith(".journal"))
-                        .filter(p -> {
-                            String fileName = p.getFileName().toString();
-                            try {
-                                long seqNum = Long.parseLong(fileName.substring(0, fileName.indexOf(".journal")));
-                                return seqNum < upToSequenceNumber;
-                            } catch (NumberFormatException e) {
-                                return false;
-                            }
-                        })
-                        .collect(Collectors.toList());
+                List<Path> filesToDelete;
+                try (Stream<Path> paths = Files.list(actorJournalDir)) {
+                    filesToDelete = paths
+                            .filter(Files::isRegularFile)
+                            .filter(p -> p.getFileName().toString().endsWith(".journal"))
+                            .filter(p -> {
+                                String fileName = p.getFileName().toString();
+                                try {
+                                    long seqNum = Long.parseLong(fileName.substring(0, fileName.indexOf(".journal")));
+                                    return seqNum < upToSequenceNumber;
+                                } catch (NumberFormatException e) {
+                                    return false;
+                                }
+                            })
+                            .collect(Collectors.toList());
+                } catch (java.nio.file.NoSuchFileException e) {
+                    // Directory was deleted between existence check and listing
+                    logger.debug("Journal directory no longer exists for actor: {}", actorId);
+                    return;
+                }
                 
-                // Delete files
+                // Delete files (best-effort; ignore already-missing files)
                 for (Path file : filesToDelete) {
-                    Files.delete(file);
+                    try {
+                        Files.deleteIfExists(file);
+                    } catch (IOException e) {
+                        logger.warn("Failed to delete journal file {} for actor {} during truncation", file, actorId, e);
+                    }
                 }
                 
                 logger.debug("Truncated {} messages for actor {} before sequence number {}", 
                         filesToDelete.size(), actorId, upToSequenceNumber);
             } catch (IOException e) {
-                logger.error("Failed to truncate messages for actor {}", actorId, e);
+                logger.error("Failed to enumerate journal files for actor {} during truncation", actorId, e);
                 throw new RuntimeException("Failed to truncate messages for actor " + actorId, e);
             }
         });
@@ -198,19 +238,26 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
             }
             
             // Find the highest sequence number
-            Optional<Long> highestSeq = Files.list(actorJournalDir)
-                    .filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().endsWith(".journal"))
-                    .map(p -> {
-                        String fileName = p.getFileName().toString();
-                        try {
-                            return Long.parseLong(fileName.substring(0, fileName.indexOf(".journal")));
-                        } catch (NumberFormatException e) {
-                            return -1L;
-                        }
-                    })
-                    .filter(seq -> seq >= 0)
-                    .max(Long::compare);
+            Optional<Long> highestSeq;
+            try (Stream<Path> paths = Files.list(actorJournalDir)) {
+                highestSeq = paths
+                        .filter(Files::isRegularFile)
+                        .filter(p -> p.getFileName().toString().endsWith(".journal"))
+                        .map(p -> {
+                            String fileName = p.getFileName().toString();
+                            try {
+                                return Long.parseLong(fileName.substring(0, fileName.indexOf(".journal")));
+                            } catch (NumberFormatException e) {
+                                return -1L;
+                            }
+                        })
+                        .filter(seq -> seq >= 0)
+                        .max(Long::compare);
+            } catch (java.nio.file.NoSuchFileException e) {
+                // Directory was deleted between existence check and listing
+                logger.debug("Journal directory no longer exists for actor: {}", actorId);
+                return -1;
+            }
             
             return highestSeq.orElse(-1L);
         } catch (IOException e) {

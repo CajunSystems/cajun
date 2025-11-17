@@ -127,6 +127,7 @@ public class OptimizedFileStatefulBenchmark {
     // Test actors
     private Pid fileBasedCounter;
     private Pid fileBasedAccumulator;
+    private Pid lmdbCounter;
 
     // Message types for testing
     public sealed interface StateMessage extends Serializable {
@@ -225,12 +226,17 @@ public class OptimizedFileStatefulBenchmark {
         // Initialize LMDB system
         lmdbSystem = new ActorSystem();
         
-        // Configure LMDB persistence provider
+        // Configure LMDB persistence provider with optimized benchmark settings
         LmdbConfig lmdbConfig = LmdbConfig.builder()
                 .dbPath(lmdbDir)
                 .mapSize(1_073_741_824L)  // 1GB for benchmarking
-                .maxDatabases(50)
+                .maxDatabases(500)  // Increased for benchmark iterations
                 .maxReaders(64)
+                // Performance optimizations for benchmarks
+                .noSync(true)           // Disable fsync for max performance (benchmark only!)
+                .writeMap(true)         // Use writable memory map
+                .mapAsync(true)         // Async memory-mapped I/O
+                .noMetaSync(true)       // Don't sync metadata
                 .batchSize(1000)
                 .syncTimeout(java.time.Duration.ofSeconds(5))
                 .transactionTimeout(java.time.Duration.ofSeconds(30))
@@ -245,6 +251,16 @@ public class OptimizedFileStatefulBenchmark {
         
         lmdbPersistenceProvider = new LmdbPersistenceProvider(lmdbConfig);
         
+        // Aggressive truncation config for benchmarks to prevent disk space issues
+        com.cajunsystems.persistence.TruncationConfig benchmarkTruncation = 
+            com.cajunsystems.persistence.TruncationConfig.builder()
+                .enableSnapshotBasedTruncation(true)
+                .snapshotsToKeep(2)
+                .truncateJournalOnSnapshot(true)
+                .changesBeforeSnapshot(1000)  // Snapshot every 1000 changes
+                .snapshotIntervalMs(5000)     // Or every 5 seconds
+                .build();
+        
         // Create filesystem actors in setup (they work fine)
         BatchedMessageJournal<StateMessage> fileMessageJournal = new BatchedFileMessageJournal<>(tempDir.toString());
         SnapshotStore<Integer> fileSnapshotStore = new FileSnapshotStore<>(tempDir.toString());
@@ -252,6 +268,7 @@ public class OptimizedFileStatefulBenchmark {
         fileBasedCounter = fileBasedSystem.statefulActorOf(CounterHandler.class, 0)
             .withId("file-counter-" + System.nanoTime())
             .withPersistence(fileMessageJournal, fileSnapshotStore)
+            .withTruncationConfig(benchmarkTruncation)
             .spawn();
             
         BatchedMessageJournal<StateMessage> fileAccumulatorJournal = new BatchedFileMessageJournal<>(tempDir.toString());
@@ -260,28 +277,29 @@ public class OptimizedFileStatefulBenchmark {
         fileBasedAccumulator = fileBasedSystem.statefulActorOf(AccumulatorHandler.class, 0L)
             .withId("file-accumulator-" + System.nanoTime())
             .withPersistence(fileAccumulatorJournal, fileAccumulatorSnapshotStore)
+            .withTruncationConfig(benchmarkTruncation)
             .spawn();
             
-        // LMDB actors will be created in each benchmark method to avoid initialization issues
+        // Create LMDB actor in setup for fair comparison with file-based
+        MessageJournal<StateMessage> lmdbMessageJournalDelegate = lmdbPersistenceProvider.createMessageJournal("lmdb-counter-benchmark");
+        BatchedMessageJournal<StateMessage> lmdbMessageJournal = new LmdbBatchedMessageJournalAdapter<>(lmdbMessageJournalDelegate);
+        SnapshotStore<Integer> lmdbSnapshotStore = lmdbPersistenceProvider.createSnapshotStore("lmdb-counter-benchmark");
+        
+        lmdbCounter = lmdbSystem.statefulActorOf(CounterHandler.class, 0)
+            .withId("lmdb-counter-benchmark")
+            .withPersistence(lmdbMessageJournal, lmdbSnapshotStore)
+            .withTruncationConfig(benchmarkTruncation)
+            .spawn();
     }
 
     @TearDown
     public void tearDown() {
-        // Close LMDB persistence provider first
-        if (lmdbPersistenceProvider != null) {
-            try {
-                lmdbPersistenceProvider.close();
-            } catch (Exception e) {
-                System.err.println("Error closing LMDB persistence provider: " + e.getMessage());
-            }
-        }
-        
-        // Shutdown systems with proper error handling
+        // Shutdown actor systems FIRST to stop all actors and pending operations
         if (fileBasedSystem != null) {
             try {
                 fileBasedSystem.shutdown();
-                // Wait a bit for threads to clean up
-                Thread.sleep(100);
+                // Wait for actors to finish processing
+                Thread.sleep(200);
             } catch (Exception e) {
                 System.err.println("Error shutting down file-based system: " + e.getMessage());
             }
@@ -290,10 +308,19 @@ public class OptimizedFileStatefulBenchmark {
         if (lmdbSystem != null) {
             try {
                 lmdbSystem.shutdown();
-                // Wait a bit for threads to clean up
-                Thread.sleep(100);
+                // Wait for actors to finish processing
+                Thread.sleep(200);
             } catch (Exception e) {
                 System.err.println("Error shutting down LMDB system: " + e.getMessage());
+            }
+        }
+        
+        // Close LMDB persistence provider AFTER actors are stopped
+        if (lmdbPersistenceProvider != null) {
+            try {
+                lmdbPersistenceProvider.close();
+            } catch (Exception e) {
+                System.err.println("Error closing LMDB persistence provider: " + e.getMessage());
             }
         }
         
@@ -345,36 +372,13 @@ public class OptimizedFileStatefulBenchmark {
     @Benchmark
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MICROSECONDS)
-    public void simplePersistence_LMDB() throws Exception {
-        // Create LMDB actor fresh for this benchmark to avoid initialization issues
-        String actorId = "lmdb-counter-" + System.nanoTime();
-        
-        try {
-            // Create persistence components using the provider
-            MessageJournal<StateMessage> lmdbMessageJournalDelegate = lmdbPersistenceProvider.createMessageJournal(actorId);
-            BatchedMessageJournal<StateMessage> lmdbMessageJournal = new LmdbBatchedMessageJournalAdapter<>(lmdbMessageJournalDelegate);
-            SnapshotStore<Integer> lmdbSnapshotStore = lmdbPersistenceProvider.createSnapshotStore(actorId);
-            
-            // Create actor
-            Pid lmdbActor = lmdbSystem.statefulActorOf(CounterHandler.class, 0)
-                .withId(actorId)
-                .withPersistence(lmdbMessageJournal, lmdbSnapshotStore)
-                .spawn();
-            
-            // Send multiple increments to ensure persistence work
-            for (int i = 0; i < 10; i++) {
-                lmdbActor.tell(new StateMessage.Increment(1));
-            }
-            // Force a read to ensure all operations are processed
-            lmdbActor.tell(new StateMessage.Get());
-            
-            // Clean up the actor
-            lmdbSystem.stopActor(lmdbActor);
-            
-        } catch (Exception e) {
-            System.err.println("Error in LMDB benchmark: " + e.getMessage());
-            // Don't re-throw to avoid breaking the benchmark
+    public void simplePersistence_LMDB() {
+        // Send multiple increments to ensure persistence work (same as file-based)
+        for (int i = 0; i < 10; i++) {
+            lmdbCounter.tell(new StateMessage.Increment(1));
         }
+        // Force a read to ensure all operations are processed
+        lmdbCounter.tell(new StateMessage.Get());
     }
 
     /**
@@ -431,10 +435,10 @@ public class OptimizedFileStatefulBenchmark {
     public void fewStatefulActors_LMDB() {
         Pid[] actors = new Pid[5];
         
-        // Create 5 stateful actors (reduced from 10)
+        // Create 5 stateful actors with consistent IDs to reuse databases
         for (int i = 0; i < 5; i++) {
             actors[i] = lmdbSystem.statefulActorOf(CounterHandler.class, 0)
-                .withId("lmdb-multi-" + i + "-" + System.nanoTime())
+                .withId("lmdb-multi-" + i)
                 .spawn();
             actors[i].tell(new StateMessage.Batch(5)); // Reduced batch size
         }

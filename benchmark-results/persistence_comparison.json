@@ -1,0 +1,404 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.fewStatefulActors_FileBased",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 228.93995056495666,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 228.93995056495666,
+                "50.0" : 228.93995056495666,
+                "90.0" : 228.93995056495666,
+                "95.0" : 228.93995056495666,
+                "99.0" : 228.93995056495666,
+                "99.9" : 228.93995056495666,
+                "99.99" : 228.93995056495666,
+                "99.999" : 228.93995056495666,
+                "99.9999" : 228.93995056495666,
+                "100.0" : 228.93995056495666
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    228.93995056495666
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.fewStatefulActors_LMDB",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 307.64801798131606,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 307.64801798131606,
+                "50.0" : 307.64801798131606,
+                "90.0" : 307.64801798131606,
+                "95.0" : 307.64801798131606,
+                "99.0" : 307.64801798131606,
+                "99.9" : 307.64801798131606,
+                "99.99" : 307.64801798131606,
+                "99.999" : 307.64801798131606,
+                "99.9999" : 307.64801798131606,
+                "100.0" : 307.64801798131606
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    307.64801798131606
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.mediumFrequencyUpdates_FileBased",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 1.4359459473202014E8,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 1.4359459473202014E8,
+                "50.0" : 1.4359459473202014E8,
+                "90.0" : 1.4359459473202014E8,
+                "95.0" : 1.4359459473202014E8,
+                "99.0" : 1.4359459473202014E8,
+                "99.9" : 1.4359459473202014E8,
+                "99.99" : 1.4359459473202014E8,
+                "99.999" : 1.4359459473202014E8,
+                "99.9999" : 1.4359459473202014E8,
+                "100.0" : 1.4359459473202014E8
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    1.4359459473202014E8
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.smallBatchStateUpdates_FileBased",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 2.8197630098023906E9,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 2.8197630098023906E9,
+                "50.0" : 2.8197630098023906E9,
+                "90.0" : 2.8197630098023906E9,
+                "95.0" : 2.8197630098023906E9,
+                "99.0" : 2.8197630098023906E9,
+                "99.9" : 2.8197630098023906E9,
+                "99.99" : 2.8197630098023906E9,
+                "99.999" : 2.8197630098023906E9,
+                "99.9999" : 2.8197630098023906E9,
+                "100.0" : 2.8197630098023906E9
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [
+                    2.8197630098023906E9
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.simplePersistence_FileBased",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 0.10100921345727805,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.10100921345727805,
+                "50.0" : 0.10100921345727805,
+                "90.0" : 0.10100921345727805,
+                "95.0" : 0.10100921345727805,
+                "99.0" : 0.10100921345727805,
+                "99.9" : 0.10100921345727805,
+                "99.99" : 0.10100921345727805,
+                "99.999" : 0.10100921345727805,
+                "99.9999" : 0.10100921345727805,
+                "100.0" : 0.10100921345727805
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    0.10100921345727805
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.simplePersistence_LMDB",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 2030.1168854337152,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 2030.1168854337152,
+                "50.0" : 2030.1168854337152,
+                "90.0" : 2030.1168854337152,
+                "95.0" : 2030.1168854337152,
+                "99.0" : 2030.1168854337152,
+                "99.9" : 2030.1168854337152,
+                "99.99" : 2030.1168854337152,
+                "99.999" : 2030.1168854337152,
+                "99.9999" : 2030.1168854337152,
+                "100.0" : 2030.1168854337152
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    2030.1168854337152
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.stateRead_FileBased",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 1.42399669774355E-8,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 1.42399669774355E-8,
+                "50.0" : 1.42399669774355E-8,
+                "90.0" : 1.42399669774355E-8,
+                "95.0" : 1.42399669774355E-8,
+                "99.0" : 1.42399669774355E-8,
+                "99.9" : 1.42399669774355E-8,
+                "99.99" : 1.42399669774355E-8,
+                "99.999" : 1.42399669774355E-8,
+                "99.9999" : 1.42399669774355E-8,
+                "100.0" : 1.42399669774355E-8
+            },
+            "scoreUnit" : "s/op",
+            "rawData" : [
+                [
+                    1.42399669774355E-8
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.cajunsystems.benchmarks.stateful.OptimizedFileStatefulBenchmark.statefulComputation_FileBased",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/opt/java/openjdk/bin/java",
+        "jvmArgs" : [
+            "--enable-preview",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        ],
+        "jdkVersion" : "21.0.9",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.9+10-LTS",
+        "warmupIterations" : 1,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 1,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "primaryMetric" : {
+            "score" : 7.482003697991364E-9,
+            "scoreError" : "NaN",
+            "scoreConfidence" : [
+                "NaN",
+                "NaN"
+            ],
+            "scorePercentiles" : {
+                "0.0" : 7.482003697991364E-9,
+                "50.0" : 7.482003697991364E-9,
+                "90.0" : 7.482003697991364E-9,
+                "95.0" : 7.482003697991364E-9,
+                "99.0" : 7.482003697991364E-9,
+                "99.9" : 7.482003697991364E-9,
+                "99.99" : 7.482003697991364E-9,
+                "99.999" : 7.482003697991364E-9,
+                "99.9999" : 7.482003697991364E-9,
+                "100.0" : 7.482003697991364E-9
+            },
+            "scoreUnit" : "s/op",
+            "rawData" : [
+                [
+                    7.482003697991364E-9
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    }
+]
+
+

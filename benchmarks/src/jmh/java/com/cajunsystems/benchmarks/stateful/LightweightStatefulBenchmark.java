@@ -93,17 +93,30 @@ public class LightweightStatefulBenchmark {
         // Initialize single system
         system = new ActorSystem();
         
+        // Aggressive truncation config for benchmarks
+        com.cajunsystems.persistence.TruncationConfig benchmarkTruncation = 
+            com.cajunsystems.persistence.TruncationConfig.builder()
+                .enableSnapshotBasedTruncation(true)
+                .snapshotsToKeep(2)
+                .truncateJournalOnSnapshot(true)
+                .changesBeforeSnapshot(1000)
+                .snapshotIntervalMs(5000)
+                .build();
+        
         // Create test actors
         counter = system.statefulActorOf(CounterHandler.class, 0)
             .withId("counter-" + System.nanoTime())
+            .withTruncationConfig(benchmarkTruncation)
             .spawn();
             
         accumulator = system.statefulActorOf(AccumulatorHandler.class, 0L)
             .withId("accumulator-" + System.nanoTime())
+            .withTruncationConfig(benchmarkTruncation)
             .spawn();
             
         processor = system.statefulActorOf(CounterHandler.class, 0)
             .withId("processor-" + System.nanoTime())
+            .withTruncationConfig(benchmarkTruncation)
             .spawn();
     }
 

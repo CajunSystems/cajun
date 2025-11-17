@@ -134,8 +134,21 @@ public class ActorBenchmark {
             .withId("ping-pong")
             .spawn();
 
+        // Stateful actor with aggressive snapshot/truncation strategy for benchmarks
+        // Take snapshot every 1000 changes to ensure frequent truncation
+        // This prevents unbounded journal growth during high-throughput benchmarks
+        com.cajunsystems.persistence.TruncationConfig benchmarkTruncation = 
+            com.cajunsystems.persistence.TruncationConfig.builder()
+                .enableSnapshotBasedTruncation(true)
+                .snapshotsToKeep(2)  // Keep only 2 snapshots for benchmarks
+                .truncateJournalOnSnapshot(true)
+                .changesBeforeSnapshot(1000)  // Snapshot every 1000 changes
+                .snapshotIntervalMs(5000)  // Or every 5 seconds
+                .build();
+        
         counterActor = system.statefulActorOf(CounterHandler.class, 0)
             .withId("counter")
+            .withTruncationConfig(benchmarkTruncation)
             .spawn();
 
         computeActor = system.actorOf(ComputeHandler.class)
