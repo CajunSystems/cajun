@@ -29,6 +29,10 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:5.7.0'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
     
+    // Testcontainers for LMDB native library tests
+    testImplementation 'org.testcontainers:testcontainers:1.19.3'
+    testImplementation 'org.testcontainers:junit-jupiter:1.19.3'
+    
     // Test utilities
     testImplementation project(':test-utils')
     testImplementation project(':lib')

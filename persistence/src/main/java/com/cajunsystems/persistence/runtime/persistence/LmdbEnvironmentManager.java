@@ -141,18 +141,26 @@ public class LmdbEnvironmentManager implements AutoCloseable {
      * Execute a write transaction.
      */
     public <T> T writeTransaction(TransactionCallback<T> callback) {
+        // Check if closed BEFORE acquiring lock or starting transaction
+        if (closed.get()) {
+            throw new IllegalStateException("Environment manager is closed");
+        }
+        
         lock.readLock().lock();
-        try (Txn<ByteBuffer> txn = environment.txnWrite()) {
+        try {
+            // Double-check after acquiring lock
             if (closed.get()) {
                 throw new IllegalStateException("Environment manager is closed");
             }
             
-            // Real LMDB write transaction
-            T result = callback.execute(txn);
-            txn.commit();
-            writeOperations++;
-            transactionCount++;
-            return result;
+            try (Txn<ByteBuffer> txn = environment.txnWrite()) {
+                // Real LMDB write transaction
+                T result = callback.execute(txn);
+                txn.commit();
+                writeOperations++;
+                transactionCount++;
+                return result;
+            }
         } catch (Exception e) {
             logger.error("Write transaction failed", e);
             throw new RuntimeException("Write transaction failed", e);

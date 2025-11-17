@@ -1,4 +1,4 @@
-package com.cajunsystems.runtime.persistence;
+package com.cajunsystems.persistence.runtime.persistence;
 
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.MessageJournal;

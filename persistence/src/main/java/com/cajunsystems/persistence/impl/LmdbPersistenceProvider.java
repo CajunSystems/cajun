@@ -3,7 +3,6 @@ package com.cajunsystems.persistence.impl;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.MessageJournal;
 import com.cajunsystems.persistence.PersistenceProvider;
-import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.runtime.persistence.LmdbConfig;
 import com.cajunsystems.persistence.runtime.persistence.LmdbEnvironmentManager;
@@ -96,9 +95,21 @@ public class LmdbPersistenceProvider implements PersistenceProvider {
     
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal(String actorId, int maxBatchSize, long maxBatchDelayMs) {
-        // For now, return a simple implementation
-        // In future versions, this would be a real LMDB-backed batched journal
-        throw new UnsupportedOperationException("Batched message journal not yet implemented");
+        if (closed) {
+            throw new IllegalStateException("Persistence provider is closed");
+        }
+        
+        try {
+            com.cajunsystems.persistence.runtime.persistence.LmdbBatchedMessageJournal<M> journal = 
+                new com.cajunsystems.persistence.runtime.persistence.LmdbBatchedMessageJournal<>(actorId, environmentManager);
+            journal.setMaxBatchSize(maxBatchSize);
+            journal.setMaxBatchDelayMs(maxBatchDelayMs);
+            logger.debug("Created LMDB batched message journal for actor: {}", actorId);
+            return journal;
+        } catch (Exception e) {
+            logger.error("Failed to create batched message journal for actor: {}", actorId, e);
+            throw new RuntimeException("Failed to create batched message journal for actor: " + actorId, e);
+        }
     }
     
     @Override
@@ -112,11 +123,9 @@ public class LmdbPersistenceProvider implements PersistenceProvider {
             throw new IllegalStateException("Persistence provider is closed");
         }
         
-        // Enhanced snapshot store with LMDB backend
+        // Real LMDB-backed snapshot store
         try {
-            // For now, return a simple implementation
-            // In future versions, this would be a real LMDB-backed snapshot store
-            SnapshotStore<S> snapshotStore = new InMemorySnapshotStore<>();
+            SnapshotStore<S> snapshotStore = new com.cajunsystems.persistence.runtime.persistence.LmdbSnapshotStore<>(actorId, environmentManager);
             logger.debug("Created LMDB snapshot store for actor: {}", actorId);
             return snapshotStore;
         } catch (Exception e) {
@@ -259,38 +268,4 @@ public class LmdbPersistenceProvider implements PersistenceProvider {
         }
     }
     
-    /**
-     * Simple in-memory snapshot store for demonstration.
-     * In full implementation, this would be replaced with a real LMDB-backed implementation.
-     */
-    private static class InMemorySnapshotStore<S> implements SnapshotStore<S> {
-        private final java.util.concurrent.ConcurrentHashMap<String, SnapshotEntry<S>> snapshots = new java.util.concurrent.ConcurrentHashMap<>();
-        
-        @Override
-        public java.util.concurrent.CompletableFuture<Void> saveSnapshot(String actorId, S state, long sequenceNumber) {
-            return java.util.concurrent.CompletableFuture.runAsync(() -> {
-                SnapshotEntry<S> entry = new SnapshotEntry<>(actorId, state, sequenceNumber, java.time.Instant.now());
-                snapshots.put(actorId, entry);
-            });
-        }
-        
-        @Override
-        public java.util.concurrent.CompletableFuture<java.util.Optional<SnapshotEntry<S>>> getLatestSnapshot(String actorId) {
-            return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                return java.util.Optional.ofNullable(snapshots.get(actorId));
-            });
-        }
-        
-        @Override
-        public java.util.concurrent.CompletableFuture<Void> deleteSnapshots(String actorId) {
-            return java.util.concurrent.CompletableFuture.runAsync(() -> {
-                snapshots.remove(actorId);
-            });
-        }
-        
-        @Override
-        public void close() {
-            snapshots.clear();
-        }
-    }
 }

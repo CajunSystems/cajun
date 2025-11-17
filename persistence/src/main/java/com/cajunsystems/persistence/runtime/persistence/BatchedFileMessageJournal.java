@@ -327,12 +327,19 @@ public class BatchedFileMessageJournal<M> extends FileMessageJournal<M> implemen
             // It's crucial that truncation is coordinated with flushing.
             // Flushing any pending batches for this actor before truncation ensures we don't truncate what's about to be written.
             List<MessageBatchEntry<M>> batch = pendingBatches.get(actorId);
+
+            // Prepare a future that represents flushing any pending batch for this actor.
+            // We must not block here (no join), since callers such as StatefulActor.takeSnapshot
+            // expect truncateBefore to be fully asynchronous and non-blocking during shutdown.
+            CompletableFuture<Void> flushFuture = CompletableFuture.completedFuture(null);
             if (batch != null && !batch.isEmpty()) {
-                // This flushBatch is called under the actor's write lock already held.
-                flushBatch(actorId, new ArrayList<>(batch)).join(); // Make a copy to avoid CME if flushBatch modifies it
-                pendingBatches.put(actorId, new ArrayList<>()); // Clear the flushed batch
+                List<MessageBatchEntry<M>> batchCopy = new ArrayList<>(batch); // Make a copy to avoid CME if flushBatch modifies it
+                pendingBatches.put(actorId, new ArrayList<>()); // Clear the flushed batch under the lock
+                flushFuture = flushBatch(actorId, batchCopy);
             }
-            return super.truncateBefore(actorId, upToSequenceNumber);
+
+            // Once any pending batch has been flushed, perform the underlying truncation.
+            return flushFuture.thenCompose(v -> super.truncateBefore(actorId, upToSequenceNumber));
         } finally {
             lock.writeLock().unlock();
         }

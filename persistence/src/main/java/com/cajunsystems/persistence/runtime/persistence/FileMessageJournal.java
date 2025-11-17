@@ -6,13 +6,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -28,6 +30,10 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
     
     private final Path journalDir;
     private final Map<String, AtomicLong> sequenceCounters = new ConcurrentHashMap<>();
+    private final Map<String, FileLock> actorLocks = new ConcurrentHashMap<>();
+    private final ExecutorService ioExecutor;
+    private final boolean enableFsync;
+    private volatile boolean closed = false;
     
     /**
      * Creates a new FileMessageJournal with the specified directory.
@@ -35,7 +41,29 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
      * @param journalDir The directory to store journal files in
      */
     public FileMessageJournal(Path journalDir) {
+        this(journalDir, true);
+    }
+    
+    /**
+     * Creates a new FileMessageJournal with the specified directory and fsync option.
+     *
+     * @param journalDir The directory to store journal files in
+     * @param enableFsync Whether to fsync after each write for durability
+     */
+    public FileMessageJournal(Path journalDir, boolean enableFsync) {
         this.journalDir = journalDir;
+        this.enableFsync = enableFsync;
+        
+        // Create dedicated IO executor to avoid blocking ForkJoin pool
+        this.ioExecutor = Executors.newFixedThreadPool(
+            Math.max(2, Runtime.getRuntime().availableProcessors() / 2),
+            r -> {
+                Thread t = new Thread(r, "file-journal-io");
+                t.setDaemon(true);
+                return t;
+            }
+        );
+        
         try {
             Files.createDirectories(journalDir);
         } catch (IOException e) {
@@ -63,6 +91,10 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
 
     @Override
     public CompletableFuture<Long> append(String actorId, M message) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Journal is closed"));
+        }
+        
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Path actorJournalDir = getActorJournalDir(actorId);
@@ -85,10 +117,17 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
                 // Create journal entry
                 JournalEntry<M> entry = new JournalEntry<>(seqNum, actorId, message, Instant.now());
                 
-                // Write to file
+                // Write to file with optional fsync
                 Path entryFile = actorJournalDir.resolve(String.format("%020d.journal", seqNum));
-                try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(entryFile.toFile()))) {
+                try (FileOutputStream fos = new FileOutputStream(entryFile.toFile());
+                     ObjectOutputStream oos = new ObjectOutputStream(fos)) {
                     oos.writeObject(entry);
+                    oos.flush();
+                    
+                    // Fsync for durability if enabled
+                    if (enableFsync) {
+                        fos.getFD().sync();
+                    }
                 }
                 
                 logger.debug("Appended message for actor {} with sequence number {}", actorId, seqNum);
@@ -97,11 +136,15 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
                 logger.error("Failed to append message for actor {}", actorId, e);
                 throw new RuntimeException("Failed to append message for actor " + actorId, e);
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
     public CompletableFuture<List<JournalEntry<M>>> readFrom(String actorId, long fromSequenceNumber) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Journal is closed"));
+        }
+        
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Path actorJournalDir = getActorJournalDir(actorId);
@@ -173,11 +216,15 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
                 logger.error("Failed to read messages for actor {}", actorId, e);
                 throw new RuntimeException("Failed to read messages for actor " + actorId, e);
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
     public CompletableFuture<Void> truncateBefore(String actorId, long upToSequenceNumber) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Journal is closed"));
+        }
+        
         return CompletableFuture.runAsync(() -> {
             try {
                 Path actorJournalDir = getActorJournalDir(actorId);
@@ -222,7 +269,7 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
                 logger.error("Failed to enumerate journal files for actor {} during truncation", actorId, e);
                 throw new RuntimeException("Failed to truncate messages for actor " + actorId, e);
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
@@ -282,8 +329,80 @@ public class FileMessageJournal<M> implements MessageJournal<M> {
         return sequenceCounters;
     }
     
+    /**
+     * Acquires a file lock for the actor to prevent concurrent writes.
+     * 
+     * @param actorId The actor ID
+     * @return The file lock
+     * @throws IOException If locking fails
+     */
+    protected FileLock acquireActorLock(String actorId) throws IOException {
+        return actorLocks.computeIfAbsent(actorId, id -> {
+            try {
+                Path lockFile = getActorJournalDir(id).resolve(".lock");
+                Files.createDirectories(lockFile.getParent());
+                
+                FileChannel channel = FileChannel.open(
+                    lockFile,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE
+                );
+                
+                FileLock lock = channel.tryLock();
+                if (lock == null) {
+                    channel.close();
+                    throw new RuntimeException("Failed to acquire lock for actor: " + id);
+                }
+                
+                logger.debug("Acquired file lock for actor: {}", id);
+                return lock;
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to acquire lock for actor: " + id, e);
+            }
+        });
+    }
+    
+    /**
+     * Releases the file lock for the actor.
+     * 
+     * @param actorId The actor ID
+     */
+    protected void releaseActorLock(String actorId) {
+        FileLock lock = actorLocks.remove(actorId);
+        if (lock != null) {
+            try {
+                lock.channel().close();
+                lock.release();
+                logger.debug("Released file lock for actor: {}", actorId);
+            } catch (IOException e) {
+                logger.warn("Failed to release lock for actor: {}", actorId, e);
+            }
+        }
+    }
+    
     @Override
     public void close() {
-        // Nothing to close for file-based journal
+        if (closed) {
+            return;
+        }
+        closed = true;
+        
+        // Release all locks
+        for (String actorId : new ArrayList<>(actorLocks.keySet())) {
+            releaseActorLock(actorId);
+        }
+        
+        // Shutdown IO executor
+        ioExecutor.shutdown();
+        try {
+            if (!ioExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                ioExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            ioExecutor.shutdownNow();
+        }
+        
+        logger.info("File message journal closed");
     }
 }

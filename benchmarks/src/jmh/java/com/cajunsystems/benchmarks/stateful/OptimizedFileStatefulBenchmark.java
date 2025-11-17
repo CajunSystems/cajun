@@ -19,7 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 /**
  * Simple adapter to wrap MessageJournal as BatchedMessageJournal for LMDB.
@@ -295,61 +294,68 @@ public class OptimizedFileStatefulBenchmark {
     @TearDown
     public void tearDown() {
         // Shutdown actor systems FIRST to stop all actors and pending operations
+        System.out.println("[Benchmark teardown] Starting tearDown()...");
+
         if (fileBasedSystem != null) {
             try {
+                System.out.println("[Benchmark teardown] Shutting down file-based actor system...");
+                long start = System.currentTimeMillis();
                 fileBasedSystem.shutdown();
+                long duration = System.currentTimeMillis() - start;
+                System.out.println("[Benchmark teardown] fileBasedSystem.shutdown() completed in " + duration + " ms");
+
                 // Wait for actors to finish processing
                 Thread.sleep(200);
             } catch (Exception e) {
-                System.err.println("Error shutting down file-based system: " + e.getMessage());
+                System.err.println("[Benchmark teardown] Error shutting down file-based system: " + e.getMessage());
             }
+        } else {
+            System.out.println("[Benchmark teardown] fileBasedSystem is null, skipping shutdown");
         }
-        
+
         if (lmdbSystem != null) {
             try {
+                System.out.println("[Benchmark teardown] Shutting down LMDB actor system...");
+                long start = System.currentTimeMillis();
                 lmdbSystem.shutdown();
-                // Wait for actors to finish processing
-                Thread.sleep(200);
+                long duration = System.currentTimeMillis() - start;
+                System.out.println("[Benchmark teardown] lmdbSystem.shutdown() completed in " + duration + " ms");
+
+                // Wait longer for LMDB actors to finish async journal operations
+                // LMDB writes are async and may still be in flight after actor shutdown
+                Thread.sleep(1000);
             } catch (Exception e) {
-                System.err.println("Error shutting down LMDB system: " + e.getMessage());
+                System.err.println("[Benchmark teardown] Error shutting down LMDB system: " + e.getMessage());
             }
+        } else {
+            System.out.println("[Benchmark teardown] lmdbSystem is null, skipping shutdown");
         }
-        
-        // Close LMDB persistence provider AFTER actors are stopped
+
+        // Close LMDB persistence provider AFTER actors are stopped AND journal writes complete
         if (lmdbPersistenceProvider != null) {
             try {
+                System.out.println("[Benchmark teardown] Closing LMDB persistence provider...");
+                long start = System.currentTimeMillis();
                 lmdbPersistenceProvider.close();
+                long duration = System.currentTimeMillis() - start;
+                System.out.println("[Benchmark teardown] lmdbPersistenceProvider.close() completed in " + duration + " ms");
             } catch (Exception e) {
-                System.err.println("Error closing LMDB persistence provider: " + e.getMessage());
+                System.err.println("[Benchmark teardown] Error closing LMDB persistence provider: " + e.getMessage());
             }
+        } else {
+            System.out.println("[Benchmark teardown] lmdbPersistenceProvider is null, skipping close");
         }
-        
-        // Clean up temporary directories
-        cleanupDirectory(tempDir);
-        cleanupDirectory(lmdbDir);
-        
+
+        // Skip cleanup for benchmarks - it can take minutes with thousands of files
+        // The OS will clean up temp directories automatically
+        // If cleanup is needed, it should be done asynchronously outside the benchmark
+        System.out.println("[Benchmark teardown] Skipping directory cleanup for faster benchmark completion");
+        System.out.println("[Benchmark teardown] Temp directories: " + tempDir + ", " + lmdbDir);
+
         // Force garbage collection to help with cleanup
+        System.out.println("[Benchmark teardown] Forcing GC...");
         System.gc();
-    }
-    
-    private void cleanupDirectory(Path dir) {
-        try {
-            if (Files.exists(dir)) {
-                try (Stream<Path> paths = Files.walk(dir)) {
-                    paths.sorted((a, b) -> b.compareTo(a)) // Reverse order for deletion
-                          .forEach(path -> {
-                              try {
-                                  Files.deleteIfExists(path);
-                              } catch (IOException e) {
-                                  System.err.println("Failed to delete: " + path + " - " + e.getMessage());
-                              }
-                          });
-                }
-                System.out.println("Cleaned up directory: " + dir);
-            }
-        } catch (IOException e) {
-            System.err.println("Error cleaning up directory " + dir + ": " + e.getMessage());
-        }
+        System.out.println("[Benchmark teardown] tearDown() complete.");
     }
 
     // ========== OPTIMIZED BENCHMARKS ==========

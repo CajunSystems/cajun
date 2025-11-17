@@ -2082,6 +2082,41 @@ For more details, see the [Cluster Mode Improvements documentation](docs/cluster
 
 The Cajun project includes comprehensive JMH benchmarks focused on **actor-specific capabilities** and optimization opportunities. Rather than comparing against other concurrency models, we measure what matters for actor-based systems.
 
+### Persistence Backends: Filesystem vs LMDB
+
+Stateful actors in Cajun support multiple persistence backends. The two primary backends are:
+
+- **Filesystem-based persistence** (file-backed journal + snapshots)
+- **LMDB-based persistence** (embedded key-value store with transactions)
+
+Recent Docker-based JMH runs of `OptimizedFileStatefulBenchmark` (1 warmup / 2 measurement iterations, 1 fork, 1 thread) show:
+
+- **Few stateful actors (5 actors, throughput)**  
+  - Filesystem: ~172 ops/s  
+  - LMDB: ~149 ops/s
+- **Simple persistence (average latency)**  
+  - Filesystem: ~0.123 µs/op  
+  - LMDB: ~0.174 µs/op
+
+In absolute terms, both backends are extremely fast. LMDB is only modestly slower (roughly 1.2–1.4×) in these scenarios while providing stronger semantics.
+
+**Tradeoffs:**
+
+- **Filesystem-based backend**
+  - Pros: Simple implementation, transparent on-disk layout, easy to inspect and debug.  
+  - Cons: Less structured concurrency control, more ad-hoc file I/O, typically better suited for simpler deployments or when you want maximum transparency over the on-disk format.
+
+- **LMDB backend**
+  - Pros: Single embedded environment with ACID transactions, excellent concurrent read performance, efficient memory-mapped I/O, centralized management of journal + snapshots.  
+  - Cons: Slightly higher per-operation overhead than plain files in the current benchmarks, requires native LMDB library and a bit more operational care (environment sizing, file mapping, etc.).
+
+**Guidance:**
+
+- Choose **filesystem-based persistence** when you value simplicity, ease of inspection, or are running on platforms where LMDB native support is constrained.
+- Choose **LMDB** when you want a more database-like persistence layer with strong transactional semantics and scalable concurrent reads, and are comfortable depending on a native library.
+
+For more details and additional benchmark categories (mailbox types, backpressure, structured concurrency, etc.), see [benchmarks/README.md](benchmarks/README.md).
+
 ### Running Benchmarks
 
 Run the comprehensive actor benchmark suite:
@@ -2107,104 +2142,14 @@ The benchmarks measure actor-specific performance characteristics:
 - **Concurrent Load**: Multi-actor scalability patterns
 - **Resource Usage**: Memory and thread utilization patterns
 
-### Actor Performance Matrix
-
-Based on comprehensive JMH benchmarks measuring actor-specific capabilities (including lightweight stateful micro-benchmarks that minimize filesystem impact):
-
-#### Throughput Characteristics (Operations/Second):
-| Configuration | No Backpressure | Basic Backpressure | Aggressive Backpressure | Best Performance |
-|---------------|-----------------|-------------------|------------------------|------------------|
-| **Stateless + BLOCKING** | 3,840 ops/s | 3,617 ops/s | 3,691 ops/s | 3,840 ops/s |
-| **Stateless + DISPATCHER_CBQ** | 4,078 ops/s | 4,143 ops/s | 3,898 ops/s | **4,143 ops/s** 🏆 |
-| **Stateless + DISPATCHER_MPSC** | 4,010 ops/s | 4,134 ops/s | 4,113 ops/s | 4,134 ops/s |
-| **Stateful + BLOCKING** | 28.88 ops/s | 29.63 ops/s | 33.16 ops/s | 33.16 ops/s |
-| **Stateful + DISPATCHER_CBQ** | 29.91 ops/s | 32.80 ops/s | 29.99 ops/s | 32.80 ops/s |
-| **Stateful + DISPATCHER_MPSC** | 33.47 ops/s | 35.04 ops/s | 33.87 ops/s | **35.04 ops/s** 🏆 |
-
-#### Optimization Insights:
-
-**🏆 Mailbox Performance:**
-- **DISPATCHER_CBQ**: **Best for stateless actors** (4,143 ops/s - 7.9% improvement over BLOCKING)
-- **DISPATCHER_MPSC**: **Best for stateful actors** (35.04 ops/s - 21.4% improvement over BLOCKING)
-- **BLOCKING**: Consistently slowest across all scenarios
-
-See [Mailbox Types Documentation](docs/mailbox_types.md) for detailed configuration guidelines and use case recommendations.
-
-**📊 State Management Impact:**
-
-Benchmarks highlight that:
+### Performance Highlights
 
 - Stateless actors represent the upper bound for raw message throughput in Cajun.
-- Adding state and persistence introduces overhead from journaling, snapshotting, and recovery logic – this is expected, and the exact cost depends on the chosen persistence mechanism (for example filesystem-backed vs embedded stores) and truncation settings.
-- There is a useful middle-ground between purely in-memory and fully durable configurations, where stateful actors are configured with minimal persistence overhead and sensible truncation settings to keep disk usage bounded while still delivering very low latencies.
-- You should choose between stateless, lightweight stateful, and fully durable stateful configurations based on durability requirements, recovery guarantees, and acceptable performance envelopes for your workload.
+- Mailbox choice matters: dispatcher-based mailboxes (CBQ/MPSC) generally outperform the simple BLOCKING mailbox in our JMH runs.
+- Stateful actors with persistence are naturally slower than stateless actors, but still deliver very low per-operation latencies when configured with sensible truncation and snapshot settings.
+- Basic backpressure typically offers the best balance between throughput and safety; running with no backpressure can maximize raw throughput at the cost of higher risk under load.
 
-**🔄 Backpressure Effectiveness:**
-- **Basic Backpressure**: **Optimal balance** - provides stability with minimal performance impact
-- **No Backpressure**: Highest raw throughput but potential memory issues
-- **Aggressive Backpressure**: Unnecessary performance penalty for most use cases
-
-### Performance Optimization Guide
-
-#### **🏆 Choose DISPATCHER_CBQ + BASIC for:**
-
-- **Stateless actors requiring maximum throughput** (4,143 ops/s)
-- High-volume message processing and routing
-- When state management is not needed
-- **Best overall performance configuration**
-
-#### **🎯 Choose DISPATCHER_MPSC + BASIC for:**
-
-- **Stateful actors with optimal performance** (35.04 ops/s)
-- Applications requiring state persistence
-- Event sourcing and state machine patterns
-- **Best for stateful scenarios**
-
-#### **⚡ Choose Stateless Actors for:**
-
-- **Maximum performance requirements** (133x faster than stateful)
-- Simple message routing and processing
-- Stateless service patterns
-- When state can be managed externally
-
-#### **🛡️ Choose Stateful Actors for:**
-- Applications requiring built-in state persistence
-- Complex state machine logic
-- Recovery and supervision needs
-- When actor model benefits justify performance overhead
-
-#### **🔄 Use BASIC Backpressure:**
-- **Optimal balance** of performance and stability
-- Provides safety without significant performance penalty
-- Recommended for most production scenarios
-
-### Resource Utilization
-
-| Actor Type | Memory per Actor | Thread Usage | CPU Efficiency |
-|------------|------------------|--------------|----------------|
-| **Stateless** | ~2KB | Virtual Thread | High |
-| **Stateful** | ~4KB + State | Virtual Thread | Medium-High |
-| **With Backpressure** | ~6KB | Virtual Thread | Medium |
-
-**Note**: These recommendations are based on measured performance characteristics from our comprehensive actor benchmarks. Your specific use case may vary.
-
-Results are available in two formats after running benchmarks:
-
-- **JSON format**: `benchmarks/build/reports/jmh/results.json`
-- **Human-readable**: `benchmarks/build/reports/jmh/human.txt`
-
-### Understanding the Results
-
-The benchmarks measure:
-
-- **Throughput** (`thrpt`): Operations per millisecond - higher is better
-- **Average Time** (`avgt`): Time per operation in milliseconds - lower is better
-
-All benchmarks use JMH with proper warmup, multiple forks, and statistical analysis for accuracy.
-
-**Note**: These recommendations are based on measured performance characteristics from our fair comparison benchmarks. Your specific use case may vary.
-
-For complete benchmark details and methodology, see [benchmarks/README.md](benchmarks/README.md).
+For full benchmark tables, detailed mailbox comparisons, and methodology, see [benchmarks/README.md](benchmarks/README.md).
 
 ## Feature Roadmap
 

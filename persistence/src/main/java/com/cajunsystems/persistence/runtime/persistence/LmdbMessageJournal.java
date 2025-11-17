@@ -8,10 +8,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -36,12 +36,14 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     
     private final LmdbEnvironmentManager envManager;
     private final Dbi<ByteBuffer> journalDb;
+    private final Dbi<ByteBuffer> metadataDb;
     private final Serializer<M> serializer;
     private final LmdbConfig config;
     private final String actorId;
     
     // In-memory cache for sequence tracking
     private final AtomicLong sequenceCounter = new AtomicLong(0);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
     private volatile long appendCount = 0;
     private volatile long readCount = 0;
     private volatile long truncateCount = 0;
@@ -59,6 +61,7 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
         this.envManager = envManager;
         this.config = envManager.getConfig();
         this.journalDb = envManager.getDatabase("journal_" + actorId);
+        this.metadataDb = envManager.getDatabase("journal_meta_" + actorId);
         this.serializer = createSerializer();
         
         // Initialize sequence counter from existing data
@@ -71,7 +74,7 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
         try {
             Long lastSeq = envManager.readTransaction(txn -> {
                 ByteBuffer key = bytesToBuffer("last_sequence");
-                ByteBuffer value = journalDb.get(txn, key);
+                ByteBuffer value = metadataDb.get(txn, key);
                 if (value != null) {
                     return value.getLong();
                 }
@@ -106,45 +109,68 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     
     @Override
     public CompletableFuture<Long> append(String actorId, M message) {
+        // Silently ignore appends if journal is closed (during shutdown)
+        if (closed.get()) {
+            logger.trace("Ignoring append for actor {} - journal is closed", actorId);
+            return CompletableFuture.completedFuture(-1L);
+        }
+        
         return CompletableFuture.supplyAsync(() -> {
             try {
-                long sequence = sequenceCounter.incrementAndGet();
-                JournalEntry<M> entry = new JournalEntry<>(sequence, actorId, message, java.time.Instant.now());
-                
-                // Serialize the journal entry
-                byte[] entryBytes = serializer.serialize(entry.getMessage());
-                
-                // Store in real LMDB
-                envManager.writeTransaction(txn -> {
-                    // Store the message with sequence as key
-                    ByteBuffer key = ByteBuffer.allocateDirect(8);
-                    key.putLong(sequence).flip();
-                    
-                    ByteBuffer value = bytesToBuffer(entryBytes);
-                    journalDb.put(txn, key, value);
-                    
-                    // Update last sequence counter
-                    ByteBuffer seqKey = bytesToBuffer("last_sequence");
-                    ByteBuffer seqValue = ByteBuffer.allocateDirect(8);
-                    seqValue.putLong(sequence).flip();
-                    journalDb.put(txn, seqKey, seqValue);
-                    
-                    return null;
-                });
-                
-                // Update metrics
-                appendCount++;
-                highestSequence = sequence;
-                currentSize += entryBytes.length;
-                
-                logger.debug("Appended entry {} for actor {} (size: {} bytes)", sequence, actorId, entryBytes.length);
-                return sequence;
+                // Use a single LMDB write transaction for this append
+                return envManager.writeTransaction(txn -> appendInTransaction(txn, actorId, message));
                 
             } catch (Exception e) {
+                // Reduce shutdown noise: if the environment manager is closed, treat as benign
+                Throwable cause = e;
+                while (cause.getCause() != null && cause != cause.getCause()) {
+                    cause = cause.getCause();
+                }
+                if (cause instanceof IllegalStateException &&
+                    cause.getMessage() != null &&
+                    cause.getMessage().contains("Environment manager is closed")) {
+                    logger.debug("Ignoring append for actor {} - LMDB environment is already closed", actorId);
+                    return -1L;
+                }
+                
                 logger.error("Failed to append message for actor: {}", actorId, e);
                 throw new RuntimeException("Append failed", e);
             }
         });
+    }
+
+    /**
+     * Core append logic that runs inside a caller-provided LMDB write transaction.
+     * This is used by both the standard append() path and batched append implementations
+     * to ensure all writes in a batch share a single transaction.
+     */
+    protected long appendInTransaction(Txn<ByteBuffer> txn, String actorId, M message) throws Exception {
+        long sequence = sequenceCounter.incrementAndGet();
+        JournalEntry<M> entry = new JournalEntry<>(sequence, actorId, message, java.time.Instant.now());
+
+        // Serialize the full journal entry (including timestamp and metadata)
+        byte[] entryBytes = serializer.serialize(entry);
+
+        // Store the message with sequence as key
+        ByteBuffer key = ByteBuffer.allocateDirect(8);
+        key.putLong(sequence).flip();
+
+        ByteBuffer value = bytesToBuffer(entryBytes);
+        journalDb.put(txn, key, value);
+
+        // Update last sequence counter in metadata DB
+        ByteBuffer seqKey = bytesToBuffer("last_sequence");
+        ByteBuffer seqValue = ByteBuffer.allocateDirect(8);
+        seqValue.putLong(sequence).flip();
+        metadataDb.put(txn, seqKey, seqValue);
+
+        // Update metrics
+        appendCount++;
+        highestSequence = sequence;
+        currentSize += entryBytes.length;
+
+        logger.debug("Appended entry {} for actor {} (size: {} bytes)", sequence, actorId, entryBytes.length);
+        return sequence;
     }
     
     @Override
@@ -162,12 +188,11 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
                             long seq = key.getLong();
                             if (seq >= sequenceNumber) {
                                 ByteBuffer value = cursor.val();
-                                byte[] messageBytes = new byte[value.remaining()];
-                                value.get(messageBytes);
+                                byte[] entryBytes = new byte[value.remaining()];
+                                value.get(entryBytes);
                                 
                                 try {
-                                    M message = serializer.deserialize(messageBytes);
-                                    JournalEntry<M> entry = new JournalEntry<>(seq, actorId, message, java.time.Instant.now());
+                                    JournalEntry<M> entry = serializer.deserialize(entryBytes);
                                     result.add(entry);
                                 } catch (IOException e) {
                                     // Skip corrupted entries (e.g., from incomplete writes or stale data)
@@ -221,6 +246,18 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
                 logger.debug("Truncated entries before sequence {} for actor {}", sequenceNumber, actorId);
                 
             } catch (Exception e) {
+                // Reduce shutdown noise: if the environment manager is closed, treat as benign
+                Throwable cause = e;
+                while (cause.getCause() != null && cause != cause.getCause()) {
+                    cause = cause.getCause();
+                }
+                if (cause instanceof IllegalStateException &&
+                    cause.getMessage() != null &&
+                    cause.getMessage().contains("Environment manager is closed")) {
+                    logger.debug("Ignoring truncate for actor {} before sequence {} - LMDB environment is already closed", actorId, sequenceNumber);
+                    return;
+                }
+
                 logger.error("Failed to truncate messages for actor: {} before sequence: {}", actorId, sequenceNumber, e);
                 throw new RuntimeException("Truncate failed", e);
             }
@@ -236,6 +273,9 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     
     @Override
     public void close() {
+        // Set closed flag to stop accepting new writes
+        closed.set(true);
+        
         logger.info("Closing LMDB Message Journal for actor: {}. Final metrics: append={}, read={}, truncate={}", 
                    actorId, appendCount, readCount, truncateCount);
         
@@ -303,28 +343,30 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
     
     /**
      * Serializer interface for different serialization formats.
+     * Now serializes full JournalEntry objects to preserve metadata.
      */
     private interface Serializer<T> {
-        byte[] serialize(T object) throws IOException;
-        T deserialize(byte[] bytes) throws IOException;
+        byte[] serialize(JournalEntry<T> entry) throws IOException;
+        JournalEntry<T> deserialize(byte[] bytes) throws IOException;
     }
     
     /**
      * Enhanced Java serialization with error handling.
+     * Serializes full JournalEntry objects to preserve timestamp and metadata.
      */
     private static class JavaSerializer<T> implements Serializer<T> {
         @Override
-        public byte[] serialize(T object) throws IOException {
+        public byte[] serialize(JournalEntry<T> entry) throws IOException {
             try (var baos = new java.io.ByteArrayOutputStream();
                  var oos = new java.io.ObjectOutputStream(baos)) {
-                oos.writeObject(object);
+                oos.writeObject(entry);
                 return baos.toByteArray();
             }
         }
         
         @Override
         @SuppressWarnings("unchecked")
-        public T deserialize(byte[] bytes) throws IOException {
+        public JournalEntry<T> deserialize(byte[] bytes) throws IOException {
             // Check for empty or corrupted data
             if (bytes == null || bytes.length == 0) {
                 throw new IOException("Cannot deserialize null or empty byte array");
@@ -332,7 +374,7 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
             
             try (var bais = new java.io.ByteArrayInputStream(bytes);
                  var ois = new java.io.ObjectInputStream(bais)) {
-                return (T) ois.readObject();
+                return (JournalEntry<T>) ois.readObject();
             } catch (java.io.StreamCorruptedException e) {
                 // Handle corrupted stream (e.g., from incomplete writes or stale data)
                 throw new IOException("Corrupted stream data - possibly from incomplete write", e);
@@ -341,4 +383,5 @@ public class LmdbMessageJournal<M> implements MessageJournal<M> {
             }
         }
     }
+    
 }

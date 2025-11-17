@@ -1,0 +1,55 @@
+# Build outputs
+**/build/
+**/target/
+**/.gradle/
+**/bin/
+**/out/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+
+# Logs
+**/logs/
+**/*.log
+
+# Temporary files
+**/tmp/
+**/temp/
+**/.tmp/
+
+# Test results
+**/test-results/
+**/benchmark-results/
+**/results/
+*.json
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Docker
+Dockerfile*
+docker-compose.yml
+.dockerignore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Persistence data
+persistence/logs/
+**/cajun-benchmark-*/
+**/lmdb-*/

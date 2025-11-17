@@ -10,14 +10,19 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.CRC32;
 
 /**
  * A file-based implementation of the SnapshotStore interface.
@@ -29,6 +34,8 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
     private static final Logger logger = LoggerFactory.getLogger(FileSnapshotStore.class);
     
     private final Path snapshotDir;
+    private final ExecutorService ioExecutor;
+    private volatile boolean closed = false;
     
     /**
      * Creates a new FileSnapshotStore with the specified directory.
@@ -37,6 +44,17 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
      */
     public FileSnapshotStore(Path snapshotDir) {
         this.snapshotDir = snapshotDir;
+        
+        // Create dedicated IO executor
+        this.ioExecutor = Executors.newFixedThreadPool(
+            Math.max(2, Runtime.getRuntime().availableProcessors() / 2),
+            r -> {
+                Thread t = new Thread(r, "file-snapshot-io");
+                t.setDaemon(true);
+                return t;
+            }
+        );
+        
         try {
             Files.createDirectories(snapshotDir);
         } catch (IOException e) {
@@ -55,21 +73,80 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
     
     @Override
     public CompletableFuture<Void> saveSnapshot(String actorId, S state, long sequenceNumber) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Snapshot store is closed"));
+        }
+        
         return CompletableFuture.runAsync(() -> {
             try {
-                Path actorSnapshotDir = getActorSnapshotDir(actorId);
-                Files.createDirectories(actorSnapshotDir);
+                    Path actorSnapshotDir = getActorSnapshotDir(actorId);
                 
                 // Create snapshot entry
                 SnapshotEntry<S> entry = new SnapshotEntry<>(actorId, state, sequenceNumber, Instant.now());
                 
-                // Write to file
+                // Prepare snapshot file path
                 String fileName = String.format("snapshot_%020d_%s.snap", 
                         sequenceNumber, System.currentTimeMillis());
                 Path snapshotFile = actorSnapshotDir.resolve(fileName);
                 
-                try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(snapshotFile.toFile()))) {
-                    oos.writeObject(entry);
+                // Serialize with checksum once
+                byte[] data = serializeWithChecksum(entry);
+                
+                // Atomic move to final location with retry on directory deletion
+                boolean moved = false;
+                int retries = 3;
+                Exception lastException = null;
+                Path tempFile = null;
+                
+                for (int attempt = 0; attempt < retries && !moved; attempt++) {
+                    try {
+                        // Ensure actor directory exists before each attempt
+                        Files.createDirectories(actorSnapshotDir);
+                        
+                        // Write temp file INSIDE actor directory on each attempt
+                        // This ensures temp file exists for the move even if directory was recreated
+                        tempFile = actorSnapshotDir.resolve(fileName + ".tmp");
+                        try (FileOutputStream fos = new FileOutputStream(tempFile.toFile())) {
+                            fos.write(data);
+                            fos.getFD().sync(); // Ensure data is on disk
+                        }
+                        
+                        // Atomic move to final location
+                        Files.move(tempFile, snapshotFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                        moved = true;
+                    } catch (java.nio.file.NoSuchFileException e) {
+                        // Directory was deleted during write or move - retry
+                        lastException = e;
+                        logger.debug("Directory deleted during save attempt {} for actor {}, retrying...", 
+                            attempt + 1, actorId);
+                        
+                        if (attempt < retries - 1) {
+                            try {
+                                Thread.sleep(10); // Brief pause before retry
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                throw new RuntimeException("Interrupted during retry", ie);
+                            }
+                        }
+                    } catch (Exception moveEx) {
+                        lastException = moveEx;
+                        break; // Don't retry on other exceptions
+                    }
+                }
+                
+                if (!moved) {
+                    // Clean up temp file on failure
+                    try {
+                        Files.deleteIfExists(tempFile);
+                    } catch (IOException cleanupEx) {
+                        logger.warn("Failed to clean up temp file {}", tempFile, cleanupEx);
+                    }
+                    
+                    if (lastException != null) {
+                        throw lastException;
+                    } else {
+                        throw new RuntimeException("Failed to move snapshot file after " + retries + " attempts");
+                    }
                 }
                 
                 logger.debug("Saved snapshot for actor {} at sequence number {}", actorId, sequenceNumber);
@@ -77,11 +154,15 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 logger.error("Failed to save snapshot for actor {}", actorId, e);
                 throw new RuntimeException("Failed to save snapshot for actor " + actorId, e);
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
     public CompletableFuture<Optional<SnapshotEntry<S>>> getLatestSnapshot(String actorId) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Snapshot store is closed"));
+        }
+        
         return CompletableFuture.supplyAsync(() -> {
             try {
                 Path actorSnapshotDir = getActorSnapshotDir(actorId);
@@ -103,18 +184,16 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 }
                 
                 if (latestSnapshotFile.isPresent()) {
-                    // Read snapshot entry
-                    try (ObjectInputStream is = new ObjectInputStream(
-                            new FileInputStream(latestSnapshotFile.get().toFile()))) {
-                        @SuppressWarnings("unchecked")
-                        SnapshotEntry<S> entry = (SnapshotEntry<S>) is.readObject();
+                    // Read and verify snapshot with checksum
+                    try {
+                        byte[] data = Files.readAllBytes(latestSnapshotFile.get());
+                        SnapshotEntry<S> entry = deserializeWithChecksum(data);
                         logger.debug("Loaded latest snapshot for actor {} at sequence number {}", 
                                 actorId, entry.getSequenceNumber());
                         return Optional.of(entry);
-                    } catch (ClassNotFoundException e) {
-                        logger.error("Failed to deserialize snapshot entry from file {}", 
-                                latestSnapshotFile.get(), e);
-                        throw new RuntimeException("Failed to deserialize snapshot entry", e);
+                    } catch (IOException e) {
+                        logger.error("Failed to read snapshot file {}", latestSnapshotFile.get(), e);
+                        throw new RuntimeException("Failed to read snapshot", e);
                     }
                 } else {
                     logger.debug("No snapshot found for actor {}", actorId);
@@ -124,14 +203,18 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 logger.error("Failed to get latest snapshot for actor {}", actorId, e);
                 throw new RuntimeException("Failed to get latest snapshot for actor " + actorId, e);
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
     public CompletableFuture<Void> deleteSnapshots(String actorId) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Snapshot store is closed"));
+        }
+        
         return CompletableFuture.runAsync(() -> {
             try {
-                Path actorSnapshotDir = getActorSnapshotDir(actorId);
+                    Path actorSnapshotDir = getActorSnapshotDir(actorId);
                 if (!Files.exists(actorSnapshotDir)) {
                     return;
                 }
@@ -159,11 +242,15 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 logger.error("Failed to delete snapshots for actor {}", actorId, e);
                 throw new RuntimeException("Failed to delete snapshots for actor " + actorId, e);
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
     public CompletableFuture<List<SnapshotMetadata>> listSnapshots(String actorId) {
+        if (closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Snapshot store is closed"));
+        }
+        
         return CompletableFuture.supplyAsync(() -> {
             Path actorDir = getActorSnapshotDir(actorId);
             if (!Files.exists(actorDir)) {
@@ -186,7 +273,7 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 logger.error("Failed to list snapshots for actor: {}", actorId, e);
                 return Collections.emptyList();
             }
-        });
+        }, ioExecutor);
     }
     
     @Override
@@ -276,8 +363,92 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
         return snapshotDir.resolve(sanitizedId);
     }
     
+    /**
+     * Serializes a snapshot entry with CRC32 checksum.
+     */
+    private byte[] serializeWithChecksum(SnapshotEntry<S> entry) throws IOException {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+            oos.writeObject(entry);
+            oos.flush();
+            
+            byte[] data = baos.toByteArray();
+            
+            // Calculate CRC32
+            CRC32 crc = new CRC32();
+            crc.update(data);
+            long checksum = crc.getValue();
+            
+            // Prepend checksum to data
+            ByteArrayOutputStream result = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(result);
+            dos.writeLong(checksum);
+            dos.write(data);
+            dos.flush();
+            
+            return result.toByteArray();
+        }
+    }
+    
+    /**
+     * Deserializes a snapshot entry and verifies CRC32 checksum.
+     */
+    @SuppressWarnings("unchecked")
+    private SnapshotEntry<S> deserializeWithChecksum(byte[] bytes) throws IOException {
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
+             DataInputStream dis = new DataInputStream(bais)) {
+            
+            // Read checksum
+            long expectedChecksum = dis.readLong();
+            
+            // Read data
+            byte[] data = dis.readAllBytes();
+            
+            // Verify checksum
+            CRC32 crc = new CRC32();
+            crc.update(data);
+            long actualChecksum = crc.getValue();
+            
+            if (expectedChecksum != actualChecksum) {
+                throw new IOException("Snapshot checksum mismatch: expected=" + expectedChecksum + 
+                                    ", actual=" + actualChecksum);
+            }
+            
+            // Deserialize
+            try (ByteArrayInputStream dataBais = new ByteArrayInputStream(data);
+                 ObjectInputStream ois = new ObjectInputStream(dataBais)) {
+                return (SnapshotEntry<S>) ois.readObject();
+            } catch (ClassNotFoundException e) {
+                throw new IOException("Failed to deserialize snapshot entry", e);
+            }
+        }
+    }
+    
     @Override
     public void close() {
-        // Nothing to close for file-based snapshot store
+        if (closed) {
+            return;
+        }
+        closed = true;
+        
+        // Shutdown IO executor with short timeout - cleanup operations are best-effort
+        ioExecutor.shutdown();
+        try {
+            // Only wait 1 second for graceful shutdown, then force shutdown
+            // Prune and cleanup operations are non-critical and can be interrupted
+            if (!ioExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
+                logger.debug("IO executor did not terminate gracefully, forcing shutdown");
+                ioExecutor.shutdownNow();
+                // Give interrupted tasks a brief moment to clean up
+                if (!ioExecutor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
+                    logger.warn("IO executor did not terminate after forced shutdown");
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            ioExecutor.shutdownNow();
+        }
+        
+        logger.info("File snapshot store closed");
     }
 }

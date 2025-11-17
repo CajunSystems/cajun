@@ -87,6 +87,11 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     
     // Truncation configuration for managing disk space
     private TruncationConfig truncationConfig = TruncationConfig.builder().build();
+    
+    // Prune debouncing to prevent excessive concurrent prune operations
+    private long lastPruneTime = 0;
+    private static final long MIN_PRUNE_INTERVAL_MS = 5000; // Only prune every 5 seconds max
+    private final AtomicReference<CompletableFuture<Integer>> activePruneFuture = new AtomicReference<>(null);
 
     // Helper method removed as it's no longer needed with the standardized constructor signatures
 
@@ -408,18 +413,17 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         metrics.unregister();
         MetricsRegistry.unregisterActorMetrics(actorId);
         
-        // Ensure the final state is persisted before stopping
-        if (stateInitialized && currentState.get() != null) {
-            if (stateChanged) {
-                // Take a final snapshot and wait for it to complete
-                logger.debug("Taking final snapshot for actor {} before shutdown", actorId);
-                try {
-                    takeSnapshot().join();
-                } catch (Exception e) {
-                    logger.error("Error taking snapshot for actor {}", actorId, e);
-                    metrics.errorOccurred();
+        // Trigger final snapshot asynchronously (fire-and-forget)
+        // Don't block shutdown waiting for it - let it complete in background if possible
+        if (stateInitialized && currentState.get() != null && stateChanged) {
+            logger.debug("Triggering final snapshot for actor {} (async)", actorId);
+            takeSnapshot().whenComplete((v, e) -> {
+                if (e != null) {
+                    logger.warn("Final snapshot failed for actor {} (non-blocking): {}", actorId, e.getMessage());
+                } else {
+                    logger.debug("Final snapshot completed for actor {}", actorId);
                 }
-            }
+            });
         }
         
         // Shutdown the persistence executor
@@ -841,37 +845,69 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         long sequence = lastProcessedSequence.get();
         logger.debug("Taking snapshot for actor {} at sequence {}", actorId, sequence);
         
-        return snapshotStore.saveSnapshot(actorId, state, sequence)
-                .thenCompose(v -> {
+        // Save snapshot and return immediately - don't wait for cleanup
+        CompletableFuture<Void> snapshotFuture = snapshotStore.saveSnapshot(actorId, state, sequence)
+                .thenAccept(v -> {
                     logger.debug("Snapshot taken for actor {} at sequence {}", actorId, sequence);
                     metrics.snapshotTaken();
-                    
-                    // Truncate journal if configured
-                    if (truncationConfig.isTruncateJournalOnSnapshot()) {
-                        logger.debug("Truncating journal before sequence {} for actor: {}", sequence, actorId);
-                        return messageJournal.truncateBefore(actorId, sequence);
-                    }
-                    return CompletableFuture.completedFuture(null);
-                })
-                .thenCompose(v -> {
-                    // Prune old snapshots if configured
-                    if (truncationConfig.isSnapshotBasedTruncationEnabled()) {
-                        int keepCount = truncationConfig.getSnapshotsToKeep();
-                        logger.debug("Pruning snapshots, keeping {} for actor: {}", keepCount, actorId);
-                        return snapshotStore.pruneOldSnapshots(actorId, keepCount)
-                                .thenAccept(deleted -> {
-                                    if (deleted > 0) {
-                                        logger.info("Pruned {} old snapshots for actor: {}", deleted, actorId);
-                                    }
-                                });
-                    }
-                    return CompletableFuture.completedFuture(null);
                 })
                 .exceptionally(e -> {
-                    logger.error("Error taking snapshot or truncating for actor {}", actorId, e);
+                    logger.error("Error taking snapshot for actor {}", actorId, e);
                     metrics.errorOccurred();
                     return null;
                 });
+        
+        // Run cleanup operations asynchronously in parallel (best-effort, don't block snapshot)
+        if (truncationConfig.isTruncateJournalOnSnapshot()) {
+            messageJournal.truncateBefore(actorId, sequence)
+                .whenComplete((v, e) -> {
+                    if (e != null) {
+                        logger.debug("Journal truncation failed for actor {} (non-critical): {}", actorId, e.getMessage());
+                    } else {
+                        logger.debug("Journal truncated before sequence {} for actor: {}", sequence, actorId);
+                    }
+                });
+        }
+        
+        if (truncationConfig.isSnapshotBasedTruncationEnabled()) {
+            // Debounce prune operations - only run if:
+            // 1. Enough time has passed since last prune
+            // 2. No prune is currently running
+            long now = System.currentTimeMillis();
+            if (now - lastPruneTime > MIN_PRUNE_INTERVAL_MS) {
+                CompletableFuture<Integer> existingPrune = activePruneFuture.get();
+                if (existingPrune == null || existingPrune.isDone()) {
+                    // Use a sentinel to claim the prune slot atomically
+                    CompletableFuture<Integer> sentinel = new CompletableFuture<>();
+                    if (activePruneFuture.compareAndSet(existingPrune, sentinel)) {
+                        // We successfully claimed the prune slot - now actually run it
+                        lastPruneTime = now;
+                        int keepCount = truncationConfig.getSnapshotsToKeep();
+                        CompletableFuture<Integer> pruneFuture = snapshotStore.pruneOldSnapshots(actorId, keepCount)
+                            .whenComplete((deleted, e) -> {
+                                activePruneFuture.set(null); // Clear active prune
+                                if (e != null) {
+                                    logger.debug("Snapshot pruning failed for actor {} (non-critical): {}", actorId, e.getMessage());
+                                } else if (deleted > 0) {
+                                    logger.info("Pruned {} old snapshots for actor: {}", deleted, actorId);
+                                }
+                            });
+                        
+                        // Replace sentinel with actual future
+                        activePruneFuture.set(pruneFuture);
+                    } else {
+                        logger.trace("Skipping prune for actor {} - lost race to start prune", actorId);
+                    }
+                } else {
+                    logger.trace("Skipping prune for actor {} - prune already in progress", actorId);
+                }
+            } else {
+                logger.trace("Skipping prune for actor {} - too soon since last prune", actorId);
+            }
+        }
+        
+        // Return only the snapshot future - cleanup runs independently
+        return snapshotFuture;
     }
 
     /**

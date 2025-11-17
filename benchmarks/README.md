@@ -123,11 +123,21 @@ Direct comparison between filesystem-based and LMDB persistence for stateful act
 - **Scalability**: Performance under concurrent load
 - **Durability**: Data persistence and recovery characteristics
 
-**Expected Results:**
+**Observed Results (sample Docker run: 1 warmup / 2 iterations / 1 fork / 1 thread):**
 
-- **LMDB**: Higher throughput, lower latency, better concurrency
-- **Filesystem**: Simpler implementation, more disk space usage
-- **Use Case**: Choose based on performance vs simplicity requirements
+- **Few stateful actors (5 actors, throughput)**  
+  - Filesystem: ~172 ops/s  
+  - LMDB: ~149 ops/s
+- **Simple persistence (average latency)**  
+  - Filesystem: ~0.123 µs/op  
+  - LMDB: ~0.174 µs/op
+
+Both backends are extremely fast in absolute terms. In these scenarios, LMDB is modestly slower (roughly 1.2–1.4×) but provides stronger transactional semantics and centralized environment management.
+
+**Tradeoffs:**
+
+- **Filesystem-based persistence**: Simple, transparent files that are easy to inspect and debug; good default when you want minimal moving parts or maximum visibility into on-disk data.
+- **LMDB-based persistence**: Embedded ACID key-value store with efficient memory-mapped I/O and scalable concurrent reads; better fit when you want a more database-like persistence layer and are comfortable with the native dependency.
 
 **Docker Recommended**: Filesystem benchmarks can create many temporary files. Use `./run-benchmark.sh persistence-quick` for a quick comparison or `./run-benchmark.sh persistence` for full analysis.
 

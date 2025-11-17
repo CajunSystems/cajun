@@ -1,0 +1,12 @@
+FROM eclipse-temurin:21-jdk
+
+# Install LMDB native libraries
+RUN apt-get update && \
+    apt-get install -y liblmdb-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Keep container running for tests
+CMD ["tail", "-f", "/dev/null"]

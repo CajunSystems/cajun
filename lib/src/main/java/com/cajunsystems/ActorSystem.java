@@ -4,7 +4,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.time.Duration;
 import java.util.function.Consumer;
@@ -769,78 +768,53 @@ public class ActorSystem {
     }
     
     public void shutdown() {
-        logger.info("Shutting down all actors in the system");
-        
-        // Get a copy of all actor IDs to avoid ConcurrentModificationException
+        logger.info("Shutting down all actors in the system (non-blocking)");
+
+        // Best-effort stop for all actors without waiting on structured concurrency
         List<String> actorIds = new ArrayList<>(actors.keySet());
-        
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
-            // Submit shutdown task for each actor
-            for (String actorId : actorIds) {
-                scope.fork(() -> {
-                    Actor<?> actor = actors.get(actorId);
-                    if (actor != null && actor.isRunning()) {
-                        try {
-                            actor.stop();
-                            logger.debug("Actor {} shut down successfully", actorId);
-                        } catch (Exception e) {
-                            logger.warn("Error shutting down actor {}", actorId, e);
-                            throw e; // Propagate exception to the scope
-                        }
-                    }
-                    return null;
-                });
-            }
-            
-            try {
-                // Wait for all tasks to complete or fail
-                scope.join();
-                // Ensure no failures occurred
-                scope.throwIfFailed(e -> new RuntimeException("Error during actor system shutdown", e));
-                
-                // Clear the actor registry
-                actors.clear();
-                
-                // Cancel any scheduled messages
-                for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
-                    future.cancel(true);
-                }
-                pendingDelayedMessages.clear();
-                
-                // Shutdown the delay scheduler
-                safeShutdownScheduler(delayScheduler);
-
-                // Shutdown the shared executor if it exists
-                safeShutdownScheduler(sharedExecutor);
-                
-                // Shutdown the dispatcher
-                dispatcher.shutdown();
-                dispatcher.awaitTermination(5, TimeUnit.SECONDS);
-                
-                // Signal the keep-alive thread to exit
-                shutdownLatch.countDown();
-                
-                // Wait for keep-alive thread to finish (with timeout)
+        for (String actorId : actorIds) {
+            Actor<?> actor = actors.get(actorId);
+            if (actor != null && actor.isRunning()) {
                 try {
-                    if (!keepAliveThread.join(Duration.ofSeconds(2))) {
-                        logger.warn("Keep-alive thread did not exit within timeout");
-                        keepAliveThread.interrupt();
-                    }
-                } catch (InterruptedException e) {
-                    logger.warn("Interrupted while waiting for keep-alive thread");
-                    Thread.currentThread().interrupt();
+                    actor.stop();
+                    logger.debug("Actor {} shut down successfully", actorId);
+                } catch (Exception e) {
+                    // Log and continue shutting down other actors
+                    logger.warn("Error shutting down actor {} (non-blocking)", actorId, e);
                 }
-
-                logger.info("Actor system shut down successfully");
-            } catch (InterruptedException e) {
-                logger.error("Actor system shutdown was interrupted", e);
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Actor system shutdown was interrupted", e);
             }
-        } catch (Exception e) {
-            logger.error("Error during actor system shutdown", e);
-            throw new RuntimeException("Error during actor system shutdown: " + e.getMessage(), e);
         }
+
+        // Clear the actor registry
+        actors.clear();
+
+        // Cancel any scheduled messages
+        for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
+            future.cancel(true);
+        }
+        pendingDelayedMessages.clear();
+
+        // Shutdown the delay scheduler and shared executor (bounded waits inside helper)
+        safeShutdownScheduler(delayScheduler);
+        safeShutdownScheduler(sharedExecutor);
+
+        // Shutdown the dispatcher with a bounded wait
+        dispatcher.shutdown();
+        dispatcher.awaitTermination(5, TimeUnit.SECONDS);
+
+        // Signal the keep-alive thread to exit and join with a small timeout
+        shutdownLatch.countDown();
+        try {
+            if (!keepAliveThread.join(Duration.ofSeconds(2))) {
+                logger.warn("Keep-alive thread did not exit within timeout");
+                keepAliveThread.interrupt();
+            }
+        } catch (InterruptedException e) {
+            logger.warn("Interrupted while waiting for keep-alive thread", e);
+            Thread.currentThread().interrupt();
+        }
+
+        logger.info("Actor system shut down successfully (non-blocking)");
     }
 
     private void safeShutdownScheduler(ExecutorService scheduler) {
