@@ -12,4 +12,5 @@ module com.cajunsystems.core {
 
     exports com.cajunsystems.config;
     exports com.cajunsystems.persistence;
+    exports com.cajunsystems.cluster;
 }

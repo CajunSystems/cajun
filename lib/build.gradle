@@ -36,12 +36,12 @@ dependencies {
     api project(':cajun-core')
     api project(':cajun-mailbox')
     api project(':cajun-persistence')
+    api project(':cajun-cluster')
 
     // Core dependencies (abstract interfaces)
     api 'org.slf4j:slf4j-api:2.0.9'
 
-    // Runtime implementation dependencies
-    implementation "io.etcd:jetcd-core:0.7.6"
+    // Runtime implementation dependencies (logback for logging)
     implementation 'ch.qos.logback:logback-classic:1.4.11'
 
     // Use JUnit Jupiter for testing.
