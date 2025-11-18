@@ -1,0 +1,68 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'com.cajunsystems'
+version = project.findProperty('cajunVersion') ?: '0.2.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withJavadocJar()
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).each {
+    it.options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Javadoc) {
+    options.addBooleanOption('-enable-preview', true)
+    options.addStringOption('source', '21')
+}
+
+dependencies {
+    // Core only depends on slf4j for logging
+    api 'org.slf4j:slf4j-api:2.0.9'
+
+    // Testing
+    testImplementation libs.junit.jupiter
+    testImplementation 'org.mockito:mockito-core:5.7.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    jvmArgs(['--enable-preview'])
+    useJUnitPlatform {
+        excludeTags 'performance'
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            artifactId = 'cajun-core'
+
+            pom {
+                name.set('Cajun Core')
+                description.set('Core abstractions and interfaces for the Cajun actor system')
+                url.set('https://github.com/cajunsystems/cajun')
+
+                licenses {
+                    license {
+                        name.set('MIT License')
+                        url.set('https://opensource.org/licenses/MIT')
+                    }
+                }
+            }
+        }
+    }
+}

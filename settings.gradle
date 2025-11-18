@@ -11,6 +11,16 @@ plugins {
 }
 
 rootProject.name = 'cajun'
+
+// New modular structure
+include('cajun-core')
+include('cajun-mailbox')
+include('cajun-persistence')
+include('cajun-cluster')
+
+// Legacy lib module (for backward compatibility)
 include('lib')
+
+// Supporting modules
 include('test-utils')
 include('benchmarks')
