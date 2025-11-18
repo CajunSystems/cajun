@@ -2,25 +2,25 @@ Performance Results:
 Total messages processed: 1000000
 
 Actor-based implementation (without backpressure):
-  Total time: 299 ms
-  Throughput: 3344481.61 messages/second
+  Total time: 289 ms
+  Throughput: 3460207.61 messages/second
 
 Actor-based implementation (with backpressure):
-  Total time: 357 ms
-  Throughput: 2801120.45 messages/second
+  Total time: 498 ms
+  Throughput: 2008032.13 messages/second
 
 Thread-based implementation:
-  Total time: 1288 ms
-  Throughput: 776397.52 messages/second
+  Total time: 1355 ms
+  Throughput: 738007.38 messages/second
 
 Structured Concurrency implementation:
-  Total time: 1304 ms
-  Throughput: 766871.17 messages/second
+  Total time: 1367 ms
+  Throughput: 731528.90 messages/second
 
 Performance ratios:
-  Thread/Actor(no BP): 4.31
-  Thread/Actor(with BP): 3.61
-  Structured/Actor(no BP): 4.36
-  Structured/Actor(with BP): 3.65
+  Thread/Actor(no BP): 4.69
+  Thread/Actor(with BP): 2.72
+  Structured/Actor(no BP): 4.73
+  Structured/Actor(with BP): 2.74
   Structured/Thread: 1.01
-  Actor(with BP)/Actor(no BP): 1.19
+  Actor(with BP)/Actor(no BP): 1.72

@@ -178,8 +178,6 @@ public class MailboxProcessor<T> {
                 // Reduced from 100ms to 1ms for better message latency (100x improvement)
                 T first = mailbox.poll(1, TimeUnit.MILLISECONDS);
                 if (first == null) {
-                    // No messages available, yield to prevent busy waiting
-                    Thread.yield();
                     continue;
                 }
                 batchBuffer.add(first);

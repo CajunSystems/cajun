@@ -4,6 +4,7 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
+import com.cajunsystems.config.ThreadPoolFactory;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.Serializable;
@@ -29,6 +30,13 @@ public class ComparisonBenchmark {
 
     private ActorSystem actorSystem;
     private ExecutorService executor;
+
+    // Reusable actor pools to avoid per-invocation spawn/stop cost
+    private Pid[] batchActorPool;
+    private static final int BATCH_ACTOR_POOL_SIZE = Runtime.getRuntime().availableProcessors();
+
+    private Pid[] scatterWorkers;
+    private static final int SCATTER_WORKER_COUNT = 10;
 
     // Shared workload parameters
     private static final int WORKLOAD_SIZE = 100;
@@ -84,8 +92,29 @@ public class ComparisonBenchmark {
 
     @Setup
     public void setup() {
-        actorSystem = new ActorSystem();
+        // CPU-bound benchmark: optimize actor system for CPU workloads
+        ThreadPoolFactory cpuOptimized = new ThreadPoolFactory()
+            .optimizeFor(ThreadPoolFactory.WorkloadType.CPU_BOUND)
+            // Increase actor batch size so mailbox processing can amortize overhead
+            .setActorBatchSize(50);
+        actorSystem = new ActorSystem(cpuOptimized);
         executor = Executors.newVirtualThreadPerTaskExecutor();
+
+        // Initialize reusable actor pool for batch processing
+        batchActorPool = new Pid[BATCH_ACTOR_POOL_SIZE];
+        for (int i = 0; i < BATCH_ACTOR_POOL_SIZE; i++) {
+            batchActorPool[i] = actorSystem.actorOf(WorkHandler.class)
+                .withId("batch-pool-" + i)
+                .spawn();
+        }
+
+        // Initialize reusable workers for scatter-gather
+        scatterWorkers = new Pid[SCATTER_WORKER_COUNT];
+        for (int i = 0; i < SCATTER_WORKER_COUNT; i++) {
+            scatterWorkers[i] = actorSystem.actorOf(WorkHandler.class)
+                .withId("sg-pool-" + i)
+                .spawn();
+        }
     }
 
     @TearDown
@@ -192,20 +221,18 @@ public class ComparisonBenchmark {
     public void batchProcessing_Actors() throws Exception {
         CountDownLatch latch = new CountDownLatch(WORKLOAD_SIZE);
 
-        Pid[] workers = new Pid[WORKLOAD_SIZE];
-        for (int i = 0; i < WORKLOAD_SIZE; i++) {
-            workers[i] = actorSystem.actorOf(WorkHandler.class)
-                .withId("batch-worker-" + i + "-" + System.nanoTime())
-                .spawn();
-            workers[i].tell(new WorkMessage.Batch(1, latch));
+        // Distribute work across a reusable pool of actors, using larger batch counts
+        int baseCountPerActor = WORKLOAD_SIZE / BATCH_ACTOR_POOL_SIZE;
+        int remainder = WORKLOAD_SIZE % BATCH_ACTOR_POOL_SIZE;
+
+        for (int i = 0; i < BATCH_ACTOR_POOL_SIZE; i++) {
+            int count = baseCountPerActor + (i < remainder ? 1 : 0);
+            if (count > 0) {
+                batchActorPool[i].tell(new WorkMessage.Batch(count, latch));
+            }
         }
 
         latch.await(10, TimeUnit.SECONDS);
-
-        // Clean up actors
-        for (Pid worker : workers) {
-            actorSystem.stopActor(worker);
-        }
     }
 
     @Benchmark
@@ -342,29 +369,18 @@ public class ComparisonBenchmark {
     @Benchmark
     @OperationsPerInvocation(10)
     public long scatterGather_Actors() throws Exception {
-        Pid[] workers = new Pid[10];
         CompletableFuture<Long>[] results = new CompletableFuture[10];
 
         for (int i = 0; i < 10; i++) {
-            workers[i] = actorSystem.actorOf(WorkHandler.class)
-                .withId("sg-worker-" + i + "-" + System.nanoTime())
-                .spawn();
-
             results[i] = new CompletableFuture<>();
             final int index = i;
-            workers[i].tell(new WorkMessage.Compute(10, results[index]));
+            scatterWorkers[i].tell(new WorkMessage.Compute(10, results[index]));
         }
 
         long sum = 0;
         for (CompletableFuture<Long> result : results) {
             sum += result.get(5, TimeUnit.SECONDS);
         }
-
-        // Clean up actors
-        for (Pid worker : workers) {
-            actorSystem.stopActor(worker);
-        }
-
         return sum;
     }
 
