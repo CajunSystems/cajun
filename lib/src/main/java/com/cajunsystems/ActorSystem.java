@@ -101,7 +101,7 @@ public class ActorSystem {
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory(), null, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(new ThreadPoolFactory(), null, new MailboxConfig(), new DefaultMailboxProvider());
     }
 
     /**
@@ -110,7 +110,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new DefaultMailboxProvider());
     }
 
     /**
@@ -119,7 +119,7 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
-        this(threadPoolConfig, null, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(threadPoolConfig, null, new MailboxConfig(), new DefaultMailboxProvider());
     }
 
     /**
@@ -129,7 +129,7 @@ public class ActorSystem {
      * @param backpressureConfig The backpressure configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig) {
-        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new DefaultMailboxProvider());
     }
     
     /**
@@ -141,7 +141,7 @@ public class ActorSystem {
      * @param mailboxConfig The mailbox configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
-        this(threadPoolConfig, backpressureConfig, mailboxConfig, new DefaultMailboxProvider<>());
+        this(threadPoolConfig, backpressureConfig, mailboxConfig, new DefaultMailboxProvider());
     }
 
     /**
@@ -160,7 +160,7 @@ public class ActorSystem {
         this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
         this.backpressureConfig = backpressureConfig; // Allow null to disable backpressure
         this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
-        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider<>();
+        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider();
         
         // Create the delay scheduler based on configuration
         this.delayScheduler = this.threadPoolConfig.createScheduledExecutorService("actor-system");

@@ -18,6 +18,16 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    main {
+        java {
+            exclude 'module-info.java'
+            exclude 'com/cajunsystems/persistence/ActorSystemPersistenceExtension.java'
+            exclude 'com/cajunsystems/persistence/ActorSystemPersistenceHelper.java'
+        }
+    }
+}
+
 tasks.withType(JavaCompile).each {
     it.options.compilerArgs.add('--enable-preview')
 }

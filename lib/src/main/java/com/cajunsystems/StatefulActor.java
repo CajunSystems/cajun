@@ -17,6 +17,9 @@ import com.cajunsystems.metrics.MetricsRegistry;
 import com.cajunsystems.persistence.*;
 import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.PersistenceProviderRegistry;
+import com.cajunsystems.persistence.PersistenceTruncationConfig;
+import com.cajunsystems.persistence.PersistenceTruncationMode;
+import com.cajunsystems.persistence.filesystem.FileSystemTruncationDaemon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +66,13 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     private long lastSnapshotTime = 0;
     private int changesSinceLastSnapshot = 0;
     private final PersistenceProvider persistenceProvider;
+
+    // Truncation configuration (global default with per-actor override)
+    private static volatile PersistenceTruncationConfig globalTruncationConfig =
+            PersistenceTruncationConfig.defaultSync();
+
+    private PersistenceTruncationConfig truncationConfig = globalTruncationConfig;
+    private long lastAsyncTruncationTime = 0L;
     
     // Metrics for this actor
     private final ActorMetrics metrics;
@@ -84,6 +94,26 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     
     // Error hook for custom error handling
     private Consumer<Throwable> errorHook = ex -> {};
+
+    /**
+     * Sets the global truncation configuration used for new stateful actors
+     * that do not specify a per-actor configuration.
+     */
+    public static void setGlobalTruncationConfig(PersistenceTruncationConfig config) {
+        if (config != null) {
+            globalTruncationConfig = config;
+        }
+    }
+
+    /**
+     * Sets the truncation configuration for this actor instance.
+     * This allows per-actor overrides via builder APIs.
+     */
+    public void setTruncationConfig(PersistenceTruncationConfig config) {
+        if (config != null) {
+            this.truncationConfig = config;
+        }
+    }
 
     // Helper method removed as it's no longer needed with the standardized constructor signatures
 
@@ -361,6 +391,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         metrics.register();
         MetricsRegistry.registerActorMetrics(actorId, metrics);
         
+        // Register with filesystem cleanup daemon in async mode, if applicable
+        registerForAsyncTruncationIfNeeded();
+        
         // Initialize state asynchronously to avoid blocking the actor thread
         initializeState().thenRun(() -> {
             logger.debug("Actor {} state initialization completed", getActorId());
@@ -404,6 +437,11 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         // Unregister metrics
         metrics.unregister();
         MetricsRegistry.unregisterActorMetrics(actorId);
+
+        // Unregister from filesystem truncation daemon if previously registered
+        if (messageJournal instanceof TruncationCapableJournal) {
+            FileSystemTruncationDaemon.getInstance().unregisterJournal(actorId);
+        }
         
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
@@ -548,9 +586,23 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                                 takeSnapshot().thenRun(() -> {
                                     stateChanged = false;
                                     changesSinceLastSnapshot = 0;
-                                    
+
                                     // Record snapshot in metrics
                                     metrics.snapshotTaken();
+
+                                    // Automatic truncation in sync mode for truncation-capable journals
+                                    if (messageJournal instanceof TruncationCapableJournal &&
+                                            truncationConfig != null &&
+                                            truncationConfig.getMode() == PersistenceTruncationMode.SYNC_ON_SNAPSHOT) {
+                                        long snapshotSeq = lastProcessedSequence.get();
+                                        if (snapshotSeq >= 0) {
+                                            long retainBehind = truncationConfig.getRetainMessagesBehindSnapshot();
+                                            long cutoff = snapshotSeq - retainBehind;
+                                            if (cutoff > 0) {
+                                                messageJournal.truncateBefore(actorId, cutoff);
+                                            }
+                                        }
+                                    }
                                 });
                                 lastSnapshotTime = now;
                             }
@@ -572,6 +624,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 // Record message processing time
                 long processingTime = System.nanoTime() - startTime;
                 metrics.messageProcessed(processingTime);
+
+                // Async truncation mode: trigger occasional cleanup in the background
+                maybeRunAsyncTruncation();
             })
             .exceptionally(e -> {
                 logger.error("Error journaling message for actor {}", actorId, e);
@@ -623,9 +678,91 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 
                 // Record snapshot in metrics
                 metrics.snapshotTaken();
+
+                // Automatic truncation in sync mode for truncation-capable journals
+                if (messageJournal instanceof TruncationCapableJournal &&
+                        truncationConfig != null &&
+                        truncationConfig.getMode() == PersistenceTruncationMode.SYNC_ON_SNAPSHOT) {
+                    long snapshotSeq = lastProcessedSequence.get();
+                    if (snapshotSeq >= 0) {
+                        long retainBehind = truncationConfig.getRetainMessagesBehindSnapshot();
+                        long cutoff = snapshotSeq - retainBehind;
+                        if (cutoff > 0) {
+                            messageJournal.truncateBefore(actorId, cutoff);
+                        }
+                    }
+                }
             });
         }
         return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * In async truncation mode, registers this actor's journal with the
+     * filesystem cleanup daemon so truncation is performed in the background.
+     * Only truncation-capable journals are registered.
+     */
+    private void registerForAsyncTruncationIfNeeded() {
+        if (!(messageJournal instanceof TruncationCapableJournal)) {
+            return;
+        }
+
+        PersistenceTruncationConfig cfg = this.truncationConfig;
+        if (cfg == null || cfg.getMode() != PersistenceTruncationMode.ASYNC_DAEMON) {
+            return;
+        }
+
+        FileSystemTruncationDaemon daemon = FileSystemTruncationDaemon.getInstance();
+        // Configure daemon interval globally; retention is tracked per actor
+        daemon.setInterval(cfg.getDaemonInterval());
+        daemon.registerJournal(actorId, messageJournal, cfg.getRetainLastMessagesPerActor());
+        daemon.start();
+    }
+
+    /**
+     * In async truncation mode, periodically runs background truncation based on
+     * the actor's truncation configuration. This keeps journals bounded without
+     * blocking the actor thread.
+     */
+    private void maybeRunAsyncTruncation() {
+        // Only run async truncation for journals that opt in to truncation
+        if (!(messageJournal instanceof TruncationCapableJournal)) {
+            return;
+        }
+
+        PersistenceTruncationConfig cfg = this.truncationConfig;
+        if (cfg == null || cfg.getMode() != PersistenceTruncationMode.ASYNC_DAEMON) {
+            return;
+        }
+
+        long intervalMs = cfg.getDaemonInterval().toMillis();
+        if (intervalMs <= 0) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastAsyncTruncationTime < intervalMs) {
+            return;
+        }
+        lastAsyncTruncationTime = now;
+
+        // Run cleanup on the persistence executor
+        runAsync(() -> messageJournal.getHighestSequenceNumber(actorId)
+                .thenCompose(highestSeq -> {
+                    if (highestSeq == null || highestSeq < 0) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    long retain = cfg.getRetainLastMessagesPerActor();
+                    long cutoff = highestSeq - retain;
+                    if (cutoff <= 0) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    return messageJournal.truncateBefore(actorId, cutoff);
+                }))
+                .exceptionally(e -> {
+                    logger.warn("Async truncation failed for actor {}", actorId, e);
+                    return null;
+                });
     }
 
     /**

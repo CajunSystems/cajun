@@ -18,6 +18,15 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    main {
+        java {
+            exclude 'module-info.java'
+            exclude 'com/cajunsystems/cluster/impl/ClusterFactory.java'
+        }
+    }
+}
+
 tasks.withType(JavaCompile).each {
     it.options.compilerArgs.add('--enable-preview')
 }
@@ -33,6 +42,9 @@ dependencies {
 
     // Etcd for leader election and coordination
     implementation 'io.etcd:jetcd-core:0.7.6'
+
+    // gRPC stubs for cluster messaging
+    implementation 'io.grpc:grpc-stub:1.62.2'
 
     // Testing
     testImplementation libs.junit.jupiter

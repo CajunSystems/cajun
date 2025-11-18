@@ -9,7 +9,6 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Optional;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -35,7 +34,7 @@ public abstract class Actor<Message> {
     // Core Actor fields
     private final String actorId;
     private Pid pid;
-    private BlockingQueue<Message> mailbox;
+    private com.cajunsystems.mailbox.Mailbox<Message> mailbox;
     private final ActorSystem system;
     private SupervisionStrategy supervisionStrategy = SupervisionStrategy.RESUME;
     private Actor<?> parent;
@@ -238,7 +237,7 @@ public abstract class Actor<Message> {
             this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
         }
 
-        this.mailboxProcessor = new MailboxProcessor<>(
+        this.mailboxProcessor = new MailboxProcessor<Message>(
                 this.actorId, // Use this.actorId which is now definitely set
                 mailbox,
                 configuredBatchSize,

@@ -31,7 +31,7 @@ import java.util.concurrent.locks.ReentrantLock;
 public class MpscMailbox<T> implements Mailbox<T> {
 
     private final MpscUnboundedArrayQueue<T> queue;
-    private final Lock lock;
+    private final ReentrantLock lock;
     private final Condition notEmpty;
     private final int initialCapacity;
 

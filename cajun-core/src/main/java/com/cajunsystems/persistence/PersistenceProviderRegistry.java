@@ -1,7 +1,5 @@
 package com.cajunsystems.persistence;
 
-import com.cajunsystems.persistence.impl.FileSystemPersistenceProvider;
-
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -22,11 +20,8 @@ public class PersistenceProviderRegistry {
     
     /**
      * Private constructor to enforce singleton pattern.
-     * Initializes the registry with the default file system provider.
      */
     private PersistenceProviderRegistry() {
-        // Register the default file system provider
-        registerProvider(new FileSystemPersistenceProvider());
     }
     
     /**

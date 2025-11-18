@@ -1,4 +1,4 @@
-## Cajun Persistence Guide
+# Cajun Persistence Guide
 
 ## Overview
 
@@ -8,10 +8,10 @@ Cajun provides pluggable persistence backends for stateful actors through the `c
 
 ## Quick Reference
 
-| Backend | Write Throughput | Read Throughput | Use Case | Portability |
-|---------|-----------------|-----------------|----------|-------------|
-| **Filesystem** | 10K-50K/sec | 50K-100K/sec | Development, Testing | ⭐⭐⭐⭐⭐ Excellent |
-| **LMDB** | 500K-1M/sec | 1M-2M/sec | Production, High-throughput | ⭐⭐⭐⭐ Good |
+| Backend | Small Batch (1K) | Large Batch (5K) | Reads | Use Case | Portability |
+|---------|----------------|----------------|--------|----------|-------------|
+| **Filesystem** | 50M msgs/sec | 48M msgs/sec | 100K msgs/sec | Development, Testing | ⭐⭐⭐⭐⭐ Excellent |
+| **LMDB** | 5M msgs/sec | 208M msgs/sec | 1M+ msgs/sec | Production, High-throughput | ⭐⭐⭐⭐ Good |
 
 ---
 
@@ -93,11 +93,14 @@ Pid actor = system.statefulActorOf(MyHandler.class, initialState)
 - Embedded (no server process)
 
 #### Performance
-- **Sequential writes**: 500K-1M messages/sec
-- **Sequential reads**: 1M-2M messages/sec (memory-mapped!)
+- **Small batches (1K)**: 5M msgs/sec (filesystem faster)
+- **Large batches (5K+)**: 200M+ msgs/sec (LMDB faster)
+- **Sequential reads**: 1M-2M msgs/sec (memory-mapped, zero-copy)
 - **Snapshot saves**: 100K-500K/sec
 - **Snapshot loads**: 500K-1M/sec
 - **Random access**: 100K-500K lookups/sec
+
+**Key insight**: LMDB scales dramatically with batch size due to single-transaction amortization.
 
 #### Storage Format
 ```
@@ -123,6 +126,13 @@ Pid actor = system.statefulActorOf(MyHandler.class, initialState)
         provider.createMessageJournal("my-actor"),
         provider.createSnapshotStore("my-actor")
     )
+    .spawn();
+
+// For high-throughput scenarios, use the native batched journal
+BatchedMessageJournal<MyEvent> batchedJournal =
+    provider.createBatchedMessageJournalSerializable("my-actor", 5000, 10);
+Pid highThroughputActor = system.statefulActorOf(MyHandler.class, initialState)
+    .withPersistence(batchedJournal, provider.createSnapshotStore("my-actor"))
     .spawn();
 
 // Cleanup on shutdown
@@ -157,6 +167,22 @@ snapshotStore.setMaxSnapshotsToKeep(5); // Keep last 5 snapshots
 - Fixed maximum size (map size)
 - Single writer per environment
 - Binary format (not human-readable)
+- Slower than filesystem for very small batches (<1K)
+
+#### When to Use LMDB ✅
+- **Production workloads** with high throughput
+- **Large batch sizes** (>5K messages per batch)
+- **Read-heavy** workloads (zero-copy reads)
+- **Low recovery time** requirements (memory-mapped)
+- **ACID guarantees** needed
+- **Long-running processes** (embedded database)
+
+#### When to Use Filesystem ✅
+- **Development and testing** (simplicity)
+- **Small batches** (<1K messages)
+- **Need to inspect data** manually (human-readable)
+- **Cross-platform simplicity** (no native deps)
+- **Occasional writes** (not throughput-critical)
 
 ---
 
@@ -266,15 +292,19 @@ BatchedFileMessageJournal<MyMsg> journal = new BatchedFileMessageJournal<>(
 long mapSize = 100L * 1024 * 1024 * 1024; // 100GB
 LmdbPersistenceProvider provider = new LmdbPersistenceProvider(path, mapSize);
 
-// 2. Configure snapshot retention
+// 2. Use native batched journal for high throughput
+BatchedMessageJournal<MyEvent> journal = 
+    provider.createBatchedMessageJournalSerializable("actor", 5000, 10);
+
+// 3. Configure snapshot retention
 LmdbSnapshotStore<State> store =
     (LmdbSnapshotStore<State>) provider.createSnapshotStore("actor");
 store.setMaxSnapshotsToKeep(10); // Keep last 10
 
-// 3. Manual sync (normally auto-syncs)
+// 4. Manual sync (normally auto-syncs)
 provider.sync();
 
-// 4. Get statistics
+// 5. Get statistics
 Stat stats = provider.getStats();
 System.out.println("LMDB pages: " + stats.pageSize);
 System.out.println("LMDB entries: " + stats.entries);
@@ -309,9 +339,90 @@ public class MyHandler implements StatefulHandler<State, Message> {
 
 ### 2. Journal Cleanup
 
+#### Filesystem Journals
+
+For filesystem-based journals (`FileMessageJournal` / `BatchedFileMessageJournal`) you have two
+complementary cleanup modes to prevent unbounded growth:
+
+##### 2.1 Synchronous cleanup on snapshot
+
+Call `JournalCleanup.cleanupOnSnapshot` immediately after `ctx.saveSnapshot(...)` in your
+stateful handler:
+
 ```java
-// Delete old journal entries after successful snapshot
-journal.deleteUpTo(snapshotSequenceNumber - 100); // Keep last 100
+import com.cajunsystems.persistence.filesystem.JournalCleanup;
+
+public class MyHandler implements StatefulHandler<State, Message> {
+
+    private final MessageJournal<Message> journal;
+    private long lastSequence;
+
+    public MyHandler(MessageJournal<Message> journal) {
+        this.journal = journal;
+    }
+
+    @Override
+    public State receive(Message msg, State state, ActorContext ctx) {
+        // ... update state and sequence number ...
+
+        if (shouldSnapshot()) {
+            ctx.saveSnapshot(state);
+
+            long snapshotSeq = lastSequence;
+            long retainBehind = 100;  // keep last 100 messages before the snapshot
+
+            JournalCleanup.cleanupOnSnapshot(journal, ctx.getActorId(), snapshotSeq, retainBehind)
+                          .join();   // synchronous cleanup
+        }
+
+        return state;
+    }
+}
+```
+
+##### 2.2 Asynchronous background cleanup
+
+Use `FileSystemTruncationDaemon` to periodically truncate journals in the background using
+`getHighestSequenceNumber` and `truncateBefore` under the hood. You can configure a
+default retention policy and also override it per actor:
+
+```java
+import com.cajunsystems.persistence.MessageJournal;
+import com.cajunsystems.persistence.filesystem.FileSystemTruncationDaemon;
+
+// During bootstrap
+MessageJournal<MyMsg> journal = fileSystemProvider.createMessageJournal("my-actor");
+
+FileSystemTruncationDaemon daemon = FileSystemTruncationDaemon.getInstance();
+
+// Default retention for all actors that don't override it
+daemon.setRetainLastMessagesPerActor(10_000);
+
+// Per-actor retention (this actor keeps only last 5K messages)
+daemon.registerJournal("my-actor", journal, 5_000);
+
+daemon.setInterval(Duration.ofMinutes(2));   // run cleanup every 2 minutes
+daemon.start();
+
+// Optional: graceful shutdown
+Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+    daemon.close();
+}));
+```
+
+#### LMDB Journals
+
+LMDB journals **do not require explicit cleanup** because:
+- LMDB uses a memory-mapped B+ tree with automatic space reuse
+- Old entries are reclaimed when they exceed snapshot retention
+- No file accumulation like filesystem journals
+
+However, you can still configure snapshot retention to bound storage:
+
+```java
+LmdbSnapshotStore<State> snapshotStore =
+    (LmdbSnapshotStore<State>) lmdbProvider.createSnapshotStore("my-actor");
+snapshotStore.setMaxSnapshotsToKeep(5); // Keep last 5 snapshots
 ```
 
 ### 3. Error Handling
@@ -332,9 +443,11 @@ try {
 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
     lmdbProvider.close();
 }));
+
+// Filesystem cleanup daemon needs graceful shutdown
+FileSystemTruncationDaemon.getInstance().close();
 ```
 
----
 
 ## Monitoring and Metrics
 
@@ -390,6 +503,12 @@ long databaseSize = pageSize * numPages;
 ---
 
 ## FAQ
+
+**Q: How does batch size affect LMDB vs filesystem performance?**
+A: LMDB scales dramatically with batch size due to single-transaction amortization. Use batches >5K for LMDB to outperform filesystem. For small batches (<1K), filesystem is often faster.
+
+**Q: Does LMDB require journal cleanup like filesystem?**
+A: No. LMDB automatically reuses space in its memory-mapped structure. Only snapshot retention needs configuration.
 
 **Q: Can I use both backends simultaneously?**
 A: Yes! Register multiple providers:

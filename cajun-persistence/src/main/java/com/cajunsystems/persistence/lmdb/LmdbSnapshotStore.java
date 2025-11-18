@@ -11,6 +11,8 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static java.nio.ByteBuffer.allocateDirect;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -70,14 +72,50 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         this.maxSnapshotsToKeep = maxSnapshots;
     }
 
+    // Async SnapshotStore API
+
     @Override
+    public CompletableFuture<Void> saveSnapshot(String actorId, S state, long sequenceNumber) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                saveSnapshot(new SnapshotEntry<>(actorId, state, sequenceNumber));
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<Optional<SnapshotEntry<S>>> getLatestSnapshot(String actorId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return getLatestSnapshot();
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<Void> deleteSnapshots(String actorId) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                deleteAllSnapshots();
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    // Legacy synchronous helpers used internally by async API
+
     public void saveSnapshot(SnapshotEntry<S> snapshot) throws IOException {
         ByteBuffer keyBuf = allocateDirect(KEY_BUFFER_SIZE);
         ByteBuffer valBuf = allocateDirect(VALUE_BUFFER_SIZE);
 
         try {
             // Serialize key
-            String key = keyPrefix + snapshot.sequenceNumber();
+            String key = keyPrefix + snapshot.getSequenceNumber();
             keyBuf.put(key.getBytes(UTF_8)).flip();
 
             // Serialize value
@@ -94,7 +132,7 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
                 txn.commit();
             }
 
-            logger.debug("Saved snapshot for actor {} at sequence {}", actorId, snapshot.sequenceNumber());
+            logger.debug("Saved snapshot for actor {} at sequence {}", actorId, snapshot.getSequenceNumber());
 
             // Cleanup old snapshots
             cleanupOldSnapshots();
@@ -104,7 +142,6 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         }
     }
 
-    @Override
     public Optional<SnapshotEntry<S>> getLatestSnapshot() throws IOException {
         try (Txn<ByteBuffer> txn = env.txnRead()) {
             try (Cursor<ByteBuffer> cursor = db.openCursor(txn)) {
@@ -130,7 +167,6 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         return Optional.empty();
     }
 
-    @Override
     public Optional<SnapshotEntry<S>> getSnapshotAtOrBefore(long sequenceNumber) throws IOException {
         try (Txn<ByteBuffer> txn = env.txnRead()) {
             try (Cursor<ByteBuffer> cursor = db.openCursor(txn)) {
@@ -142,7 +178,7 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
                 if (cursor.get(keyBuf, GetOp.MDB_SET_RANGE)) {
                     // Check if exact match
                     Optional<SnapshotEntry<S>> snapshot = extractSnapshotFromCursor(cursor);
-                    if (snapshot.isPresent() && snapshot.get().sequenceNumber() <= sequenceNumber) {
+                    if (snapshot.isPresent() && snapshot.get().getSequenceNumber() <= sequenceNumber) {
                         return snapshot;
                     }
 
@@ -163,7 +199,6 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         return Optional.empty();
     }
 
-    @Override
     public List<SnapshotEntry<S>> getAllSnapshots() throws IOException {
         List<SnapshotEntry<S>> snapshots = new ArrayList<>();
 
@@ -192,7 +227,6 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         return snapshots;
     }
 
-    @Override
     public void deleteSnapshot(long sequenceNumber) throws IOException {
         try (Txn<ByteBuffer> txn = env.txnWrite()) {
             String key = keyPrefix + sequenceNumber;
@@ -208,7 +242,6 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         }
     }
 
-    @Override
     public void deleteAllSnapshots() throws IOException {
         try (Txn<ByteBuffer> txn = env.txnWrite()) {
             try (Cursor<ByteBuffer> cursor = db.openCursor(txn)) {
@@ -240,7 +273,6 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
         }
     }
 
-    @Override
     public void close() {
         // LMDB environment manages resources
         logger.debug("Closed snapshot store for actor {}", actorId);
@@ -253,12 +285,12 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
 
         if (allSnapshots.size() > maxSnapshotsToKeep) {
             // Sort by sequence number (should already be sorted, but ensure)
-            allSnapshots.sort((a, b) -> Long.compare(a.sequenceNumber(), b.sequenceNumber()));
+            allSnapshots.sort((a, b) -> Long.compare(a.getSequenceNumber(), b.getSequenceNumber()));
 
             // Delete oldest snapshots
             int toDelete = allSnapshots.size() - maxSnapshotsToKeep;
             for (int i = 0; i < toDelete; i++) {
-                deleteSnapshot(allSnapshots.get(i).sequenceNumber());
+                deleteSnapshot(allSnapshots.get(i).getSequenceNumber());
             }
 
             logger.debug("Cleaned up {} old snapshots for actor {}", toDelete, actorId);

@@ -2,6 +2,7 @@ package com.cajunsystems.persistence.filesystem;
 
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.MessageJournal;
+import com.cajunsystems.persistence.TruncationCapableJournal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,7 +23,7 @@ import java.util.stream.Collectors;
  *
  * @param <M> The type of the message
  */
-public class FileMessageJournal<M> implements MessageJournal<M> {
+public class FileMessageJournal<M> implements MessageJournal<M>, TruncationCapableJournal {
     private static final Logger logger = LoggerFactory.getLogger(FileMessageJournal.class);
     
     private final Path journalDir;

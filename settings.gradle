@@ -23,5 +23,4 @@ include('lib')
 
 // Supporting modules
 include('test-utils')
-// Temporarily disabled due to network issues downloading plugins
-// include('benchmarks')
+include('benchmarks')

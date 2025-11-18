@@ -61,6 +61,10 @@ dependencies {
 
     // This dependency is used internally, and not exposed to consumers on their own compile classpath.
     implementation libs.guava
+
+    // Etcd + gRPC for runtime.cluster EtcdMetadataStore
+    implementation 'io.etcd:jetcd-core:0.7.6'
+    implementation 'io.grpc:grpc-stub:1.62.2'
 }
 
 // Apply a specific Java toolchain to ease working on different environments.

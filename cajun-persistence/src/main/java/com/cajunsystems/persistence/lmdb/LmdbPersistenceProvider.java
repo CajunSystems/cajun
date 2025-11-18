@@ -83,13 +83,61 @@ public class LmdbPersistenceProvider implements PersistenceProvider {
     }
 
     @Override
-    public <T extends Serializable> MessageJournal<T> createMessageJournal(String actorId) {
-        return new LmdbMessageJournal<>(actorId, env, journalDb);
+    public <M> MessageJournal<M> createMessageJournal() {
+        throw new UnsupportedOperationException("ActorId is required for LMDB journals");
     }
 
     @Override
-    public <S extends Serializable> SnapshotStore<S> createSnapshotStore(String actorId) {
-        return new LmdbSnapshotStore<>(actorId, env, snapshotDb);
+    public <M> MessageJournal<M> createMessageJournal(String actorId) {
+        @SuppressWarnings("unchecked")
+        MessageJournal<M> journal = (MessageJournal<M>) new LmdbMessageJournal<Serializable>(actorId, env, journalDb);
+        return journal;
+    }
+
+    @Override
+    public <M> BatchedMessageJournal<M> createBatchedMessageJournal() {
+        throw new UnsupportedOperationException("ActorId is required for LMDB batched journals");
+    }
+
+    @Override
+    public <M> BatchedMessageJournal<M> createBatchedMessageJournal(String actorId) {
+        return createBatchedMessageJournal(actorId, 100, 100); // simple defaults
+    }
+
+    @Override
+    public <M> BatchedMessageJournal<M> createBatchedMessageJournal(String actorId, int maxBatchSize, long maxBatchDelayMs) {
+        // Fallback to SimpleBatchedMessageJournal for non-Serializable types
+        MessageJournal<M> baseJournal = createMessageJournal(actorId);
+        return new SimpleBatchedMessageJournal<>(baseJournal, maxBatchSize, maxBatchDelayMs);
+    }
+
+    @Override
+    public <M extends java.io.Serializable> BatchedMessageJournal<M> createBatchedMessageJournalSerializable(
+            String actorId, int maxBatchSize, long maxBatchDelayMs) {
+        LmdbMessageJournal<M> baseJournal = new LmdbMessageJournal<>(actorId, env, journalDb);
+        return new LmdbBatchedMessageJournal<>(actorId, baseJournal, maxBatchSize, maxBatchDelayMs);
+    }
+
+    @Override
+    public <S> SnapshotStore<S> createSnapshotStore() {
+        throw new UnsupportedOperationException("ActorId is required for LMDB snapshot stores");
+    }
+
+    @Override
+    public <S> SnapshotStore<S> createSnapshotStore(String actorId) {
+        @SuppressWarnings("unchecked")
+        SnapshotStore<S> store = (SnapshotStore<S>) new LmdbSnapshotStore<Serializable>(actorId, env, snapshotDb);
+        return store;
+    }
+
+    @Override
+    public String getProviderName() {
+        return "lmdb";
+    }
+
+    @Override
+    public boolean isHealthy() {
+        return env != null;
     }
 
     /**

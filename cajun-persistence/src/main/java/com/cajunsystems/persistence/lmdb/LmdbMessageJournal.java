@@ -10,6 +10,8 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static java.nio.ByteBuffer.allocateDirect;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -49,14 +51,64 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
         this.keyPrefix = "actor:" + actorId + ":seq:";
     }
 
+    // Async MessageJournal API
+
     @Override
+    public CompletableFuture<Long> append(String actorId, T message) {
+        // This journal instance is already bound to a specific actorId; ignore parameter
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                long nextSeq = getLatestSequenceNumber() + 1;
+                JournalEntry<T> entry = new JournalEntry<>(nextSeq, this.actorId, message);
+                append(entry);
+                return nextSeq;
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<JournalEntry<T>>> readFrom(String actorId, long fromSequenceNumber) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return readFrom(fromSequenceNumber);
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<Void> truncateBefore(String actorId, long upToSequenceNumber) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                // deleteUpTo is inclusive; truncateBefore is exclusive
+                deleteUpTo(upToSequenceNumber - 1);
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<Long> getHighestSequenceNumber(String actorId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return getLatestSequenceNumber();
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+    }
+
     public void append(JournalEntry<T> entry) throws IOException {
         ByteBuffer keyBuf = allocateDirect(KEY_BUFFER_SIZE);
         ByteBuffer valBuf = allocateDirect(VALUE_BUFFER_SIZE);
 
         try {
             // Serialize key
-            String key = keyPrefix + entry.sequenceNumber();
+            String key = keyPrefix + entry.getSequenceNumber();
             keyBuf.put(key.getBytes(UTF_8)).flip();
 
             // Serialize value
@@ -77,7 +129,6 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
         }
     }
 
-    @Override
     public void appendBatch(List<JournalEntry<T>> entries) throws IOException {
         if (entries.isEmpty()) {
             return;
@@ -89,7 +140,7 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
                 ByteBuffer valBuf = allocateDirect(VALUE_BUFFER_SIZE);
 
                 // Serialize key
-                String key = keyPrefix + entry.sequenceNumber();
+                String key = keyPrefix + entry.getSequenceNumber();
                 keyBuf.put(key.getBytes(UTF_8)).flip();
 
                 // Serialize value
@@ -107,7 +158,6 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
         }
     }
 
-    @Override
     public List<JournalEntry<T>> readFrom(long fromSequenceNumber) throws IOException {
         List<JournalEntry<T>> entries = new ArrayList<>();
 
@@ -151,12 +201,10 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
         return entries;
     }
 
-    @Override
     public List<JournalEntry<T>> readAll() throws IOException {
         return readFrom(0);
     }
 
-    @Override
     public long getLatestSequenceNumber() throws IOException {
         try (Txn<ByteBuffer> txn = env.txnRead()) {
             try (Cursor<ByteBuffer> cursor = db.openCursor(txn)) {
@@ -198,7 +246,6 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
         return -1; // No entries
     }
 
-    @Override
     public void deleteUpTo(long sequenceNumber) throws IOException {
         try (Txn<ByteBuffer> txn = env.txnWrite()) {
             try (Cursor<ByteBuffer> cursor = db.openCursor(txn)) {

@@ -2,6 +2,7 @@ package com.cajunsystems.persistence.filesystem;
 
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.JournalEntry;
+import com.cajunsystems.persistence.TruncationCapableJournal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,7 +27,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *
  * @param <M> The type of the message
  */
-public class BatchedFileMessageJournal<M> extends FileMessageJournal<M> implements BatchedMessageJournal<M> {
+public class BatchedFileMessageJournal<M> extends FileMessageJournal<M> implements BatchedMessageJournal<M>, TruncationCapableJournal {
     private static final Logger logger = LoggerFactory.getLogger(BatchedFileMessageJournal.class);
 
     // Default batch settings

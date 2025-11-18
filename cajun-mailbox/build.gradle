@@ -14,8 +14,18 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
+    modularity.inferModulePath = true
     withJavadocJar()
     withSourcesJar()
+}
+
+sourceSets {
+    main {
+        java {
+            exclude 'module-info.java'
+            exclude 'com/*.java'
+        }
+    }
 }
 
 tasks.withType(JavaCompile).each {

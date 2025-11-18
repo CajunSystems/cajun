@@ -91,6 +91,13 @@ public class FileSystemPersistenceProvider implements PersistenceProvider {
     }
     
     @Override
+    public <M extends java.io.Serializable> BatchedMessageJournal<M> createBatchedMessageJournalSerializable(
+            String actorId, int maxBatchSize, long maxBatchDelayMs) {
+        // Delegate to the unconstrained version; filesystem does not require Serializable
+        return createBatchedMessageJournal(actorId, maxBatchSize, maxBatchDelayMs);
+    }
+    
+    @Override
     public boolean isHealthy() {
         return true;
     }

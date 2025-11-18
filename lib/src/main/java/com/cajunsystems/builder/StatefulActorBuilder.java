@@ -12,6 +12,7 @@ import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.persistence.PersistenceTruncationConfig;
 
 import java.util.UUID;
 
@@ -33,6 +34,7 @@ public class StatefulActorBuilder<State, Message> {
     private BatchedMessageJournal<Message> messageJournal;
     private SnapshotStore<State> snapshotStore;
     private boolean customPersistence = false;
+    private PersistenceTruncationConfig truncationConfig;
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
     private MailboxProvider<Message> mailboxProvider;
@@ -146,6 +148,18 @@ public class StatefulActorBuilder<State, Message> {
         this.mailboxProvider = mailboxProvider;
         return this;
     }
+
+    /**
+     * Configures automatic persistence truncation behavior for this actor.
+     * If not specified, a default synchronous truncation configuration will be used.
+     *
+     * @param truncationConfig The truncation configuration to use
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withPersistenceTruncation(PersistenceTruncationConfig truncationConfig) {
+        this.truncationConfig = truncationConfig;
+        return this;
+    }
     
     /**
      * Creates and starts the actor with the configured settings.
@@ -189,6 +203,11 @@ public class StatefulActorBuilder<State, Message> {
                     tpfToUse,      // Use effective TPF
                     mpToUse        // Use effective MP
             );
+        }
+
+        // Apply per-actor truncation configuration if provided
+        if (truncationConfig != null) {
+            actor.setTruncationConfig(truncationConfig);
         }
         
         if (parent != null) {

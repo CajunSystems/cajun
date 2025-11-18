@@ -53,6 +53,19 @@ public interface PersistenceProvider {
             String actorId, int maxBatchSize, long maxBatchDelayMs);
     
     /**
+     * Creates a batched message journal with custom batch settings, constrained to Serializable types.
+     * This overload is useful for persistence backends that require Serializable messages (e.g., LMDB).
+     *
+     * @param <M> The type of messages (must be Serializable)
+     * @param actorId The ID of the actor
+     * @param maxBatchSize The maximum number of messages to batch before flushing
+     * @param maxBatchDelayMs The maximum delay in milliseconds before flushing a batch
+     * @return A new BatchedMessageJournal instance
+     */
+    <M extends java.io.Serializable> BatchedMessageJournal<M> createBatchedMessageJournalSerializable(
+            String actorId, int maxBatchSize, long maxBatchDelayMs);
+    
+    /**
      * Creates a snapshot store for persisting actor state.
      *
      * @param <S> The type of state
