@@ -4,9 +4,9 @@ import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.MessageJournal;
 import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.SnapshotStore;
-import com.cajunsystems.runtime.persistence.BatchedFileMessageJournal;
-import com.cajunsystems.runtime.persistence.FileMessageJournal;
-import com.cajunsystems.runtime.persistence.FileSnapshotStore;
+import com.cajunsystems.persistence.filesystem.BatchedFileMessageJournal;
+import com.cajunsystems.persistence.filesystem.FileMessageJournal;
+import com.cajunsystems.persistence.filesystem.FileSnapshotStore;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;

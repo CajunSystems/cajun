@@ -1,4 +1,4 @@
-package com.cajunsystems.runtime.persistence;
+package com.cajunsystems.persistence.filesystem;
 
 import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;

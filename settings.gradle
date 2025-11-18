@@ -5,10 +5,10 @@
  * For more detailed information on multi-project builds, please refer to https://docs.gradle.org/8.12.1/userguide/multi_project_builds.html in the Gradle documentation.
  */
 
-plugins {
-    // Apply the foojay-resolver plugin to allow automatic download of JDKs
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
-}
+// plugins {
+//     // Apply the foojay-resolver plugin to allow automatic download of JDKs
+//     id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
+// }
 
 rootProject.name = 'cajun'
 
@@ -23,4 +23,5 @@ include('lib')
 
 // Supporting modules
 include('test-utils')
-include('benchmarks')
+// Temporarily disabled due to network issues downloading plugins
+// include('benchmarks')
