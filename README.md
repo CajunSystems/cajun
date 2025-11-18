@@ -940,7 +940,7 @@ Actors in Cajun process messages from their mailboxes. The system provides diffe
 #### 1. LinkedBlockingQueue (Default)
 - **Implementation**: `java.util.concurrent.LinkedBlockingQueue`
 - **Capacity**: Configurable (default: 10,000 messages)
-- **Characteristics**: 
+- **Characteristics**:
   - Fair or non-fair ordering
   - Good for general-purpose actors
   - Handles I/O-bound workloads well
@@ -1968,12 +1968,14 @@ docker run --rm cajun-benchmarks BatchedPersistenceJournalBenchmark
 ```
 
 **Key Persistence Results (batchSize=5000):**
+
 - **Filesystem**: 48M msgs/sec (consistent across batch sizes)
 - **LMDB**: 208M msgs/sec (scales with batch size)
 - **LMDB advantage**: 4.3x faster for large batches
 - **Read performance**: LMDB 10x faster due to zero-copy memory mapping
 
 **When to use each backend:**
+
 - **Filesystem**: Development, small batches (<1K), simple inspection
 - **LMDB**: Production, large batches (>5K), read-heavy workloads
 
