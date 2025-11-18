@@ -35,6 +35,7 @@ dependencies {
     // Modular dependencies
     api project(':cajun-core')
     api project(':cajun-mailbox')
+    api project(':cajun-persistence')
 
     // Core dependencies (abstract interfaces)
     api 'org.slf4j:slf4j-api:2.0.9'

@@ -31,6 +31,9 @@ dependencies {
     // Depends on core
     api project(':cajun-core')
 
+    // LMDB for high-performance persistence
+    implementation 'org.lmdbjava:lmdbjava:0.8.3'
+
     // Testing
     testImplementation libs.junit.jupiter
     testImplementation 'org.mockito:mockito-core:5.7.0'

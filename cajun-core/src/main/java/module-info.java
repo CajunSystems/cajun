@@ -11,4 +11,5 @@ module com.cajunsystems.core {
     requires org.slf4j;
 
     exports com.cajunsystems.config;
+    exports com.cajunsystems.persistence;
 }
