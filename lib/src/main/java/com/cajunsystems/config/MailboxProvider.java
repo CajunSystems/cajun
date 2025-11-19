@@ -1,7 +1,7 @@
 package com.cajunsystems.config;
 
-import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
 import com.cajunsystems.mailbox.Mailbox;
+import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
 
 /**
  * An interface for providing actor mailboxes.

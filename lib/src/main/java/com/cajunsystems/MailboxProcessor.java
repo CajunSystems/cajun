@@ -1,7 +1,7 @@
 package com.cajunsystems;
 
-import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.mailbox.Mailbox;
+import com.cajunsystems.config.ThreadPoolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

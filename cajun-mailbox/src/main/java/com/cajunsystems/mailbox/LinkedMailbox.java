@@ -1,7 +1,6 @@
 package com.cajunsystems.mailbox;
 
 import java.util.Collection;
-import java.util.Objects;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -41,19 +40,16 @@ public class LinkedMailbox<T> implements Mailbox<T> {
 
     @Override
     public boolean offer(T message) {
-        Objects.requireNonNull(message, "Message cannot be null");
         return queue.offer(message);
     }
 
     @Override
     public boolean offer(T message, long timeout, TimeUnit unit) throws InterruptedException {
-        Objects.requireNonNull(message, "Message cannot be null");
         return queue.offer(message, timeout, unit);
     }
 
     @Override
     public void put(T message) throws InterruptedException {
-        Objects.requireNonNull(message, "Message cannot be null");
         queue.put(message);
     }
 

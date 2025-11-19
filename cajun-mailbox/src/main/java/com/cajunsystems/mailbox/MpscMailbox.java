@@ -52,8 +52,9 @@ public class MpscMailbox<T> implements Mailbox<T> {
      * @param initialCapacity the initial chunk size (must be power of 2)
      */
     public MpscMailbox(int initialCapacity) {
-        // JCTools MPSC requires power of 2
-        int capacity = nextPowerOfTwo(initialCapacity);
+        // Accept zero or negative and treat as minimum chunk size 2 (JCTools requires at least 2)
+        int safeCapacity = initialCapacity <= 0 ? 2 : initialCapacity;
+        int capacity = nextPowerOfTwo(safeCapacity);
         this.queue = new MpscUnboundedArrayQueue<>(capacity);
         this.lock = new ReentrantLock();
         this.notEmpty = lock.newCondition();
@@ -216,15 +217,11 @@ public class MpscMailbox<T> implements Mailbox<T> {
      * This is called after adding a message.
      */
     private void signalNotEmpty() {
-        // Only acquire lock if we think someone might be waiting
-        // This is an optimization to avoid lock contention on every offer
-        if (lock.hasQueuedThreads()) {
-            lock.lock();
-            try {
-                notEmpty.signal();
-            } finally {
-                lock.unlock();
-            }
+        lock.lock();
+        try {
+            notEmpty.signal();
+        } finally {
+            lock.unlock();
         }
     }
 

@@ -1,7 +1,7 @@
 package com.cajunsystems.mailbox.config;
 
-import com.cajunsystems.mailbox.Mailbox;
 import com.cajunsystems.mailbox.MpscMailbox;
+import com.cajunsystems.mailbox.Mailbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

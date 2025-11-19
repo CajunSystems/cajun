@@ -1,9 +1,7 @@
 package com.cajunsystems.mailbox.config;
 
-import com.cajunsystems.config.ThreadPoolFactory;
-import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
 import com.cajunsystems.mailbox.Mailbox;
-import com.cajunsystems.mailbox.LinkedMailbox;
+import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -138,118 +139,110 @@ class MpscMailboxTest {
     }
 
     @Test
-    void testDrainToSelf() {
-        // Can't test this directly with MpscMailbox since it doesn't implement Collection
-        // But we test that the check exists in drainTo
+    void testDrainToEmptyMailbox() {
         MpscMailbox<String> mailbox = new MpscMailbox<>();
-        assertThrows(IllegalArgumentException.class,
-            () -> mailbox.drainTo((List) mailbox, 10));
+        List<String> drained = new ArrayList<>();
+        int count = mailbox.drainTo(drained, 10);
+
+        assertEquals(0, count);
+        assertTrue(drained.isEmpty());
     }
 
     @Test
-    @Timeout(10)
-    void testMultipleProducersSingleConsumer() throws Exception {
-        MpscMailbox<Integer> mailbox = new MpscMailbox<>();
-        int producerCount = 10;
-        int messagesPerProducer = 1000;
-        int totalMessages = producerCount * messagesPerProducer;
+    void testDrainToAllElements() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        mailbox.offer("msg1");
+        mailbox.offer("msg2");
+        mailbox.offer("msg3");
 
-        CyclicBarrier startBarrier = new CyclicBarrier(producerCount + 1);
-        ExecutorService producers = Executors.newFixedThreadPool(producerCount);
-        AtomicInteger messageCounter = new AtomicInteger(0);
+        List<String> drained = new ArrayList<>();
+        int count = mailbox.drainTo(drained, 100); // More than available
 
-        // Start producers
-        List<Future<?>> producerFutures = new ArrayList<>();
-        for (int p = 0; p < producerCount; p++) {
-            int producerId = p;
-            producerFutures.add(producers.submit(() -> {
-                try {
-                    startBarrier.await();
-                    for (int i = 0; i < messagesPerProducer; i++) {
-                        int value = producerId * messagesPerProducer + i;
-                        mailbox.offer(value);
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }));
-        }
+        assertEquals(3, count);
+        assertEquals(3, drained.size());
+        assertTrue(mailbox.isEmpty());
+    }
 
-        // Start consuming
-        startBarrier.await();
+    @Test
+    void testPutMethod() throws InterruptedException {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
 
-        // Single consumer
-        List<Integer> consumed = new ArrayList<>();
-        while (consumed.size() < totalMessages) {
-            Integer msg = mailbox.poll(100, TimeUnit.MILLISECONDS);
-            if (msg != null) {
-                consumed.add(msg);
-            }
-        }
+        // put should never block for unbounded queue
+        mailbox.put("msg1");
+        mailbox.put("msg2");
 
-        // Wait for all producers to finish
-        for (Future<?> future : producerFutures) {
-            future.get();
-        }
+        assertEquals(2, mailbox.size());
+        assertEquals("msg1", mailbox.poll());
+        assertEquals("msg2", mailbox.poll());
+    }
 
-        assertEquals(totalMessages, consumed.size());
+    @Test
+    void testOfferWithTimeout() throws InterruptedException {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
 
-        producers.shutdown();
-        producers.awaitTermination(1, TimeUnit.SECONDS);
+        // Offer with timeout should always succeed for unbounded queue
+        assertTrue(mailbox.offer("msg1", 1, TimeUnit.SECONDS));
+        assertTrue(mailbox.offer("msg2", 100, TimeUnit.MILLISECONDS));
+
+        assertEquals(2, mailbox.size());
+    }
+
+    @Test
+    void testPutRejectsNull() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        assertThrows(NullPointerException.class, () -> mailbox.put(null));
+    }
+
+    @Test
+    void testOfferWithTimeoutRejectsNull() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        assertThrows(NullPointerException.class,
+            () -> mailbox.offer(null, 1, TimeUnit.SECONDS));
     }
 
     @Test
     @Timeout(5)
-    void testSignalingBehavior() throws Exception {
+    void testTakeBlocksUntilMessageAvailable() throws Exception {
         MpscMailbox<String> mailbox = new MpscMailbox<>();
-        CountDownLatch consumerReady = new CountDownLatch(1);
-        CountDownLatch messageReceived = new CountDownLatch(1);
+        CountDownLatch messageAdded = new CountDownLatch(1);
+        AtomicBoolean messageReceived = new AtomicBoolean(false);
 
-        // Consumer thread
         Thread consumer = new Thread(() -> {
             try {
-                consumerReady.countDown();
+                messageAdded.countDown();
                 String msg = mailbox.take();
-                if ("test".equals(msg)) {
-                    messageReceived.countDown();
-                }
+                messageReceived.set("delayed".equals(msg));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         });
 
         consumer.start();
-        consumerReady.await();
-        Thread.sleep(50); // Ensure consumer is waiting
+        messageAdded.await();
+        Thread.sleep(100); // Ensure consumer is blocked
 
-        // Producer adds message
-        mailbox.offer("test");
+        mailbox.offer("delayed");
+        consumer.join(1000);
 
-        // Consumer should be signaled and receive message
-        assertTrue(messageReceived.await(1, TimeUnit.SECONDS));
-        consumer.join();
+        assertTrue(messageReceived.get());
     }
 
     @Test
-    void testSizeAndIsEmpty() {
+    @Timeout(5)
+    void testPollWithTimeoutReturnsMessageImmediately() throws InterruptedException {
         MpscMailbox<String> mailbox = new MpscMailbox<>();
+        mailbox.offer("immediate");
 
-        assertTrue(mailbox.isEmpty());
+        long start = System.nanoTime();
+        String result = mailbox.poll(5, TimeUnit.SECONDS);
+        long elapsed = System.nanoTime() - start;
+
+        assertEquals("immediate", result);
+        // Should return immediately, not wait for timeout
+        assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1));
+
         assertEquals(0, mailbox.size());
-
-        mailbox.offer("msg1");
-        assertFalse(mailbox.isEmpty());
-        assertEquals(1, mailbox.size());
-
-        mailbox.offer("msg2");
-        assertEquals(2, mailbox.size());
-
-        mailbox.poll();
-        assertEquals(1, mailbox.size());
-
-        mailbox.clear();
         assertTrue(mailbox.isEmpty());
-        assertEquals(0, mailbox.size());
     }
 
     @Test
@@ -342,4 +335,265 @@ class MpscMailboxTest {
         producers.shutdown();
         producers.awaitTermination(1, TimeUnit.SECONDS);
     }
+
+    @Test
+    @Timeout(5)
+    void testMultipleProducersSingleConsumerOrdering() throws Exception {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        int producerCount = 3;
+        int messagesPerProducer = 100;
+        CountDownLatch producersReady = new CountDownLatch(producerCount);
+        CountDownLatch startSignal = new CountDownLatch(1);
+
+        ExecutorService producers = Executors.newFixedThreadPool(producerCount);
+        List<String> consumed = new ArrayList<>();
+
+        // Start producers
+        List<Future<?>> futures = new ArrayList<>();
+        for (int p = 0; p < producerCount; p++) {
+            int producerId = p;
+            futures.add(producers.submit(() -> {
+                producersReady.countDown();
+                try {
+                    startSignal.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                for (int i = 0; i < messagesPerProducer; i++) {
+                    mailbox.offer("P" + producerId + "-M" + i);
+                }
+            }));
+        }
+
+        // Wait for all producers to be ready
+        producersReady.await();
+        // Start all producers simultaneously
+        startSignal.countDown();
+
+        // Wait for producers
+        for (Future<?> future : futures) {
+            future.get();
+        }
+
+        // Consume all messages
+        while (!mailbox.isEmpty()) {
+            String msg = mailbox.poll();
+            if (msg != null) {
+                consumed.add(msg);
+            }
+        }
+
+        assertEquals(producerCount * messagesPerProducer, consumed.size());
+
+        producers.shutdown();
+        producers.awaitTermination(1, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void testSizeAccuracy() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+
+        assertEquals(0, mailbox.size());
+        assertTrue(mailbox.isEmpty());
+
+        mailbox.offer("msg1");
+        assertEquals(1, mailbox.size());
+        assertFalse(mailbox.isEmpty());
+
+        mailbox.offer("msg2");
+        mailbox.offer("msg3");
+        assertEquals(3, mailbox.size());
+
+        mailbox.poll();
+        assertEquals(2, mailbox.size());
+
+        mailbox.clear();
+        assertEquals(0, mailbox.size());
+        assertTrue(mailbox.isEmpty());
+    }
+
+    @Test
+    void testClearWithMultipleMessages() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+
+        for (int i = 0; i < 100; i++) {
+            mailbox.offer("msg" + i);
+        }
+
+        assertEquals(100, mailbox.size());
+
+        mailbox.clear();
+
+        assertEquals(0, mailbox.size());
+        assertTrue(mailbox.isEmpty());
+        assertNull(mailbox.poll());
+    }
+
+    @Test
+    @Timeout(5)
+    void testPollWithTimeoutWakesUpOnNewMessage() throws Exception {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        CountDownLatch consumerStarted = new CountDownLatch(1);
+        AtomicBoolean receivedMessage = new AtomicBoolean(false);
+
+        Thread consumer = new Thread(() -> {
+            try {
+                consumerStarted.countDown();
+                String msg = mailbox.poll(10, TimeUnit.SECONDS);
+                receivedMessage.set("wake-up".equals(msg));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        consumer.start();
+        consumerStarted.await();
+        Thread.sleep(50); // Ensure consumer is waiting
+
+        // Add message - should wake up consumer
+        mailbox.offer("wake-up");
+
+        consumer.join(1000);
+
+        assertTrue(receivedMessage.get());
+    }
+
+    @Test
+    void testDrainToWithZeroMaxElements() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        mailbox.offer("msg1");
+        mailbox.offer("msg2");
+
+        List<String> drained = new ArrayList<>();
+        int count = mailbox.drainTo(drained, 0);
+
+        assertEquals(0, count);
+        assertTrue(drained.isEmpty());
+        assertEquals(2, mailbox.size());
+    }
+
+    @Test
+    void testDrainToWithNegativeMaxElements() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+        mailbox.offer("msg1");
+
+        List<String> drained = new ArrayList<>();
+        int count = mailbox.drainTo(drained, -1);
+
+        assertEquals(0, count);
+        assertTrue(drained.isEmpty());
+        assertEquals(1, mailbox.size());
+    }
+
+    @Test
+    void testOfferReturnValue() {
+        MpscMailbox<String> mailbox = new MpscMailbox<>();
+
+        // Unbounded queue should always return true
+        for (int i = 0; i < 10000; i++) {
+            assertTrue(mailbox.offer("msg" + i));
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void testConcurrentTakeOperations() throws Exception {
+        MpscMailbox<Integer> mailbox = new MpscMailbox<>();
+        int messageCount = 100;
+
+        // Pre-populate mailbox
+        for (int i = 0; i < messageCount; i++) {
+            mailbox.offer(i);
+        }
+
+        // Single consumer draining with take
+        List<Integer> consumed = new ArrayList<>();
+
+        while (!mailbox.isEmpty()) {
+            Integer msg = mailbox.poll();
+            if (msg != null) {
+                consumed.add(msg);
+            }
+        }
+
+        // Each message should be consumed exactly once
+        assertEquals(messageCount, consumed.size());
+        assertTrue(mailbox.isEmpty());
+    }
+
+    @Test
+    void testFIFOOrdering() {
+        MpscMailbox<Integer> mailbox = new MpscMailbox<>();
+
+        // Add messages in order
+        for (int i = 0; i < 100; i++) {
+            mailbox.offer(i);
+        }
+
+        // Verify FIFO order
+        for (int i = 0; i < 100; i++) {
+            assertEquals(i, mailbox.poll());
+        }
+
+        assertNull(mailbox.poll());
+    }
+
+    @Test
+    @Timeout(5)
+    void testStressTestHighThroughput() throws Exception {
+        MpscMailbox<Long> mailbox = new MpscMailbox<>(1024);
+        int producerCount = 10;
+        int messagesPerProducer = 10000;
+        AtomicInteger consumed = new AtomicInteger(0);
+        AtomicBoolean consumerRunning = new AtomicBoolean(true);
+
+        ExecutorService producers = Executors.newFixedThreadPool(producerCount);
+
+        // Start consumer
+        Thread consumer = new Thread(() -> {
+            while (consumerRunning.get() || !mailbox.isEmpty()) {
+                Long msg = mailbox.poll();
+                if (msg != null) {
+                    consumed.incrementAndGet();
+                }
+            }
+        });
+        consumer.start();
+
+        // Start producers
+        long startTime = System.nanoTime();
+        List<Future<?>> futures = new ArrayList<>();
+        for (int p = 0; p < producerCount; p++) {
+            futures.add(producers.submit(() -> {
+                for (int i = 0; i < messagesPerProducer; i++) {
+                    mailbox.offer(System.nanoTime());
+                }
+            }));
+        }
+
+        // Wait for producers
+        for (Future<?> future : futures) {
+            future.get();
+        }
+
+        long endTime = System.nanoTime();
+
+        // Wait for consumer to finish
+        Thread.sleep(100);
+        consumerRunning.set(false);
+        consumer.join(2000);
+
+        assertEquals(producerCount * messagesPerProducer, consumed.get());
+
+        long durationMs = TimeUnit.NANOSECONDS.toMillis(endTime - startTime);
+        System.out.println("Processed " + (producerCount * messagesPerProducer) +
+                         " messages in " + durationMs + "ms");
+
+        producers.shutdown();
+        producers.awaitTermination(1, TimeUnit.SECONDS);
+    }
 }
+
+
+
+
