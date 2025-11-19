@@ -4,6 +4,7 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
+import com.cajunsystems.config.ThreadPoolFactory;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.Serializable;
@@ -27,12 +28,21 @@ public class FairComparisonBenchmark {
     private ActorSystem actorSystem;
     private ExecutorService executor;
     
-    // Pre-created actors for fair comparison
+    // Pre-created actors for fair comparison (default virtual threads)
     private Pid singleWorker;
     private Pid[] batchWorkers;
     private Pid[] scatterGatherWorkers;
     private Pid pipelineStage1;
     private Pid pipelineStage2;
+
+    // Batch-optimized actors
+    private Pid[] batchOptimizedWorkers;
+
+    // Actors with different thread pool configurations
+    private Pid singleWorker_CpuBound;
+    private Pid singleWorker_Mixed;
+    private Pid[] batchWorkers_CpuBound;
+    private Pid[] batchWorkers_Mixed;
 
     // Shared workload parameters
     private static final int WORKLOAD_SIZE = 100;
@@ -44,6 +54,10 @@ public class FairComparisonBenchmark {
             private static final long serialVersionUID = 1L;
         }
         record Batch(int count, CountDownLatch latch) implements WorkMessage {
+            private static final long serialVersionUID = 1L;
+        }
+        // Optimized for batch processing - actor processes this in a batch-friendly way
+        record BatchProcess(CompletableFuture<Long> result) implements WorkMessage {
             private static final long serialVersionUID = 1L;
         }
     }
@@ -62,6 +76,11 @@ public class FairComparisonBenchmark {
                         doWork(COMPUTE_ITERATIONS);
                     }
                     batch.latch().countDown();
+                }
+                case WorkMessage.BatchProcess batchProcess -> {
+                    // Single work unit - actor batching happens at mailbox level
+                    long result = doWork(COMPUTE_ITERATIONS);
+                    batchProcess.result().complete(result);
                 }
             }
         }
@@ -91,16 +110,69 @@ public class FairComparisonBenchmark {
         actorSystem = new ActorSystem();
         executor = Executors.newVirtualThreadPerTaskExecutor();
         
-        // Create actors once for the entire benchmark trial
+        // Thread pool configurations for different workload types
+        ThreadPoolFactory virtualFactory = new ThreadPoolFactory()
+            .optimizeFor(ThreadPoolFactory.WorkloadType.IO_BOUND); // Virtual threads (default)
+
+        ThreadPoolFactory cpuBoundFactory = new ThreadPoolFactory()
+            .optimizeFor(ThreadPoolFactory.WorkloadType.CPU_BOUND); // Fixed thread pool
+
+        ThreadPoolFactory mixedFactory = new ThreadPoolFactory()
+            .optimizeFor(ThreadPoolFactory.WorkloadType.MIXED); // Work-stealing pool
+
+        // Create actors with VIRTUAL threads (default) for baseline
         singleWorker = actorSystem.actorOf(WorkHandler.class)
             .withId("single-worker")
             .spawn();
-            
-        // Create batch workers once
+
+        // Create actors with CPU-BOUND thread pool
+        singleWorker_CpuBound = actorSystem.actorOf(WorkHandler.class)
+            .withId("single-worker-cpu")
+            .withThreadPoolFactory(cpuBoundFactory)
+            .spawn();
+
+        // Create actors with MIXED thread pool
+        singleWorker_Mixed = actorSystem.actorOf(WorkHandler.class)
+            .withId("single-worker-mixed")
+            .withThreadPoolFactory(mixedFactory)
+            .spawn();
+
+        // Create batch workers with default (virtual threads)
         batchWorkers = new Pid[WORKLOAD_SIZE];
         for (int i = 0; i < WORKLOAD_SIZE; i++) {
             batchWorkers[i] = actorSystem.actorOf(WorkHandler.class)
                 .withId("batch-worker-" + i)
+                .spawn();
+        }
+
+        // Create batch workers with CPU-BOUND thread pool
+        batchWorkers_CpuBound = new Pid[WORKLOAD_SIZE];
+        for (int i = 0; i < WORKLOAD_SIZE; i++) {
+            batchWorkers_CpuBound[i] = actorSystem.actorOf(WorkHandler.class)
+                .withId("batch-worker-cpu-" + i)
+                .withThreadPoolFactory(cpuBoundFactory)
+                .spawn();
+        }
+
+        // Create batch workers with MIXED thread pool
+        batchWorkers_Mixed = new Pid[WORKLOAD_SIZE];
+        for (int i = 0; i < WORKLOAD_SIZE; i++) {
+            batchWorkers_Mixed[i] = actorSystem.actorOf(WorkHandler.class)
+                .withId("batch-worker-mixed-" + i)
+                .withThreadPoolFactory(mixedFactory)
+                .spawn();
+        }
+
+        // Create batch-optimized workers with larger batch size
+        // This leverages the actor's internal batching capability
+        ThreadPoolFactory batchOptimizedFactory = new ThreadPoolFactory()
+            .setActorBatchSize(50); // Process 50 messages per batch
+
+        batchOptimizedWorkers = new Pid[WORKLOAD_SIZE];
+        for (int i = 0; i < WORKLOAD_SIZE; i++) {
+            batchOptimizedWorkers[i] = actorSystem.actorOf(WorkHandler.class)
+                .withId("batch-optimized-worker-" + i)
+                .withThreadPoolFactory(batchOptimizedFactory)
                 .spawn();
         }
 
@@ -163,6 +235,20 @@ public class FairComparisonBenchmark {
     }
 
     @Benchmark
+    public long singleTask_Actors_CpuBound() throws Exception {
+        CompletableFuture<Long> result = new CompletableFuture<>();
+        singleWorker_CpuBound.tell(new WorkMessage.Compute(COMPUTE_ITERATIONS, result));
+        return result.get(5, TimeUnit.SECONDS);
+    }
+
+    @Benchmark
+    public long singleTask_Actors_Mixed() throws Exception {
+        CompletableFuture<Long> result = new CompletableFuture<>();
+        singleWorker_Mixed.tell(new WorkMessage.Compute(COMPUTE_ITERATIONS, result));
+        return result.get(5, TimeUnit.SECONDS);
+    }
+
+    @Benchmark
     public long singleTask_Threads() throws Exception {
         Future<Long> future = executor.submit(() -> doWork(COMPUTE_ITERATIONS));
         return future.get();
@@ -191,6 +277,56 @@ public class FairComparisonBenchmark {
         }
 
         latch.await(10, TimeUnit.SECONDS);
+    }
+
+    @Benchmark
+    @OperationsPerInvocation(WORKLOAD_SIZE)
+    public void batchProcessing_Actors_CpuBound() throws Exception {
+        CountDownLatch latch = new CountDownLatch(WORKLOAD_SIZE);
+
+        for (int i = 0; i < WORKLOAD_SIZE; i++) {
+            batchWorkers_CpuBound[i].tell(new WorkMessage.Batch(1, latch));
+        }
+
+        latch.await(10, TimeUnit.SECONDS);
+    }
+
+    @Benchmark
+    @OperationsPerInvocation(WORKLOAD_SIZE)
+    public void batchProcessing_Actors_Mixed() throws Exception {
+        CountDownLatch latch = new CountDownLatch(WORKLOAD_SIZE);
+
+        for (int i = 0; i < WORKLOAD_SIZE; i++) {
+            batchWorkers_Mixed[i].tell(new WorkMessage.Batch(1, latch));
+        }
+
+        latch.await(10, TimeUnit.SECONDS);
+    }
+
+    /**
+     * OPTIMIZED Scenario 2b: Actors with internal batching enabled (batchSize=50)
+     * This leverages the actor's mailbox batching capability where the actor
+     * processes up to 50 messages per loop iteration, reducing context switching.
+     */
+    @Benchmark
+    @OperationsPerInvocation(WORKLOAD_SIZE)
+    public long batchProcessing_Actors_BatchOptimized() throws Exception {
+        CompletableFuture<Long>[] futures = new CompletableFuture[WORKLOAD_SIZE];
+
+        // Send all messages to batch-optimized actors
+        // These actors have batchSize=50, meaning they'll process up to 50 messages
+        // before yielding, reducing overhead
+        for (int i = 0; i < WORKLOAD_SIZE; i++) {
+            futures[i] = new CompletableFuture<>();
+            batchOptimizedWorkers[i].tell(new WorkMessage.BatchProcess(futures[i]));
+        }
+
+        // Collect results
+        long sum = 0;
+        for (CompletableFuture<Long> future : futures) {
+            sum += future.get(10, TimeUnit.SECONDS);
+        }
+        return sum;
     }
 
     @Benchmark
