@@ -17,8 +17,9 @@ include('cajun-core')
 include('cajun-mailbox')
 include('cajun-persistence')
 include('cajun-cluster')
+include('cajun-system')
 
-// Legacy lib module (for backward compatibility)
+// Legacy lib module (for backward compatibility - deprecated in v0.2.0, removed in v0.3.0)
 include('lib')
 
 // Supporting modules

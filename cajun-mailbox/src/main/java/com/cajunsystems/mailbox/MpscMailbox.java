@@ -3,6 +3,7 @@ package com.cajunsystems.mailbox;
 import org.jctools.queues.MpscUnboundedArrayQueue;
 
 import java.util.Collection;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -61,9 +62,7 @@ public class MpscMailbox<T> implements Mailbox<T> {
 
     @Override
     public boolean offer(T message) {
-        if (message == null) {
-            throw new NullPointerException("Message cannot be null");
-        }
+        Objects.requireNonNull(message, "Message cannot be null");
 
         boolean added = queue.offer(message);
 
@@ -168,11 +167,9 @@ public class MpscMailbox<T> implements Mailbox<T> {
 
     @Override
     public int drainTo(Collection<? super T> collection, int maxElements) {
-        if (collection == null) {
-            throw new NullPointerException();
-        }
+        Objects.requireNonNull(collection, "Collection cannot be null");
         if (collection == this) {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Cannot drain to self");
         }
 
         int count = 0;

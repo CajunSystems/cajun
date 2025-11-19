@@ -4,13 +4,15 @@ import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
 import com.cajunsystems.mailbox.Mailbox;
 import com.cajunsystems.mailbox.LinkedMailbox;
-import com.cajunsystems.mailbox.MpscMailbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.EnumMap;
+import java.util.Map;
+
 /**
  * Default mailbox provider that creates high-performance mailboxes based on
- * workload hints and configuration.
+ * workload hints and configuration using the Strategy pattern.
  *
  * Performance characteristics:
  * - IO_BOUND: LinkedMailbox (good lock-free performance, larger capacity)
@@ -22,56 +24,38 @@ import org.slf4j.LoggerFactory;
 public class DefaultMailboxProvider<M> implements MailboxProvider<M> {
     private static final Logger logger = LoggerFactory.getLogger(DefaultMailboxProvider.class);
 
-    // Default capacities based on workload type
-    private static final int IO_BOUND_DEFAULT_CAPACITY = 10000;
-    private static final int CPU_BOUND_DEFAULT_CAPACITY = 1000;
-    private static final int MPSC_INITIAL_CHUNK_SIZE = 128;
+    private final Map<WorkloadType, MailboxCreationStrategy<M>> strategies;
+    private final MailboxCreationStrategy<M> defaultStrategy;
 
     public DefaultMailboxProvider() {
+        this.strategies = new EnumMap<>(WorkloadType.class);
+        this.strategies.put(WorkloadType.IO_BOUND, new IoOptimizedStrategy<>());
+        this.strategies.put(WorkloadType.CPU_BOUND, new CpuOptimizedStrategy<>());
+        this.strategies.put(WorkloadType.MIXED, new MixedWorkloadStrategy<>());
+        this.defaultStrategy = new MixedWorkloadStrategy<>();
     }
 
     @Override
     public Mailbox<M> createMailbox(MailboxConfig config, WorkloadType workloadTypeHint) {
         MailboxConfig effectiveConfig = (config != null) ? config : new MailboxConfig();
-        int initialCapacity = effectiveConfig.getInitialCapacity();
-        int maxCapacity = effectiveConfig.getMaxCapacity();
 
-        logger.debug("DefaultMailboxProvider creating mailbox - initialCapacity: {}, maxCapacity: {}, workloadHint: {}",
-                     initialCapacity, maxCapacity, workloadTypeHint);
+        logger.debug("DefaultMailboxProvider creating mailbox - config: {}, workloadHint: {}",
+                     effectiveConfig, workloadTypeHint);
 
-        // Handle deprecated ResizableMailboxConfig - log warning and use LinkedMailbox
+        // Handle deprecated ResizableMailboxConfig - log warning and use default strategy
         if (effectiveConfig instanceof ResizableMailboxConfig) {
             logger.warn("ResizableMailboxConfig is deprecated due to performance issues. " +
-                       "Using LinkedMailbox instead with capacity: {}. " +
-                       "Consider using MailboxConfig or MpscMailboxConfig for better performance.",
-                       maxCapacity);
-            return new LinkedMailbox<>(maxCapacity);
+                       "Using default strategy instead with capacity: {}. " +
+                       "Consider using MailboxConfig for better performance.",
+                       effectiveConfig.getMaxCapacity());
+            return defaultStrategy.createMailbox(effectiveConfig);
         }
 
-        // Create mailbox based on workload hint
-        if (workloadTypeHint != null) {
-            switch (workloadTypeHint) {
-                case IO_BOUND:
-                    int ioCapacity = Math.max(maxCapacity, IO_BOUND_DEFAULT_CAPACITY);
-                    logger.info("Creating LinkedMailbox for IO_BOUND workload with capacity: {}", ioCapacity);
-                    return new LinkedMailbox<>(ioCapacity);
+        // Select and apply strategy based on workload hint
+        MailboxCreationStrategy<M> strategy = (workloadTypeHint != null)
+                ? strategies.getOrDefault(workloadTypeHint, defaultStrategy)
+                : defaultStrategy;
 
-                case CPU_BOUND:
-                    // For CPU-bound workloads, use MPSC for best performance
-                    int cpuCapacity = Math.min(maxCapacity, CPU_BOUND_DEFAULT_CAPACITY);
-                    logger.info("Creating MpscMailbox for CPU_BOUND workload with initial capacity: {}",
-                               MPSC_INITIAL_CHUNK_SIZE);
-                    return new MpscMailbox<>(MPSC_INITIAL_CHUNK_SIZE);
-
-                case MIXED:
-                default:
-                    logger.info("Creating LinkedMailbox for MIXED/default workload with capacity: {}", maxCapacity);
-                    return new LinkedMailbox<>(maxCapacity);
-            }
-        }
-
-        // Default: LinkedMailbox with specified capacity
-        logger.info("Creating default LinkedMailbox with capacity: {}", maxCapacity);
-        return new LinkedMailbox<>(maxCapacity);
+        return strategy.createMailbox(effectiveConfig);
     }
 }
