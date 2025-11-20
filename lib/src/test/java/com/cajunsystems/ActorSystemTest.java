@@ -155,21 +155,9 @@ class ActorSystemTest {
         @Override
         protected void receive(String message) {
             if ("ping".equals(message)) {
-                // Add a small delay to ensure the reply actor is ready
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
                 // Get the sender from context and reply
                 getSender().ifPresent(sender -> sender.tell("pong"));
             } else if ("ping-wrong-type".equals(message)) {
-                // Add a small delay to ensure the reply actor is ready
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
                 // Send an Integer instead of String to trigger ClassCastException
                 getSender().ifPresent(sender -> sender.tell(Integer.valueOf(123)));
             }
