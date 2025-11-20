@@ -5,7 +5,7 @@ import com.cajunsystems.ActorContextImpl;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.StatefulActor;
 import com.cajunsystems.config.BackpressureConfig;
-import com.cajunsystems.config.MailboxProvider;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;

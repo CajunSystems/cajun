@@ -4,12 +4,9 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
-import com.cajunsystems.config.ThreadPoolFactory;
-import com.cajunsystems.config.MailboxProvider;
-import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
-import com.cajunsystems.mailbox.Mailbox;
 import com.cajunsystems.mailbox.LinkedMailbox;
 import com.cajunsystems.mailbox.MpscMailbox;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.Serializable;

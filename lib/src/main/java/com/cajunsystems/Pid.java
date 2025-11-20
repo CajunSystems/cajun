@@ -14,6 +14,9 @@ import java.util.concurrent.TimeUnit;
  * Note: Pid implements Serializable for use with stateful actors.
  * The ActorSystem reference is not serialized and will be null after deserialization.
  * This is acceptable for stateful actor persistence where Pids are used as message addresses.
+ *
+ * @param actorId the unique identifier for the actor
+ * @param system the ActorSystem that manages this actor
  */
 public record Pid(String actorId, ActorSystem system) implements Serializable {
     

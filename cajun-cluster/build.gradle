@@ -31,7 +31,7 @@ tasks.withType(JavaCompile).each {
     it.options.compilerArgs.add('--enable-preview')
 }
 
-tasks.withType(Javadoc) {
+tasks.withType(Javadoc).configureEach {
     options.addBooleanOption('-enable-preview', true)
     options.addStringOption('source', '21')
 }
@@ -41,7 +41,7 @@ dependencies {
     api project(':cajun-core')
 
     // Etcd for leader election and coordination
-    implementation 'io.etcd:jetcd-core:0.7.6'
+    implementation 'io.etcd:jetcd-core:0.8.4'
 
     // gRPC stubs for cluster messaging
     implementation 'io.grpc:grpc-stub:1.62.2'
@@ -51,7 +51,26 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:5.7.0'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    testRuntimeOnly 'ch.qos.logback:logback-classic:1.4.11'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.16'
+
+    // Override vulnerable transitive dependencies
+    constraints {
+        implementation('io.netty:netty-codec-http2:4.1.116.Final') {
+            because 'fixes CVE-2023-44487'
+        }
+        implementation('io.netty:netty-codec-http:4.1.116.Final') {
+            because 'fixes CVE-2024-29025'
+        }
+        implementation('io.netty:netty-handler:4.1.116.Final') {
+            because 'fixes CVE-2025-24970'
+        }
+        implementation('io.netty:netty-common:4.1.116.Final') {
+            because 'fixes CVE-2024-47535, CVE-2025-25193'
+        }
+        implementation('io.vertx:vertx-core:4.5.11') {
+            because 'fixes CVE-2024-1300'
+        }
+    }
 }
 
 tasks.named('test') {
@@ -63,7 +82,7 @@ tasks.named('test') {
 
 publishing {
     publications {
-        mavenJava(MavenPublication) {
+        create('mavenJava', MavenPublication) {
             from components.java
             artifactId = 'cajun-cluster'
 

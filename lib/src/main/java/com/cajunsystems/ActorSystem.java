@@ -14,8 +14,7 @@ import com.cajunsystems.builder.ActorBuilder;
 import com.cajunsystems.builder.StatefulActorBuilder;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
-import com.cajunsystems.config.MailboxProvider;
-import com.cajunsystems.config.DefaultMailboxProvider;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
@@ -101,7 +100,7 @@ public class ActorSystem {
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory(), null, new MailboxConfig(), new DefaultMailboxProvider());
+        this(new ThreadPoolFactory(), null, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -110,7 +109,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new DefaultMailboxProvider());
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -119,7 +118,7 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
-        this(threadPoolConfig, null, new MailboxConfig(), new DefaultMailboxProvider());
+        this(threadPoolConfig, null, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -129,7 +128,7 @@ public class ActorSystem {
      * @param backpressureConfig The backpressure configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig) {
-        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new DefaultMailboxProvider());
+        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
     
     /**
@@ -141,7 +140,7 @@ public class ActorSystem {
      * @param mailboxConfig The mailbox configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
-        this(threadPoolConfig, backpressureConfig, mailboxConfig, new DefaultMailboxProvider());
+        this(threadPoolConfig, backpressureConfig, mailboxConfig, new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -160,8 +159,8 @@ public class ActorSystem {
         this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
         this.backpressureConfig = backpressureConfig; // Allow null to disable backpressure
         this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
-        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider();
-        
+        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>();
+
         // Create the delay scheduler based on configuration
         this.delayScheduler = this.threadPoolConfig.createScheduledExecutorService("actor-system");
         this.pendingDelayedMessages = new ConcurrentHashMap<>();

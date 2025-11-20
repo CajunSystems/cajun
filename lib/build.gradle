@@ -42,7 +42,7 @@ dependencies {
     api 'org.slf4j:slf4j-api:2.0.9'
 
     // Runtime implementation dependencies (logback for logging)
-    implementation 'ch.qos.logback:logback-classic:1.4.11'
+    implementation 'ch.qos.logback:logback-classic:1.5.16'
 
     // Use JUnit Jupiter for testing.
     testImplementation libs.junit.jupiter
@@ -63,8 +63,30 @@ dependencies {
     implementation libs.guava
 
     // Etcd + gRPC for runtime.cluster EtcdMetadataStore
-    implementation 'io.etcd:jetcd-core:0.7.6'
+    implementation 'io.etcd:jetcd-core:0.8.4'
     implementation 'io.grpc:grpc-stub:1.62.2'
+
+    // Override vulnerable transitive dependencies
+    constraints {
+        implementation('ch.qos.logback:logback-core:1.5.16') {
+            because 'fixes CVE-2025-11226, CVE-2024-12798, CVE-2024-12801'
+        }
+        implementation('io.netty:netty-codec-http2:4.1.116.Final') {
+            because 'fixes CVE-2023-44487'
+        }
+        implementation('io.netty:netty-codec-http:4.1.116.Final') {
+            because 'fixes CVE-2024-29025'
+        }
+        implementation('io.netty:netty-handler:4.1.116.Final') {
+            because 'fixes CVE-2025-24970'
+        }
+        implementation('io.netty:netty-common:4.1.116.Final') {
+            because 'fixes CVE-2024-47535, CVE-2025-25193'
+        }
+        implementation('io.vertx:vertx-core:4.5.11') {
+            because 'fixes CVE-2024-1300'
+        }
+    }
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
@@ -84,12 +106,12 @@ java {
     }
 }
 
-tasks.withType(Javadoc) {
+tasks.withType(Javadoc).configureEach {
     options.addBooleanOption('-enable-preview', true)
     options.addStringOption('source', '21')
 }
 
-tasks.withType(JavaExec) {
+tasks.withType(JavaExec).configureEach {
     jvmArgs += '--enable-preview'
 }
 
@@ -124,7 +146,7 @@ tasks.register('performanceTest', Test) {
 
 publishing {
     publications {
-        mavenJava(MavenPublication) {
+        create('mavenJava', MavenPublication) {
             from components.java
             groupId = 'com.cajunsystems'
             artifactId = 'cajun'

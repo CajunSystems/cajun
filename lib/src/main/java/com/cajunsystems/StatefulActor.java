@@ -9,7 +9,7 @@ import java.util.function.Supplier;
 
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
-import com.cajunsystems.config.MailboxProvider;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.metrics.ActorMetrics;
