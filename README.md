@@ -2137,9 +2137,8 @@ Results available after running benchmarks:
 **Bottom Line**: Actors are **production-ready** for I/O-heavy applications with negligible overhead. The 8% overhead for CPU work is more than compensated by built-in fault tolerance, state management, and clean architecture.
 
 For complete benchmark details, analysis, and methodology, see:
-- [BENCHMARK_EXECUTIVE_SUMMARY.md](BENCHMARK_EXECUTIVE_SUMMARY.md) - Quick overview
-- [COMPLETE_BENCHMARK_ANALYSIS.md](COMPLETE_BENCHMARK_ANALYSIS.md) - Full analysis
-- [benchmarks/README.md](benchmarks/README.md) - How to run benchmarks
+- **[docs/BENCHMARKS.md](docs/BENCHMARKS.md)** - Complete performance guide with all benchmark results
+- [benchmarks/README.md](benchmarks/README.md) - Technical details on running benchmarks
 
 
 
