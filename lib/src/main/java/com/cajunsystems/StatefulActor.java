@@ -556,6 +556,11 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         metrics.messageReceived();
         long startTime = System.nanoTime();
 
+        // Capture the sender context before async processing
+        // This is critical because the parent Actor class will clear the sender context
+        // after receive() returns, but our processing happens asynchronously
+        String capturedSender = getCurrentSenderActorId();
+
         // First, journal the message
         messageJournal.append(actorId, message)
             .thenAccept(sequenceNumber -> {
@@ -563,52 +568,66 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 executeWithRetry(() -> {
                     CompletableFuture<Void> future = new CompletableFuture<>();
                     try {
-                        // Process the message and update the state
-                        State currentStateValue = currentState.get();
-                        State newState = processMessage(currentStateValue, message);
+                        // Restore the sender context for this async processing
+                        if (capturedSender != null) {
+                            setSender(capturedSender);
+                        }
 
-                        // Update the last processed sequence number
-                        lastProcessedSequence.set(sequenceNumber);
+                        try {
+                            // Process the message and update the state
+                            State currentStateValue = currentState.get();
+                            State newState = processMessage(currentStateValue, message);
 
-                        // Only update and persist if the state has changed
-                        if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
-                            currentState.set(newState);
-                            stateChanged = true;
-                            changesSinceLastSnapshot++;
-                            
-                            // Record state change in metrics
-                            metrics.stateChanged();
-                            
-                            // Take snapshots using adaptive strategy
-                            long now = System.currentTimeMillis();
-                            if (now - lastSnapshotTime > snapshotIntervalMs || 
-                                changesSinceLastSnapshot >= changesBeforeSnapshot) {
-                                takeSnapshot().thenRun(() -> {
-                                    stateChanged = false;
-                                    changesSinceLastSnapshot = 0;
+                            // Update the last processed sequence number
+                            lastProcessedSequence.set(sequenceNumber);
 
-                                    // Record snapshot in metrics
-                                    metrics.snapshotTaken();
+                            // Only update and persist if the state has changed
+                            if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
+                                currentState.set(newState);
+                                stateChanged = true;
+                                changesSinceLastSnapshot++;
 
-                                    // Automatic truncation in sync mode for truncation-capable journals
-                                    if (messageJournal instanceof TruncationCapableJournal &&
-                                            truncationConfig != null &&
-                                            truncationConfig.getMode() == PersistenceTruncationMode.SYNC_ON_SNAPSHOT) {
-                                        long snapshotSeq = lastProcessedSequence.get();
-                                        if (snapshotSeq >= 0) {
-                                            long retainBehind = truncationConfig.getRetainMessagesBehindSnapshot();
-                                            long cutoff = snapshotSeq - retainBehind;
-                                            if (cutoff > 0) {
-                                                messageJournal.truncateBefore(actorId, cutoff);
+                                // Record state change in metrics
+                                metrics.stateChanged();
+
+                                // Take snapshots using adaptive strategy
+                                long now = System.currentTimeMillis();
+                                if (now - lastSnapshotTime > snapshotIntervalMs ||
+                                    changesSinceLastSnapshot >= changesBeforeSnapshot) {
+                                    takeSnapshot().thenRun(() -> {
+                                        stateChanged = false;
+                                        changesSinceLastSnapshot = 0;
+
+                                        // Record snapshot in metrics
+                                        metrics.snapshotTaken();
+
+                                        // Automatic truncation in sync mode for truncation-capable journals
+                                        if (messageJournal instanceof TruncationCapableJournal &&
+                                                truncationConfig != null &&
+                                                truncationConfig.getMode() == PersistenceTruncationMode.SYNC_ON_SNAPSHOT) {
+                                            long snapshotSeq = lastProcessedSequence.get();
+                                            if (snapshotSeq >= 0) {
+                                                long retainBehind = truncationConfig.getRetainMessagesBehindSnapshot();
+                                                long cutoff = snapshotSeq - retainBehind;
+                                                if (cutoff > 0) {
+                                                    messageJournal.truncateBefore(actorId, cutoff);
+                                                }
                                             }
                                         }
-                                    }
-                                });
-                                lastSnapshotTime = now;
+                                    });
+                                    lastSnapshotTime = now;
+                                }
+                            }
+
+                            future.complete(null);
+                        } catch (Exception e) {
+                            future.completeExceptionally(e);
+                        } finally {
+                            // Clear the sender context after processing
+                            if (capturedSender != null) {
+                                clearSender();
                             }
                         }
-                        
-                        future.complete(null);
                     } catch (Exception e) {
                         future.completeExceptionally(e);
                     }

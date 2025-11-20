@@ -830,8 +830,10 @@ public class ActorSystem {
                     // Wrap the unwrapped message with sender context
                     MessageWithSender<Object> wrappedMessage = new MessageWithSender<>(unwrappedMessage, replyTo);
                     
+                    // Cast the wrapped message to the actor's expected type
+                    // The actor's receive method will handle MessageWithSender unwrapping
                     @SuppressWarnings("unchecked")
-                    Actor<MessageWithSender<Object>> typedActor = (Actor<MessageWithSender<Object>>) actor;
+                    Actor<Object> typedActor = (Actor<Object>) actor;
                     typedActor.tell(wrappedMessage);
                 } else {
                     // Normal message routing without sender context
