@@ -8,6 +8,8 @@ import java.io.Serializable;
  * requiring the original messages to implement OperationAwareMessage.
  *
  * @param <T> The type of the original message
+ * @param originalMessage the original message to wrap
+ * @param isReadOnly whether this message is a read-only operation
  */
 public record MessageAdapter<T extends Serializable>(T originalMessage,
                                                      boolean isReadOnly) implements OperationAwareMessage {

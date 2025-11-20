@@ -1,0 +1,82 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'com.cajunsystems'
+version = project.findProperty('cajunVersion') ?: '0.2.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withJavadocJar()
+    withSourcesJar()
+}
+
+sourceSets {
+    main {
+        java {
+            exclude 'module-info.java'
+            exclude 'com/cajunsystems/persistence/ActorSystemPersistenceExtension.java'
+            exclude 'com/cajunsystems/persistence/ActorSystemPersistenceHelper.java'
+        }
+    }
+}
+
+tasks.withType(JavaCompile).each {
+    it.options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Javadoc) {
+    options.addBooleanOption('-enable-preview', true)
+    options.addStringOption('source', '21')
+}
+
+dependencies {
+    // Depends on core
+    api project(':cajun-core')
+
+    // LMDB for high-performance persistence
+    implementation 'org.lmdbjava:lmdbjava:0.8.3'
+
+    // Testing
+    testImplementation libs.junit.jupiter
+    testImplementation 'org.mockito:mockito-core:5.7.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.16'
+}
+
+tasks.named('test') {
+    jvmArgs(['--enable-preview'])
+    useJUnitPlatform {
+        excludeTags 'performance'
+    }
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            from components.java
+            artifactId = 'cajun-persistence'
+
+            pom {
+                name.set('Cajun Persistence')
+                description.set('Persistence implementations for Cajun actor system')
+                url.set('https://github.com/cajunsystems/cajun')
+
+                licenses {
+                    license {
+                        name.set('MIT License')
+                        url.set('https://opensource.org/licenses/MIT')
+                    }
+                }
+            }
+        }
+    }
+}

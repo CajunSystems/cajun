@@ -5,7 +5,7 @@ import com.cajunsystems.metrics.ActorMetrics;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
 import com.cajunsystems.persistence.SnapshotStore;
-import com.cajunsystems.runtime.persistence.PersistenceFactory;
+import com.cajunsystems.persistence.filesystem.PersistenceFactory;
 
 import java.util.function.BiFunction;
 

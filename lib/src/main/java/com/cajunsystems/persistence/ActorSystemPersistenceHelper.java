@@ -9,6 +9,13 @@ import com.cajunsystems.ActorSystem;
 public class ActorSystemPersistenceHelper {
     
     /**
+     * Private constructor to prevent instantiation of utility class.
+     */
+    private ActorSystemPersistenceHelper() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+
+    /**
      * Gets a persistence extension for the specified actor system.
      * This method allows for fluent configuration of persistence providers.
      * 

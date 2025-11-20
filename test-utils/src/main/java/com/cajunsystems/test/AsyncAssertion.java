@@ -25,6 +25,13 @@ public class AsyncAssertion {
     private static final long DEFAULT_POLL_INTERVAL_MS = 50;
     
     /**
+     * Private constructor to prevent instantiation of utility class.
+     */
+    private AsyncAssertion() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+
+    /**
      * Waits until the condition becomes true or timeout is reached.
      * 
      * @param condition the condition to check

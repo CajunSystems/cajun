@@ -30,6 +30,13 @@ import java.util.function.Predicate;
 public class MessageMatcher {
     
     /**
+     * Private constructor to prevent instantiation of utility class.
+     */
+    private MessageMatcher() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+
+    /**
      * Creates a predicate that matches instances of the specified type.
      * 
      * @param <T> the message type

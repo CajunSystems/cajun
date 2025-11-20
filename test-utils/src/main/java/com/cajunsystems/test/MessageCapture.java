@@ -231,16 +231,35 @@ public class MessageCapture<T> {
     
     /**
      * Immutable snapshot of captured messages at a point in time.
+     *
+     * @param <T> the type of messages in the snapshot
+     * @param messages the list of captured messages at snapshot time
      */
     public record CaptureSnapshot<T>(List<T> messages) {
+        /**
+         * Gets the number of messages in this snapshot.
+         *
+         * @return the message count
+         */
         public int size() {
             return messages.size();
         }
         
+        /**
+         * Checks if this snapshot contains no messages.
+         *
+         * @return true if snapshot is empty
+         */
         public boolean isEmpty() {
             return messages.isEmpty();
         }
         
+        /**
+         * Gets a message at the specified index.
+         *
+         * @param index the message index
+         * @return the message at that index
+         */
         public T get(int index) {
             return messages.get(index);
         }

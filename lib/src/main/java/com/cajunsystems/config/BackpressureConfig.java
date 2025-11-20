@@ -315,6 +315,12 @@ public class BackpressureConfig {
         private final BackpressureConfig config = new BackpressureConfig();
         
         /**
+         * Creates a new Builder with default configuration values.
+         */
+        public Builder() {
+        }
+
+        /**
          * Sets the minimum capacity for the backpressure buffer.
          * 
          * @param minCapacity The minimum capacity

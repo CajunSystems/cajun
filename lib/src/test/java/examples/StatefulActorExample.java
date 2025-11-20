@@ -20,7 +20,7 @@ import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
 import com.cajunsystems.persistence.SnapshotStore;
-import com.cajunsystems.runtime.persistence.PersistenceFactory;
+import com.cajunsystems.persistence.filesystem.PersistenceFactory;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.backpressure.BackpressureStrategy;
 import org.slf4j.Logger;

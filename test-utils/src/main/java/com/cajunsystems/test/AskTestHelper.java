@@ -32,6 +32,13 @@ import java.util.concurrent.TimeoutException;
 public class AskTestHelper {
     
     /**
+     * Private constructor to prevent instantiation of utility class.
+     */
+    private AskTestHelper() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+
+    /**
      * Sends a message and waits for a response.
      * 
      * @param <T> the response type

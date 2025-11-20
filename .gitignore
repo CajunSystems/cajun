@@ -40,3 +40,9 @@ build
 .env*
 .env
 !.env.example
+
+# Persistence directories
+cajun_persistence/
+cajun-test-*/
+/tmp/cajun-*
+

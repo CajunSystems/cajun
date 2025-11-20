@@ -63,6 +63,8 @@ public class TestKit implements AutoCloseable {
     
     /**
      * Gets the underlying ActorSystem.
+     *
+     * @return the ActorSystem used by this TestKit
      */
     public ActorSystem system() {
         return system;
@@ -182,6 +184,12 @@ public class TestKit implements AutoCloseable {
         private ActorSystem system;
         private Duration defaultTimeout = Duration.ofSeconds(5);
         
+        /**
+         * Creates a new TestKitBuilder with default settings.
+         */
+        public TestKitBuilder() {
+        }
+
         /**
          * Sets the ActorSystem to use.
          * If not set, a new ActorSystem will be created.

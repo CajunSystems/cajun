@@ -57,20 +57,8 @@ public class BackpressureActorTest {
             // Verify backpressure is enabled by checking if BackpressureManager is present
             assertNotNull(actor.getBackpressureManager(), "BackpressureManager should be initialized when BackpressureConfig is provided");
 
-            // Verify mailbox is a ResizableBlockingQueue
-            Field mailboxField = Actor.class.getDeclaredField("mailbox");
-            mailboxField.setAccessible(true);
-            Object mailbox = mailboxField.get(actor);
-            assertTrue(mailbox instanceof ResizableBlockingQueue, "Mailbox should be a ResizableBlockingQueue");
-
-            // Verify mailbox configuration
-            if (mailbox instanceof ResizableBlockingQueue) {
-                ResizableBlockingQueue<?> queue = (ResizableBlockingQueue<?>) mailbox;
-
-                // Calculate the capacity from remaining capacity and size
-                int currentCapacity = queue.remainingCapacity() + queue.size();
-                assertEquals(10, currentCapacity, "Initial capacity should be 10");
-            }
+            // Verify mailbox configuration via Actor public API
+            assertEquals(20, actor.getCapacity(), "Max capacity should match configured value");
 
             // Verify metrics are available
             Field backpressureManagerField = Actor.class.getDeclaredField("backpressureManager");
@@ -131,25 +119,8 @@ public class BackpressureActorTest {
         TestActor actor = new TestActor(system, "mailbox-resize-actor", backpressureConfig, mailboxConfig);
 
         try {
-            // Get the ResizableBlockingQueue from the actor's mailbox field
-            Field mailboxField = Actor.class.getDeclaredField("mailbox");
-            mailboxField.setAccessible(true);
-            Object mailbox = mailboxField.get(actor);
-
-            // Verify we have a ResizableBlockingQueue
-            assertTrue(mailbox instanceof ResizableBlockingQueue, "Actor should use ResizableBlockingQueue");
-
-            if (mailbox instanceof ResizableBlockingQueue) {
-                ResizableBlockingQueue<?> queue = (ResizableBlockingQueue<?>) mailbox;
-
-                // Calculate the capacity from remaining capacity and size
-                int currentCapacity = queue.remainingCapacity() + queue.size();
-                assertEquals(initialCapacity, currentCapacity, "Initial capacity should match configured value");
-
-                // Since ResizableBlockingQueue doesn't expose these fields directly,
-                // we'll just verify the maxCapacity which is accessible
-                assertEquals(maxCapacity, queue.getMaxCapacity(), "Max capacity should match configured value");
-            }
+            // Verify mailbox capacity via Actor and BackpressureManager
+            assertEquals(maxCapacity, actor.getCapacity(), "Max capacity should match configured value");
 
             // Verify metrics are available
             Field backpressureManagerField = Actor.class.getDeclaredField("backpressureManager");

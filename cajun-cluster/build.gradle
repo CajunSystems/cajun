@@ -1,0 +1,103 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'com.cajunsystems'
+version = project.findProperty('cajunVersion') ?: '0.2.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withJavadocJar()
+    withSourcesJar()
+}
+
+sourceSets {
+    main {
+        java {
+            exclude 'module-info.java'
+            exclude 'com/cajunsystems/cluster/impl/ClusterFactory.java'
+        }
+    }
+}
+
+tasks.withType(JavaCompile).each {
+    it.options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Javadoc).configureEach {
+    options.addBooleanOption('-enable-preview', true)
+    options.addStringOption('source', '21')
+}
+
+dependencies {
+    // Depends on core
+    api project(':cajun-core')
+
+    // Etcd for leader election and coordination
+    implementation 'io.etcd:jetcd-core:0.8.4'
+
+    // gRPC stubs for cluster messaging
+    implementation 'io.grpc:grpc-stub:1.62.2'
+
+    // Testing
+    testImplementation libs.junit.jupiter
+    testImplementation 'org.mockito:mockito-core:5.7.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.16'
+
+    // Override vulnerable transitive dependencies
+    constraints {
+        implementation('io.netty:netty-codec-http2:4.1.116.Final') {
+            because 'fixes CVE-2023-44487'
+        }
+        implementation('io.netty:netty-codec-http:4.1.116.Final') {
+            because 'fixes CVE-2024-29025'
+        }
+        implementation('io.netty:netty-handler:4.1.116.Final') {
+            because 'fixes CVE-2025-24970'
+        }
+        implementation('io.netty:netty-common:4.1.116.Final') {
+            because 'fixes CVE-2024-47535, CVE-2025-25193'
+        }
+        implementation('io.vertx:vertx-core:4.5.11') {
+            because 'fixes CVE-2024-1300'
+        }
+    }
+}
+
+tasks.named('test') {
+    jvmArgs(['--enable-preview'])
+    useJUnitPlatform {
+        excludeTags 'performance', 'requires-etcd'
+    }
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            from components.java
+            artifactId = 'cajun-cluster'
+
+            pom {
+                name.set('Cajun Cluster')
+                description.set('Clustering support for Cajun actor system')
+                url.set('https://github.com/cajunsystems/cajun')
+
+                licenses {
+                    license {
+                        name.set('MIT License')
+                        url.set('https://opensource.org/licenses/MIT')
+                    }
+                }
+            }
+        }
+    }
+}
