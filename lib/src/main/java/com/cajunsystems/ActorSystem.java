@@ -92,7 +92,10 @@ public class ActorSystem {
     private final MailboxConfig mailboxConfig;
     private final MailboxProvider<?> mailboxProvider;
     private final SystemBackpressureMonitor backpressureMonitor;
-    
+
+    // Promise-based ask pattern support
+    private final ConcurrentHashMap<String, CompletableFuture<Object>> pendingAskPromises;
+
     // Keep-alive mechanism for virtual threads
     private final Thread keepAliveThread;
     private final CountDownLatch shutdownLatch;
@@ -152,19 +155,20 @@ public class ActorSystem {
      * @param mailboxConfig The mailbox configuration
      * @param mailboxProvider The mailbox provider implementation
      */
-    public ActorSystem(ThreadPoolFactory threadPoolConfig, 
-                       BackpressureConfig backpressureConfig, 
-                       MailboxConfig mailboxConfig, 
+    public ActorSystem(ThreadPoolFactory threadPoolConfig,
+                       BackpressureConfig backpressureConfig,
+                       MailboxConfig mailboxConfig,
                        MailboxProvider<?> mailboxProvider) {
         this.actors = new ConcurrentHashMap<>();
         this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
         this.backpressureConfig = backpressureConfig; // Allow null to disable backpressure
         this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
         this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider<>();
-        
+
         // Create the delay scheduler based on configuration
         this.delayScheduler = this.threadPoolConfig.createScheduledExecutorService("actor-system");
         this.pendingDelayedMessages = new ConcurrentHashMap<>();
+        this.pendingAskPromises = new ConcurrentHashMap<>();
         
         // Create a shared executor for all actors if enabled
         if (this.threadPoolConfig.isUseSharedExecutor()) {
@@ -757,7 +761,13 @@ public class ActorSystem {
                 
                 // Clear the actor registry
                 actors.clear();
-                
+
+                // Cancel any pending ask promises
+                for (CompletableFuture<Object> promise : pendingAskPromises.values()) {
+                    promise.completeExceptionally(new IllegalStateException("Actor system shutting down"));
+                }
+                pendingAskPromises.clear();
+
                 // Cancel any scheduled messages
                 for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
                     future.cancel(true);
@@ -811,14 +821,41 @@ public class ActorSystem {
     }
 
     /**
+     * Completes a pending ask promise with a response.
+     * This is called when an actor sends a reply to a promise ID.
+     *
+     * @param promiseId The ID of the promise to complete
+     * @param response The response to complete the promise with
+     * @return true if the promise was found and completed, false otherwise
+     */
+    boolean completeAskPromise(String promiseId, Object response) {
+        CompletableFuture<Object> promise = pendingAskPromises.remove(promiseId);
+        if (promise != null) {
+            promise.complete(response);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Routes a message to an actor by ID.
      * Automatically unwraps AskPayload messages and wraps them with sender context.
-     * 
+     *
      * @param <Message> The type of the message
      * @param actorId The ID of the actor to route the message to
      * @param message The message to route
      */
     <Message> void routeMessage(String actorId, Message message) {
+        // Check if this is a reply to a promise (ask pattern)
+        if (actorId.startsWith("ask-promise-")) {
+            if (completeAskPromise(actorId, message)) {
+                return; // Promise completed successfully
+            }
+            // If promise not found, it might have timed out - log and continue
+            logger.debug("Promise {} not found (may have timed out), ignoring reply", actorId);
+            return;
+        }
+
         Actor<?> actor = actors.get(actorId);
         if (actor != null) {
             try {
@@ -827,10 +864,10 @@ public class ActorSystem {
                     AskPayload<?> askPayload = (AskPayload<?>) message;
                     Object unwrappedMessage = askPayload.message();
                     String replyTo = askPayload.replyTo();
-                    
+
                     // Wrap the unwrapped message with sender context
                     MessageWithSender<Object> wrappedMessage = new MessageWithSender<>(unwrappedMessage, replyTo);
-                    
+
                     @SuppressWarnings("unchecked")
                     Actor<MessageWithSender<Object>> typedActor = (Actor<MessageWithSender<Object>>) actor;
                     typedActor.tell(wrappedMessage);
@@ -892,7 +929,9 @@ public class ActorSystem {
 
     /**
      * Sends a message to the target actor and returns a CompletableFuture that will be completed with the reply.
-     * 
+     * This implementation uses a lightweight promise-based approach instead of spawning a temporary reply actor,
+     * eliminating the race condition where a reply could be sent before the reply actor is ready.
+     *
      * @param target The Pid of the target actor.
      * @param message The message to send.
      * @param timeout The maximum time to wait for a reply.
@@ -903,78 +942,64 @@ public class ActorSystem {
     @SuppressWarnings("unchecked")
     public <RequestMessage, ResponseMessage> CompletableFuture<ResponseMessage> ask(
             Pid target, RequestMessage message, Duration timeout) {
-        
+
         CompletableFuture<ResponseMessage> result = new CompletableFuture<>();
-        AtomicBoolean completed = new AtomicBoolean(false);
-        String replyActorId = "reply-" + generateActorId();
-        
-        // Schedule a timeout
+
+        // Generate a unique promise ID for this ask request
+        String promiseId = "ask-promise-" + generateActorId();
+
+        // Create and register the promise BEFORE sending the message to avoid race condition
+        CompletableFuture<Object> promise = new CompletableFuture<>();
+        pendingAskPromises.put(promiseId, promise);
+
+        // Schedule a timeout to remove and fail the promise
         ScheduledFuture<?> timeoutFuture = delayScheduler.schedule(() -> {
-            if (completed.compareAndSet(false, true)) {
-                result.completeExceptionally(
+            CompletableFuture<Object> timedOutPromise = pendingAskPromises.remove(promiseId);
+            if (timedOutPromise != null) {
+                timedOutPromise.completeExceptionally(
                     new TimeoutException("Timeout waiting for response from " + target.actorId()));
-                shutdown(replyActorId);
             }
         }, timeout.toMillis(), TimeUnit.MILLISECONDS);
 
-        // Create a temporary actor to receive the response
-        Actor<Object> responseActor = new Actor<Object>(this, replyActorId) {
-            @Override
-            protected void receive(Object response) {
-                if (completed.compareAndSet(false, true)) {
-                    try {
-                        result.complete((ResponseMessage) response);
-                    } catch (ClassCastException e) {
-                        result.completeExceptionally(
-                            new IllegalArgumentException("Received response of unexpected type: " + 
-                                response.getClass().getName(), e));
-                    }
-                    
-                    // Cancel the timeout
-                    timeoutFuture.cancel(false);
-                    
-                    // Stop this temporary actor
-                    stop();
+        // Chain the promise to the result future with type casting and error handling
+        promise.whenComplete((response, error) -> {
+            // Cancel the timeout
+            timeoutFuture.cancel(false);
+
+            if (error != null) {
+                result.completeExceptionally(error);
+            } else {
+                try {
+                    result.complete((ResponseMessage) response);
+                } catch (ClassCastException e) {
+                    result.completeExceptionally(
+                        new IllegalArgumentException("Received response of unexpected type: " +
+                            (response != null ? response.getClass().getName() : "null"), e));
                 }
             }
-
-            @Override
-            protected void postStop() {
-                // Cancel timeout if not already cancelled
-                timeoutFuture.cancel(false);
-                
-                // If the future is not completed yet, complete it exceptionally
-                if (!result.isDone() && completed.compareAndSet(false, true)) {
-                    result.completeExceptionally(new IllegalStateException("Actor stopped before receiving response"));
-                }
-                
-                // Remove this temporary actor from the system
-                actors.remove(replyActorId);
-            }
-        };
-
-        // Register the response actor
-        actors.put(replyActorId, responseActor);
-        responseActor.start();
+        });
 
         try {
-            // Send the message with replyTo field
+            // Check if target actor exists
             Actor<?> targetActor = getActor(target);
             if (targetActor != null) {
-                // Create the ask payload with the message and reply actor ID
-                AskPayload<RequestMessage> askMessage = new AskPayload<>(message, replyActorId);
-                
-                // Use the more general routeMessage method which handles type casting properly
+                // Create the ask payload with the message and promise ID
+                AskPayload<RequestMessage> askMessage = new AskPayload<>(message, promiseId);
+
+                // Send the message - the promise is already registered, so no race condition
                 routeMessage(target.actorId(), askMessage);
             } else {
-                // Target actor not found
+                // Target actor not found - remove promise and complete exceptionally
+                pendingAskPromises.remove(promiseId);
+                timeoutFuture.cancel(false);
                 result.completeExceptionally(
                     new IllegalArgumentException("Target actor not found: " + target.actorId()));
-                responseActor.stop();
             }
         } catch (Exception e) {
+            // Error sending message - remove promise and complete exceptionally
+            pendingAskPromises.remove(promiseId);
+            timeoutFuture.cancel(false);
             result.completeExceptionally(e);
-            responseActor.stop();
         }
 
         return result;
