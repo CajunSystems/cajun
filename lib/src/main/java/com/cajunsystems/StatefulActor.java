@@ -81,6 +81,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     // Dedicated thread pool for persistence operations
     private final ExecutorService persistenceExecutor;
     
+    // Shutdown hook thread (registered once in constructor via createPersistenceExecutor)
+    private Thread shutdownHook;
+
     // Adaptive snapshot configuration
     private static final long DEFAULT_SNAPSHOT_INTERVAL_MS = 15000; // 15 seconds default
     private static final int DEFAULT_CHANGES_BEFORE_SNAPSHOT = 100; // Default number of changes before snapshot
@@ -378,11 +381,23 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
             poolSize = DEFAULT_PERSISTENCE_THREAD_POOL_SIZE;
         }
         logger.debug("Creating persistence thread pool with size {} for actor {}", poolSize, actorId);
-        return Executors.newFixedThreadPool(poolSize, r -> {
+        ExecutorService executor = Executors.newFixedThreadPool(poolSize, r -> {
             Thread t = new Thread(r, "persistence-" + actorId + "-" + System.nanoTime());
             t.setDaemon(true);
             return t;
         });
+
+        // Register shutdown hook ONCE during construction to avoid resource leak
+        // This ensures the executor is terminated if JVM is shutting down
+        shutdownHook = new Thread(() -> {
+            if (!executor.isTerminated()) {
+                logger.warn("Forcing termination of persistence executor for actor {} during JVM shutdown", actorId);
+                executor.shutdownNow();
+            }
+        }, "shutdown-hook-" + actorId);
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+
+        return executor;
     }
 
     // CompletableFuture that completes when state initialization is done
@@ -511,15 +526,6 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         
         // Start the shutdown monitor thread
         shutdownMonitor.start();
-        
-        // As an additional safety measure, register a JVM shutdown hook to ensure
-        // the executor is terminated if the JVM is shutting down
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (!persistenceExecutor.isTerminated()) {
-                logger.warn("Forcing termination of persistence executor for actor {} during JVM shutdown", actorId);
-                persistenceExecutor.shutdownNow();
-            }
-        }, "shutdown-hook-" + actorId));
     }
     
     /**

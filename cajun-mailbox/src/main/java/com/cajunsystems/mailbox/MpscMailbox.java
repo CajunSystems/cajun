@@ -35,6 +35,7 @@ public class MpscMailbox<T> implements Mailbox<T> {
     private final ReentrantLock lock;
     private final Condition notEmpty;
     private final int initialCapacity;
+    private volatile boolean hasWaitingConsumers = false;
 
     /**
      * Creates an MPSC mailbox with default initial capacity (128).
@@ -115,6 +116,9 @@ public class MpscMailbox<T> implements Mailbox<T> {
                 return message;
             }
 
+            // Indicate we're waiting
+            hasWaitingConsumers = true;
+
             // Wait for signal or timeout
             long deadline = System.nanoTime() + nanos;
             while (nanos > 0) {
@@ -138,6 +142,7 @@ public class MpscMailbox<T> implements Mailbox<T> {
 
             return null; // Timeout
         } finally {
+            hasWaitingConsumers = false;
             lock.unlock();
         }
     }
@@ -153,6 +158,9 @@ public class MpscMailbox<T> implements Mailbox<T> {
         // Slow path: wait indefinitely
         lock.lock();
         try {
+            // Indicate we're waiting
+            hasWaitingConsumers = true;
+
             while (true) {
                 message = queue.poll();
                 if (message != null) {
@@ -162,6 +170,7 @@ public class MpscMailbox<T> implements Mailbox<T> {
                 notEmpty.await();
             }
         } finally {
+            hasWaitingConsumers = false;
             lock.unlock();
         }
     }
@@ -215,13 +224,17 @@ public class MpscMailbox<T> implements Mailbox<T> {
     /**
      * Signals waiting consumers that a message is available.
      * This is called after adding a message.
+     * Only acquires lock if threads are actually waiting to preserve lock-free performance.
      */
     private void signalNotEmpty() {
-        lock.lock();
-        try {
-            notEmpty.signal();
-        } finally {
-            lock.unlock();
+        // Check volatile flag first - avoids lock acquisition on hot path
+        if (hasWaitingConsumers) {
+            lock.lock();
+            try {
+                notEmpty.signal();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
