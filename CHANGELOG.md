@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-11-24
+
+### Fixed
+- **StatefulActor Ask Pattern Bug**: Fixed critical bug where `getSender()` returned empty Optional in direct `StatefulActor` subclasses when using the ask pattern
+  - **Root Cause**: `StatefulActor` processes messages asynchronously via `CompletableFuture`, and the sender context was captured in `asyncSenderContext` ThreadLocal but `getSender()` was inherited from base `Actor` class which used a different ThreadLocal (`senderContext`)
+  - **Solution**: Override `getSender()` in `StatefulActor` to use `asyncSenderContext` instead of parent's `senderContext`, ensuring sender context is preserved across async boundaries
+  - **Impact**: Ask pattern now works correctly with direct `StatefulActor` subclasses (e.g., `class MyActor extends StatefulActor<State, Message>`)
+  - **Note**: `StatefulHandler`-based actors were not affected as `StatefulHandlerActor` already correctly implemented `getSender()` using `asyncSenderContext`
+  - **Files Modified**: 
+    - `StatefulActor.java`: Added `getSender()` override and `Optional` import
+  - **Tests Added**:
+    - `ActorAskPatternTest.java`: New test suite for direct `Actor` subclasses with ask pattern
+    - `StatefulActorAskPatternTest.testAskPatternWithDirectStatefulActorSubclass()`: Test for direct `StatefulActor` subclasses
+
 ## [0.3.0] - 2025-11-23
 
 ### Changed

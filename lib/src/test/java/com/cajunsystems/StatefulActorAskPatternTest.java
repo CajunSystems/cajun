@@ -177,5 +177,64 @@ public class StatefulActorAskPatternTest {
         assertEquals("value2", future2.get().value());
         assertEquals("value3", future3.get().value());
     }
+
+    /**
+     * Test direct StatefulActor subclass (not using StatefulHandler interface)
+     * This test catches the bug where getSender() wasn't overridden in StatefulActor
+     */
+    @Test
+    public void testAskPatternWithDirectStatefulActorSubclass() throws Exception {
+        // Create a direct StatefulActor subclass with unique ID to avoid state recovery
+        String actorId = "direct-counter-" + System.currentTimeMillis();
+        Pid counter = system.register(DirectCounterActor.class, actorId);
+        
+        // Wait for actor state initialization
+        StatefulActor<?, ?> actor = (StatefulActor<?, ?>) system.getActor(counter);
+        assertTrue(actor.waitForStateInitialization(5000), "Actor state should initialize within 5 seconds");
+        
+        // Test increment with ask pattern
+        CompletableFuture<String> future1 = system.ask(counter, "increment", Duration.ofSeconds(5));
+        String response1 = future1.get(5, TimeUnit.SECONDS);
+        assertEquals("Count: 1", response1, "Should get count 1 after first increment");
+        
+        // Test another increment
+        CompletableFuture<String> future2 = system.ask(counter, "increment", Duration.ofSeconds(5));
+        String response2 = future2.get(5, TimeUnit.SECONDS);
+        assertEquals("Count: 2", response2, "Should get count 2 after second increment");
+        
+        // Test get without increment
+        CompletableFuture<String> future3 = system.ask(counter, "get", Duration.ofSeconds(5));
+        String response3 = future3.get(5, TimeUnit.SECONDS);
+        assertEquals("Count: 2", response3, "Should still be 2 after get");
+    }
+
+    /**
+     * Direct StatefulActor subclass for testing getSender() in processMessage()
+     */
+    static class DirectCounterActor extends StatefulActor<Integer, String> {
+        public DirectCounterActor(ActorSystem system, String actorId) {
+            super(system, actorId, 0);
+        }
+
+        @Override
+        protected Integer processMessage(Integer state, String message) {
+            if ("increment".equals(message)) {
+                int newCount = state + 1;
+                // Use getSender() directly - this is where the bug was
+                getSender().ifPresentOrElse(
+                    sender -> sender.tell("Count: " + newCount),
+                    () -> getLogger().error("No sender for increment - BUG!")
+                );
+                return newCount;
+            } else if ("get".equals(message)) {
+                getSender().ifPresentOrElse(
+                    sender -> sender.tell("Count: " + state),
+                    () -> getLogger().error("No sender for get - BUG!")
+                );
+                return state;
+            }
+            return state;
+        }
+    }
 }
 

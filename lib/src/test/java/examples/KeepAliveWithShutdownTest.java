@@ -1,5 +1,5 @@
 ///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS com.cajunsystems:cajun:0.3.0
+//DEPS com.cajunsystems:cajun:0.3.1
 //JAVA 21+
 //PREVIEW
 

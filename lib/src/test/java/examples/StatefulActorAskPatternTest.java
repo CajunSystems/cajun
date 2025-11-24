@@ -1,5 +1,5 @@
 ///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS com.cajunsystems:cajun:0.3.0
+//DEPS com.cajunsystems:cajun:0.3.1
 //JAVA 21+
 //PREVIEW
 
@@ -8,8 +8,6 @@ package examples;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.StatefulActor;
-import com.cajunsystems.test.TempPersistenceExtension;
-import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.Serializable;
 import java.time.Duration;
@@ -19,7 +17,6 @@ import java.util.concurrent.CompletableFuture;
  * Test to verify that the ask pattern works correctly with StatefulActor.
  * This demonstrates that getSender() properly returns the sender context even in async processing.
  */
-@ExtendWith(TempPersistenceExtension.class)
 public class StatefulActorAskPatternTest {
 
     public static class CounterState implements Serializable {

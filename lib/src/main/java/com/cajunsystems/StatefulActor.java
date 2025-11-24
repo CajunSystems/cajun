@@ -2,6 +2,7 @@ package com.cajunsystems;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -692,6 +693,19 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      */
     public String getAsyncSenderContext() {
         return asyncSenderContext.get();
+    }
+
+    /**
+     * Overrides the base Actor's getSender() to use asyncSenderContext instead of senderContext.
+     * This is necessary because StatefulActor processes messages asynchronously, and the parent's
+     * senderContext ThreadLocal would be cleared before async processing completes.
+     * 
+     * @return An Optional containing the PID of the sender, or empty if no sender context
+     */
+    @Override
+    public Optional<Pid> getSender() {
+        String senderActorId = asyncSenderContext.get();
+        return Optional.ofNullable(senderActorId).map(id -> new Pid(id, getSystem()));
     }
 
     /**
