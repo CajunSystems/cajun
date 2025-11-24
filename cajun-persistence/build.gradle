@@ -1,6 +1,7 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
+    id 'signing'
 }
 
 group = 'com.cajunsystems'
@@ -26,6 +27,14 @@ sourceSets {
             exclude 'com/cajunsystems/persistence/ActorSystemPersistenceHelper.java'
         }
     }
+}
+
+// Task to create a bundle for Central Portal upload
+tasks.register('createCentralBundle', Zip) {
+    from layout.buildDirectory.dir('repo')
+    archiveFileName = "cajun-persistence-${version}-bundle.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    dependsOn 'publishMavenJavaPublicationToCentralPortalRepository'
 }
 
 tasks.withType(JavaCompile).each {
@@ -76,7 +85,43 @@ publishing {
                         url.set('https://opensource.org/licenses/MIT')
                     }
                 }
+
+                developers {
+                    developer {
+                        id.set('cajunsystems')
+                        name.set('CajunSystems')
+                        email.set('info@cajunsystems.io')
+                    }
+                }
+
+                scm {
+                    connection.set('scm:git:git://github.com/cajunsystems/cajun.git')
+                    developerConnection.set('scm:git:ssh://github.com:cajunsystems/cajun.git')
+                    url.set('https://github.com/cajunsystems/cajun')
+                }
             }
         }
+    }
+    repositories {
+        maven {
+            name = 'CentralPortal'
+            url = layout.buildDirectory.dir('repo')
+        }
+    }
+}
+
+def hasSigningCredentials = project.hasProperty('signing.keyId') &&
+        project.hasProperty('signing.password') &&
+        project.hasProperty('signing.secretKeyRingFile')
+
+signing {
+    required {
+        gradle.taskGraph.hasTask('publishMavenJavaPublicationToCentralPortalRepository') && hasSigningCredentials
+    }
+
+    if (hasSigningCredentials) {
+        sign publishing.publications.mavenJava
+    } else {
+        logger.lifecycle("Signing disabled for ${project.path} - missing signing properties")
     }
 }
