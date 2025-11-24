@@ -37,6 +37,12 @@ public class MpscMailbox<T> implements Mailbox<T> {
     private final int initialCapacity;
     private volatile boolean hasWaitingConsumers = false;
 
+    // Memory pressure monitoring (optional)
+    private volatile boolean memoryPressureEnabled = false;
+    private volatile int memoryPressureThreshold = 10000; // Default: reject after 10K messages
+    private volatile long totalMessagesOffered = 0;
+    private volatile long totalMessagesRejected = 0;
+
     /**
      * Creates an MPSC mailbox with default initial capacity (128).
      */
@@ -65,6 +71,14 @@ public class MpscMailbox<T> implements Mailbox<T> {
     @Override
     public boolean offer(T message) {
         Objects.requireNonNull(message, "Message cannot be null");
+
+        totalMessagesOffered++;
+
+        // Check memory pressure before accepting message (if enabled)
+        if (shouldApplyBackpressure()) {
+            totalMessagesRejected++;
+            return false;
+        }
 
         boolean added = queue.offer(message);
 
@@ -253,5 +267,71 @@ public class MpscMailbox<T> implements Mailbox<T> {
             result <<= 1;
         }
         return result;
+    }
+
+    // Memory pressure monitoring methods
+
+    /**
+     * Checks if backpressure should be applied based on current queue size and memory pressure settings.
+     * This is called before accepting a message in high-throughput scenarios.
+     *
+     * @return true if message should be rejected due to memory pressure
+     */
+    private boolean shouldApplyBackpressure() {
+        if (!memoryPressureEnabled) {
+            return false;
+        }
+
+        // Check queue size against threshold
+        return queue.size() >= memoryPressureThreshold;
+    }
+
+    /**
+     * Enables memory pressure monitoring for high-throughput scenarios.
+     * When enabled, messages will be rejected if the queue size exceeds the threshold.
+     *
+     * @param threshold the maximum queue size before rejecting messages (default: 10000)
+     */
+    public void enableMemoryPressure(int threshold) {
+        this.memoryPressureThreshold = threshold;
+        this.memoryPressureEnabled = true;
+    }
+
+    /**
+     * Disables memory pressure monitoring.
+     * The mailbox will accept messages without size limits (unbounded behavior).
+     */
+    public void disableMemoryPressure() {
+        this.memoryPressureEnabled = false;
+    }
+
+    /**
+     * Returns the total number of messages offered to this mailbox.
+     *
+     * @return total messages offered (including rejected)
+     */
+    public long getTotalMessagesOffered() {
+        return totalMessagesOffered;
+    }
+
+    /**
+     * Returns the total number of messages rejected due to memory pressure.
+     *
+     * @return total messages rejected
+     */
+    public long getTotalMessagesRejected() {
+        return totalMessagesRejected;
+    }
+
+    /**
+     * Returns the rejection rate (0.0 to 1.0) due to memory pressure.
+     *
+     * @return rejection rate, or 0.0 if no messages have been offered
+     */
+    public double getRejectionRate() {
+        if (totalMessagesOffered == 0) {
+            return 0.0;
+        }
+        return (double) totalMessagesRejected / totalMessagesOffered;
     }
 }

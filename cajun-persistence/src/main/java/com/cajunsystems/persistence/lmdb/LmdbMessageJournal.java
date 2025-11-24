@@ -1,6 +1,7 @@
 package com.cajunsystems.persistence.lmdb;
 
 import com.cajunsystems.persistence.JournalEntry;
+import com.cajunsystems.persistence.JournalException;
 import com.cajunsystems.persistence.MessageJournal;
 import org.lmdbjava.*;
 import org.slf4j.Logger;
@@ -114,7 +115,7 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
             // Serialize value
             byte[] valueBytes = serializeEntry(entry);
             if (valueBytes.length > VALUE_BUFFER_SIZE) {
-                throw new IOException("Journal entry too large: " + valueBytes.length + " bytes");
+                throw new JournalException.EntryTooLargeException(valueBytes.length, VALUE_BUFFER_SIZE);
             }
             valBuf.put(valueBytes).flip();
 
@@ -124,8 +125,10 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
                 txn.commit();
             }
 
+        } catch (JournalException e) {
+            throw e; // Re-throw JournalExceptions as-is
         } catch (Exception e) {
-            throw new IOException("Failed to append journal entry for actor " + actorId, e);
+            throw new JournalException.TransactionFailedException("Failed to append journal entry for actor " + actorId, e);
         }
     }
 
@@ -146,15 +149,17 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
                 // Serialize value
                 byte[] valueBytes = serializeEntry(entry);
                 if (valueBytes.length > VALUE_BUFFER_SIZE) {
-                    throw new IOException("Journal entry too large: " + valueBytes.length + " bytes");
+                    throw new JournalException.EntryTooLargeException(valueBytes.length, VALUE_BUFFER_SIZE);
                 }
                 valBuf.put(valueBytes).flip();
 
                 db.put(txn, keyBuf, valBuf);
             }
             txn.commit();
+        } catch (JournalException e) {
+            throw e; // Re-throw JournalExceptions as-is
         } catch (Exception e) {
-            throw new IOException("Failed to append batch journal entries for actor " + actorId, e);
+            throw new JournalException.TransactionFailedException("Failed to append batch journal entries for actor " + actorId, e);
         }
     }
 
@@ -302,9 +307,12 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
     private JournalEntry<T> deserializeEntry(byte[] bytes) throws IOException {
         try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
              ObjectInputStream ois = new ObjectInputStream(bis)) {
-            return (JournalEntry<T>) ois.readObject();
+            JournalEntry<T> entry = (JournalEntry<T>) ois.readObject();
+            return entry;
         } catch (ClassNotFoundException e) {
-            throw new IOException("Failed to deserialize journal entry", e);
+            throw new JournalException.CorruptedDataException("Failed to deserialize journal entry - class not found", -1, e);
+        } catch (Exception e) {
+            throw new JournalException.CorruptedDataException("Failed to deserialize journal entry - invalid data format", -1, e);
         }
     }
 }

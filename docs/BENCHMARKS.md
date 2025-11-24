@@ -20,12 +20,12 @@
 
 ### Performance at a Glance
 
-| Workload Type | Actor Overhead | Verdict |
-|---------------|---------------|---------|
-| **I/O-Bound** | **0.02%** | ✅ **PERFECT** - Use actors! |
-| **Mixed (CPU+I/O)** | **0.72%** | ✅ **OUTSTANDING** - Use actors! |
-| **CPU-Bound** | **8.4%** | ✅ **EXCELLENT** - Worth it for state management! |
-| **Parallel Batch** | **278%** | ⚠️ **Use thread pools instead** |
+| Use Case | Actor Overhead | Recommendation |
+|----------|----------------|----------------|
+| Microservice with DB calls | 0.02% | ✅ Perfect choice |
+| Event stream processing | 0.02% | ✅ Perfect choice |  
+| CPU-heavy computation (100+ parallel tasks) | 278% | ❌ Use thread pools |
+| Stateful request handling | 8% | ✅ Excellent with benefits |
 
 ### Key Takeaway
 
