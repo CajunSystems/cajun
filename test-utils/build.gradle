@@ -104,9 +104,20 @@ publishing {
     }
 }
 
+def hasSigningCredentials = project.hasProperty('signing.keyId') &&
+        project.hasProperty('signing.password') &&
+        project.hasProperty('signing.secretKeyRingFile')
+
 signing {
-    required { gradle.taskGraph.hasTask("publish") }
+    required {
+        gradle.taskGraph.hasTask('publishMavenJavaPublicationToCentralPortalRepository') && hasSigningCredentials
+    }
+
+    if (hasSigningCredentials) {
         sign publishing.publications.mavenJava
+    } else {
+        logger.lifecycle("Signing disabled for ${project.path} - missing signing properties")
+    }
 }
 
 // Task to create a bundle for Central Portal upload

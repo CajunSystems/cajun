@@ -1,6 +1,7 @@
 package com.cajunsystems;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -94,6 +95,10 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     
     // Error hook for custom error handling
     private Consumer<Throwable> errorHook = ex -> {};
+
+    // ThreadLocal to preserve sender context across async boundaries in stateful actors
+    // This is needed because async processing may happen on different threads
+    private final ThreadLocal<String> asyncSenderContext = new ThreadLocal<>();
 
     /**
      * Sets the global truncation configuration used for new stateful actors
@@ -568,10 +573,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 executeWithRetry(() -> {
                     CompletableFuture<Void> future = new CompletableFuture<>();
                     try {
-                        // Restore the sender context for this async processing
-                        if (capturedSender != null) {
-                            setSender(capturedSender);
-                        }
+                        // Set the async sender context for this processing thread
+                        // This allows getSender() to work correctly in async processing
+                        asyncSenderContext.set(capturedSender);
 
                         try {
                             // Process the message and update the state
@@ -582,7 +586,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                             lastProcessedSequence.set(sequenceNumber);
 
                             // Only update and persist if the state has changed
-                            if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
+                            if (!Objects.equals(newState, currentStateValue)) {
                                 currentState.set(newState);
                                 stateChanged = true;
                                 changesSinceLastSnapshot++;
@@ -623,10 +627,8 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         } catch (Exception e) {
                             future.completeExceptionally(e);
                         } finally {
-                            // Clear the sender context after processing
-                            if (capturedSender != null) {
-                                clearSender();
-                            }
+                            // Clear the async sender context after processing
+                            asyncSenderContext.remove();
                         }
                     } catch (Exception e) {
                         future.completeExceptionally(e);
@@ -665,6 +667,17 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @return The new state after processing the message
      */
     protected abstract State processMessage(State state, Message message);
+
+    /**
+     * Gets the async sender context for stateful actors.
+     * This is used by StatefulActorContext to retrieve the sender across async boundaries.
+     * Public for use by StatefulHandlerActor in the internal package.
+     *
+     * @return The sender actor ID, or null if no sender context
+     */
+    public String getAsyncSenderContext() {
+        return asyncSenderContext.get();
+    }
 
     /**
      * Gets the current state of the actor.

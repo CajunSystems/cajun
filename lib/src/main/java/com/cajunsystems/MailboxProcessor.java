@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
@@ -32,6 +33,7 @@ public class MailboxProcessor<T> {
 
     private volatile boolean running = false;
     private volatile Thread thread;
+    private volatile CountDownLatch readyLatch;
 
     /**
      * Creates a new mailbox processor.
@@ -79,6 +81,7 @@ public class MailboxProcessor<T> {
 
     /**
      * Starts mailbox polling using the configured thread factory or virtual threads.
+     * Blocks until the actor thread is actually running to avoid race conditions with the ask pattern.
      */
     public void start() {
         if (running) {
@@ -89,6 +92,9 @@ public class MailboxProcessor<T> {
         logger.info("Starting actor {} mailbox", actorId);
         lifecycle.preStart();
         
+        // Create a latch to signal when the actor thread is actually running
+        readyLatch = new CountDownLatch(1);
+
         if (threadPoolFactory != null) {
             // Use the configured thread pool factory to create a thread
             thread = threadPoolFactory.createThreadFactory(actorId).newThread(this::processMailboxLoop);
@@ -98,6 +104,16 @@ public class MailboxProcessor<T> {
             thread = Thread.ofVirtual()
                     .name("actor-" + actorId)
                     .start(this::processMailboxLoop);
+        }
+
+        // Wait for the actor thread to signal it's ready (with a timeout to avoid hanging)
+        try {
+            if (!readyLatch.await(5, TimeUnit.SECONDS)) {
+                logger.warn("Actor {} did not start within timeout", actorId);
+            }
+        } catch (InterruptedException e) {
+            logger.warn("Interrupted while waiting for actor {} to start", actorId);
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -175,6 +191,11 @@ public class MailboxProcessor<T> {
     }
 
     private void processMailboxLoop() {
+        // Signal that the thread is now running and ready to process messages
+        if (readyLatch != null) {
+            readyLatch.countDown();
+        }
+
         while (running) {
             try {
                 batchBuffer.clear();

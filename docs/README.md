@@ -81,7 +81,7 @@ Welcome to the Cajun Actor Framework documentation! This index helps you find th
 - Sender tracking
 
 ### Testing
-🧪 **[test_utils_readme.md](test_utils_readme.md)** - Testing utilities
+🧪 **[../test-utils/README.md](../test-utils/README.md)** - Testing utilities
 - Test harness usage
 - Actor testing strategies
 - Mock actors
@@ -114,7 +114,7 @@ Welcome to the Cajun Actor Framework documentation! This index helps you find th
 4. See [performance_recommendation.md](performance_recommendation.md) - Best practices
 
 ### "I'm writing tests"
-1. Read [test_utils_readme.md](test_utils_readme.md) - Testing guide
+1. Read [../test-utils/README.md](../test-utils/README.md) - Testing guide
 2. Check [../README.md](../README.md) - Basic testing examples
 
 ---
@@ -136,7 +136,7 @@ Welcome to the Cajun Actor Framework documentation! This index helps you find th
 ### Advanced Features
 - [cluster_mode.md](cluster_mode.md) - Distributed actors
 - [sender_propagation.md](sender_propagation.md) - Message patterns
-- [test_utils_readme.md](test_utils_readme.md) - Testing utilities
+- [../test-utils/README.md](../test-utils/README.md) - Testing utilities
 
 ### Updates & Enhancements
 - [backpressure_system_enhancements.md](backpressure_system_enhancements.md)

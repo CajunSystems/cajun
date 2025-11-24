@@ -447,9 +447,9 @@ public abstract class Actor<Message> {
     
     /**
      * Sets the sender context for the current message.
-     * Used internally by the ask pattern to track the reply-to actor.
-     * 
-     * @param senderActorId The actor ID of the sender
+     * Used internally by the ask pattern to track the request ID for response routing.
+     *
+     * @param senderActorId The request ID or actor ID of the sender
      */
     void setSender(String senderActorId) {
         senderContext.set(senderActorId);

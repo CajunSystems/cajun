@@ -513,7 +513,7 @@ logger.info("Queue size: {}, Offer rate: {}/s, Poll rate: {}/s",
 
 1. **Actor Pooling** - Reuse actor instances for short-lived tasks
 2. **Batch Message API** - Send multiple messages in one operation
-3. **Shared Reply Handler** - Eliminate temporary actor creation in `ask()` pattern
+~~3. **Shared Reply Handler** - Eliminate temporary actor creation in `ask()` pattern~~ ✅ **Completed in v0.2.3** - Promise-based ask pattern
 
 **Expected improvement**: Additional 2-3x for specific patterns
 
