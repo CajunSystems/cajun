@@ -1,6 +1,7 @@
 package com.cajunsystems;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -9,7 +10,7 @@ import java.util.function.Supplier;
 
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
-import com.cajunsystems.config.MailboxProvider;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.metrics.ActorMetrics;
@@ -17,6 +18,9 @@ import com.cajunsystems.metrics.MetricsRegistry;
 import com.cajunsystems.persistence.*;
 import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.PersistenceProviderRegistry;
+import com.cajunsystems.persistence.PersistenceTruncationConfig;
+import com.cajunsystems.persistence.PersistenceTruncationMode;
+import com.cajunsystems.persistence.filesystem.FileSystemTruncationDaemon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +67,13 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     private long lastSnapshotTime = 0;
     private int changesSinceLastSnapshot = 0;
     private final PersistenceProvider persistenceProvider;
+
+    // Truncation configuration (global default with per-actor override)
+    private static volatile PersistenceTruncationConfig globalTruncationConfig =
+            PersistenceTruncationConfig.defaultSync();
+
+    private PersistenceTruncationConfig truncationConfig = globalTruncationConfig;
+    private long lastAsyncTruncationTime = 0L;
     
     // Metrics for this actor
     private final ActorMetrics metrics;
@@ -70,6 +81,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     // Dedicated thread pool for persistence operations
     private final ExecutorService persistenceExecutor;
     
+    // Shutdown hook thread (registered once in constructor via createPersistenceExecutor)
+    private Thread shutdownHook;
+
     // Adaptive snapshot configuration
     private static final long DEFAULT_SNAPSHOT_INTERVAL_MS = 15000; // 15 seconds default
     private static final int DEFAULT_CHANGES_BEFORE_SNAPSHOT = 100; // Default number of changes before snapshot
@@ -84,6 +98,30 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     
     // Error hook for custom error handling
     private Consumer<Throwable> errorHook = ex -> {};
+
+    // ThreadLocal to preserve sender context across async boundaries in stateful actors
+    // This is needed because async processing may happen on different threads
+    private final ThreadLocal<String> asyncSenderContext = new ThreadLocal<>();
+
+    /**
+     * Sets the global truncation configuration used for new stateful actors
+     * that do not specify a per-actor configuration.
+     */
+    public static void setGlobalTruncationConfig(PersistenceTruncationConfig config) {
+        if (config != null) {
+            globalTruncationConfig = config;
+        }
+    }
+
+    /**
+     * Sets the truncation configuration for this actor instance.
+     * This allows per-actor overrides via builder APIs.
+     */
+    public void setTruncationConfig(PersistenceTruncationConfig config) {
+        if (config != null) {
+            this.truncationConfig = config;
+        }
+    }
 
     // Helper method removed as it's no longer needed with the standardized constructor signatures
 
@@ -343,11 +381,23 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
             poolSize = DEFAULT_PERSISTENCE_THREAD_POOL_SIZE;
         }
         logger.debug("Creating persistence thread pool with size {} for actor {}", poolSize, actorId);
-        return Executors.newFixedThreadPool(poolSize, r -> {
+        ExecutorService executor = Executors.newFixedThreadPool(poolSize, r -> {
             Thread t = new Thread(r, "persistence-" + actorId + "-" + System.nanoTime());
             t.setDaemon(true);
             return t;
         });
+
+        // Register shutdown hook ONCE during construction to avoid resource leak
+        // This ensures the executor is terminated if JVM is shutting down
+        shutdownHook = new Thread(() -> {
+            if (!executor.isTerminated()) {
+                logger.warn("Forcing termination of persistence executor for actor {} during JVM shutdown", actorId);
+                executor.shutdownNow();
+            }
+        }, "shutdown-hook-" + actorId);
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+
+        return executor;
     }
 
     // CompletableFuture that completes when state initialization is done
@@ -360,6 +410,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         // Register metrics
         metrics.register();
         MetricsRegistry.registerActorMetrics(actorId, metrics);
+        
+        // Register with filesystem cleanup daemon in async mode, if applicable
+        registerForAsyncTruncationIfNeeded();
         
         // Initialize state asynchronously to avoid blocking the actor thread
         initializeState().thenRun(() -> {
@@ -404,7 +457,21 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         // Unregister metrics
         metrics.unregister();
         MetricsRegistry.unregisterActorMetrics(actorId);
+
+        // Unregister from filesystem truncation daemon if previously registered
+        if (messageJournal instanceof TruncationCapableJournal) {
+            FileSystemTruncationDaemon.getInstance().unregisterJournal(actorId);
+        }
         
+        // Remove shutdown hook to prevent resource leak
+        if (shutdownHook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException e) {
+                // Already shutting down, hook will run anyway
+            }
+        }
+
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
             if (stateChanged) {
@@ -468,15 +535,6 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         
         // Start the shutdown monitor thread
         shutdownMonitor.start();
-        
-        // As an additional safety measure, register a JVM shutdown hook to ensure
-        // the executor is terminated if the JVM is shutting down
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (!persistenceExecutor.isTerminated()) {
-                logger.warn("Forcing termination of persistence executor for actor {} during JVM shutdown", actorId);
-                persistenceExecutor.shutdownNow();
-            }
-        }, "shutdown-hook-" + actorId));
     }
     
     /**
@@ -518,6 +576,11 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         metrics.messageReceived();
         long startTime = System.nanoTime();
 
+        // Capture the sender context before async processing
+        // This is critical because the parent Actor class will clear the sender context
+        // after receive() returns, but our processing happens asynchronously
+        String capturedSender = getCurrentSenderActorId();
+
         // First, journal the message
         messageJournal.append(actorId, message)
             .thenAccept(sequenceNumber -> {
@@ -525,38 +588,63 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 executeWithRetry(() -> {
                     CompletableFuture<Void> future = new CompletableFuture<>();
                     try {
-                        // Process the message and update the state
-                        State currentStateValue = currentState.get();
-                        State newState = processMessage(currentStateValue, message);
+                        // Set the async sender context for this processing thread
+                        // This allows getSender() to work correctly in async processing
+                        asyncSenderContext.set(capturedSender);
 
-                        // Update the last processed sequence number
-                        lastProcessedSequence.set(sequenceNumber);
+                        try {
+                            // Process the message and update the state
+                            State currentStateValue = currentState.get();
+                            State newState = processMessage(currentStateValue, message);
 
-                        // Only update and persist if the state has changed
-                        if (newState != currentStateValue && (newState == null || !newState.equals(currentStateValue))) {
-                            currentState.set(newState);
-                            stateChanged = true;
-                            changesSinceLastSnapshot++;
-                            
-                            // Record state change in metrics
-                            metrics.stateChanged();
-                            
-                            // Take snapshots using adaptive strategy
-                            long now = System.currentTimeMillis();
-                            if (now - lastSnapshotTime > snapshotIntervalMs || 
-                                changesSinceLastSnapshot >= changesBeforeSnapshot) {
-                                takeSnapshot().thenRun(() -> {
-                                    stateChanged = false;
-                                    changesSinceLastSnapshot = 0;
-                                    
-                                    // Record snapshot in metrics
-                                    metrics.snapshotTaken();
-                                });
-                                lastSnapshotTime = now;
+                            // Update the last processed sequence number
+                            lastProcessedSequence.set(sequenceNumber);
+
+                            // Only update and persist if the state has changed
+                            if (!Objects.equals(newState, currentStateValue)) {
+                                currentState.set(newState);
+                                stateChanged = true;
+                                changesSinceLastSnapshot++;
+
+                                // Record state change in metrics
+                                metrics.stateChanged();
+
+                                // Take snapshots using adaptive strategy
+                                long now = System.currentTimeMillis();
+                                if (now - lastSnapshotTime > snapshotIntervalMs ||
+                                    changesSinceLastSnapshot >= changesBeforeSnapshot) {
+                                    takeSnapshot().thenRun(() -> {
+                                        stateChanged = false;
+                                        changesSinceLastSnapshot = 0;
+
+                                        // Record snapshot in metrics
+                                        metrics.snapshotTaken();
+
+                                        // Automatic truncation in sync mode for truncation-capable journals
+                                        if (messageJournal instanceof TruncationCapableJournal &&
+                                                truncationConfig != null &&
+                                                truncationConfig.getMode() == PersistenceTruncationMode.SYNC_ON_SNAPSHOT) {
+                                            long snapshotSeq = lastProcessedSequence.get();
+                                            if (snapshotSeq >= 0) {
+                                                long retainBehind = truncationConfig.getRetainMessagesBehindSnapshot();
+                                                long cutoff = snapshotSeq - retainBehind;
+                                                if (cutoff > 0) {
+                                                    messageJournal.truncateBefore(actorId, cutoff);
+                                                }
+                                            }
+                                        }
+                                    });
+                                    lastSnapshotTime = now;
+                                }
                             }
+
+                            future.complete(null);
+                        } catch (Exception e) {
+                            future.completeExceptionally(e);
+                        } finally {
+                            // Clear the async sender context after processing
+                            asyncSenderContext.remove();
                         }
-                        
-                        future.complete(null);
                     } catch (Exception e) {
                         future.completeExceptionally(e);
                     }
@@ -572,6 +660,9 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 // Record message processing time
                 long processingTime = System.nanoTime() - startTime;
                 metrics.messageProcessed(processingTime);
+
+                // Async truncation mode: trigger occasional cleanup in the background
+                maybeRunAsyncTruncation();
             })
             .exceptionally(e -> {
                 logger.error("Error journaling message for actor {}", actorId, e);
@@ -591,6 +682,17 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
      * @return The new state after processing the message
      */
     protected abstract State processMessage(State state, Message message);
+
+    /**
+     * Gets the async sender context for stateful actors.
+     * This is used by StatefulActorContext to retrieve the sender across async boundaries.
+     * Public for use by StatefulHandlerActor in the internal package.
+     *
+     * @return The sender actor ID, or null if no sender context
+     */
+    public String getAsyncSenderContext() {
+        return asyncSenderContext.get();
+    }
 
     /**
      * Gets the current state of the actor.
@@ -623,9 +725,91 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                 
                 // Record snapshot in metrics
                 metrics.snapshotTaken();
+
+                // Automatic truncation in sync mode for truncation-capable journals
+                if (messageJournal instanceof TruncationCapableJournal &&
+                        truncationConfig != null &&
+                        truncationConfig.getMode() == PersistenceTruncationMode.SYNC_ON_SNAPSHOT) {
+                    long snapshotSeq = lastProcessedSequence.get();
+                    if (snapshotSeq >= 0) {
+                        long retainBehind = truncationConfig.getRetainMessagesBehindSnapshot();
+                        long cutoff = snapshotSeq - retainBehind;
+                        if (cutoff > 0) {
+                            messageJournal.truncateBefore(actorId, cutoff);
+                        }
+                    }
+                }
             });
         }
         return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * In async truncation mode, registers this actor's journal with the
+     * filesystem cleanup daemon so truncation is performed in the background.
+     * Only truncation-capable journals are registered.
+     */
+    private void registerForAsyncTruncationIfNeeded() {
+        if (!(messageJournal instanceof TruncationCapableJournal)) {
+            return;
+        }
+
+        PersistenceTruncationConfig cfg = this.truncationConfig;
+        if (cfg == null || cfg.getMode() != PersistenceTruncationMode.ASYNC_DAEMON) {
+            return;
+        }
+
+        FileSystemTruncationDaemon daemon = FileSystemTruncationDaemon.getInstance();
+        // Configure daemon interval globally; retention is tracked per actor
+        daemon.setInterval(cfg.getDaemonInterval());
+        daemon.registerJournal(actorId, messageJournal, cfg.getRetainLastMessagesPerActor());
+        daemon.start();
+    }
+
+    /**
+     * In async truncation mode, periodically runs background truncation based on
+     * the actor's truncation configuration. This keeps journals bounded without
+     * blocking the actor thread.
+     */
+    private void maybeRunAsyncTruncation() {
+        // Only run async truncation for journals that opt in to truncation
+        if (!(messageJournal instanceof TruncationCapableJournal)) {
+            return;
+        }
+
+        PersistenceTruncationConfig cfg = this.truncationConfig;
+        if (cfg == null || cfg.getMode() != PersistenceTruncationMode.ASYNC_DAEMON) {
+            return;
+        }
+
+        long intervalMs = cfg.getDaemonInterval().toMillis();
+        if (intervalMs <= 0) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastAsyncTruncationTime < intervalMs) {
+            return;
+        }
+        lastAsyncTruncationTime = now;
+
+        // Run cleanup on the persistence executor
+        runAsync(() -> messageJournal.getHighestSequenceNumber(actorId)
+                .thenCompose(highestSeq -> {
+                    if (highestSeq == null || highestSeq < 0) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    long retain = cfg.getRetainLastMessagesPerActor();
+                    long cutoff = highestSeq - retain;
+                    if (cutoff <= 0) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    return messageJournal.truncateBefore(actorId, cutoff);
+                }))
+                .exceptionally(e -> {
+                    logger.warn("Async truncation failed for actor {}", actorId, e);
+                    return null;
+                });
     }
 
     /**

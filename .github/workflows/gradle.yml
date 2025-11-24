@@ -27,6 +27,8 @@ jobs:
       with:
         java-version: '21'
         distribution: 'temurin'
+    - name: Install LMDB
+      run: sudo apt-get update && sudo apt-get install -y liblmdb0
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
       with:
@@ -47,6 +49,8 @@ jobs:
       with:
         java-version: '21'
         distribution: 'temurin'
+    - name: Install LMDB
+      run: sudo apt-get update && sudo apt-get install -y liblmdb0
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
       with:

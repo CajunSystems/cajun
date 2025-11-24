@@ -3,9 +3,11 @@ package com.cajunsystems;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Test to verify that ThreadPoolFactory can be configured for actors
  * and that actors use the specified thread pool configuration.
  */
+@ExtendWith(TempPersistenceExtension.class)
 public class ThreadPoolFactoryActorTest {
 
     private ActorSystem system;

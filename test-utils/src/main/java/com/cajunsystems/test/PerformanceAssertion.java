@@ -27,6 +27,13 @@ import java.util.function.Supplier;
 public class PerformanceAssertion {
     
     /**
+     * Private constructor to prevent instantiation of utility class.
+     */
+    private PerformanceAssertion() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+
+    /**
      * Executes an operation and asserts it completes within the specified time.
      * 
      * @param <T> the return type
@@ -154,6 +161,10 @@ public class PerformanceAssertion {
     
     /**
      * Result of a performance measurement.
+     *
+     * @param duration the total duration of the operation
+     * @param iterations the number of iterations executed
+     * @param opsPerSecond the throughput in operations per second
      */
     public record PerformanceResult(
         Duration duration,

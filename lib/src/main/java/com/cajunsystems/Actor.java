@@ -2,6 +2,7 @@ package com.cajunsystems;
 
 import com.cajunsystems.backpressure.*;
 import com.cajunsystems.config.*;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -9,7 +10,6 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Optional;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -35,7 +35,7 @@ public abstract class Actor<Message> {
     // Core Actor fields
     private final String actorId;
     private Pid pid;
-    private BlockingQueue<Message> mailbox;
+    private com.cajunsystems.mailbox.Mailbox<Message> mailbox;
     private final ActorSystem system;
     private SupervisionStrategy supervisionStrategy = SupervisionStrategy.RESUME;
     private Actor<?> parent;
@@ -219,8 +219,16 @@ public abstract class Actor<Message> {
                 ? effectiveTpf.getInferredWorkloadType() 
                 : ThreadPoolFactory.WorkloadType.IO_BOUND; // Changed GENERAL to IO_BOUND
 
+        // Convert MailboxConfig to the mailbox module's MailboxConfig
+        com.cajunsystems.mailbox.config.MailboxConfig mailboxModuleConfig =
+                new com.cajunsystems.mailbox.config.MailboxConfig()
+                .setInitialCapacity(effectiveMailboxConfig.getInitialCapacity())
+                .setMaxCapacity(effectiveMailboxConfig.getMaxCapacity())
+                .setResizeThreshold(effectiveMailboxConfig.getResizeThreshold())
+                .setResizeFactor(effectiveMailboxConfig.getResizeFactor());
+
         // Get mailbox configuration values (maxCapacity is used for backpressure)
-        this.mailbox = effectiveMp.createMailbox(effectiveMailboxConfig, workloadTypeHint); // Pass MailboxConfig and WorkloadType
+        this.mailbox = effectiveMp.createMailbox(mailboxModuleConfig, workloadTypeHint); // Pass MailboxConfig and WorkloadType
 
         // Initialize BackpressureManager only if backpressureConfig is provided
         if (backpressureConfig != null) {
@@ -238,7 +246,7 @@ public abstract class Actor<Message> {
             this.shutdownTimeoutSeconds = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
         }
 
-        this.mailboxProcessor = new MailboxProcessor<>(
+        this.mailboxProcessor = new MailboxProcessor<Message>(
                 this.actorId, // Use this.actorId which is now definitely set
                 mailbox,
                 configuredBatchSize,
@@ -252,13 +260,12 @@ public abstract class Actor<Message> {
                     @Override
                     public void receive(Message message) {
                         // Check if this is a MessageWithSender wrapper
-                        if (message instanceof ActorSystem.MessageWithSender<?>) {
-                            ActorSystem.MessageWithSender<?> wrapper = (ActorSystem.MessageWithSender<?>) message;
+                        if (message instanceof ActorSystem.MessageWithSender<?>(Object message1, String sender)) {
                             // Set sender context
-                            setSender(wrapper.sender());
+                            setSender(sender);
                             try {
                                 @SuppressWarnings("unchecked")
-                                Message unwrapped = (Message) wrapper.message();
+                                Message unwrapped = (Message) message1;
                                 Actor.this.receive(unwrapped);
                             } finally {
                                 // Clear sender context
@@ -280,6 +287,12 @@ public abstract class Actor<Message> {
         logger.debug("Actor {} created with batch size {}", this.actorId, configuredBatchSize);
     }
 
+    /**
+     * Processes a received message.
+     * This method must be implemented by concrete actor classes to define message handling behavior.
+     *
+     * @param message the message to process
+     */
     protected abstract void receive(Message message);
 
     /**
@@ -434,9 +447,9 @@ public abstract class Actor<Message> {
     
     /**
      * Sets the sender context for the current message.
-     * Used internally by the ask pattern to track the reply-to actor.
-     * 
-     * @param senderActorId The actor ID of the sender
+     * Used internally by the ask pattern to track the request ID for response routing.
+     *
+     * @param senderActorId The request ID or actor ID of the sender
      */
     void setSender(String senderActorId) {
         senderContext.set(senderActorId);

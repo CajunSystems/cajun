@@ -14,8 +14,7 @@ import com.cajunsystems.builder.ActorBuilder;
 import com.cajunsystems.builder.StatefulActorBuilder;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
-import com.cajunsystems.config.MailboxProvider;
-import com.cajunsystems.config.DefaultMailboxProvider;
+import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
@@ -51,7 +50,8 @@ public class ActorSystem {
     }
 
     /**
-     * Message structure for the ask pattern that carries the original request and the reply address.
+     * Message structure for the ask pattern that carries the original request and the reply request ID.
+     * The replyTo field now contains a unique request ID instead of an actor ID.
      */
     public record AskPayload<RequestMessage>(RequestMessage message, String replyTo) {}
     
@@ -59,7 +59,16 @@ public class ActorSystem {
      * Internal wrapper for messages that includes sender context.
      * This is used to pass sender information through the mailbox.
      */
-    record MessageWithSender<T>(T message, String sender) {}
+    public record MessageWithSender<T>(T message, String sender) {}
+
+    /**
+     * Internal structure to hold pending ask requests with their futures and timeout tasks.
+     */
+    private record PendingAskRequest<T>(
+        CompletableFuture<T> future,
+        ScheduledFuture<?> timeoutTask,
+        AtomicBoolean completed
+    ) {}
 
     /**
      * Functional actor implementation that delegates message handling to a function.
@@ -87,6 +96,7 @@ public class ActorSystem {
     private final ScheduledExecutorService delayScheduler;
     private final ExecutorService sharedExecutor;
     private final ConcurrentHashMap<String, ScheduledFuture<?>> pendingDelayedMessages;
+    private final ConcurrentHashMap<String, PendingAskRequest<?>> pendingAskRequests;
     private final ThreadPoolFactory threadPoolConfig;
     private final BackpressureConfig backpressureConfig;
     private final MailboxConfig mailboxConfig;
@@ -101,7 +111,7 @@ public class ActorSystem {
      * Creates a new ActorSystem with the default configuration.
      */
     public ActorSystem() {
-        this(new ThreadPoolFactory(), null, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(new ThreadPoolFactory(), null, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -110,7 +120,7 @@ public class ActorSystem {
      * @param useSharedExecutor Whether to use a shared executor for all actors
      */
     public ActorSystem(boolean useSharedExecutor) {
-        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(new ThreadPoolFactory().setUseSharedExecutor(useSharedExecutor), null, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -119,7 +129,7 @@ public class ActorSystem {
      * @param threadPoolConfig The thread pool configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig) {
-        this(threadPoolConfig, null, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(threadPoolConfig, null, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -129,7 +139,7 @@ public class ActorSystem {
      * @param backpressureConfig The backpressure configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig) {
-        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new DefaultMailboxProvider<>());
+        this(threadPoolConfig, backpressureConfig, new MailboxConfig(), new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
     
     /**
@@ -141,7 +151,7 @@ public class ActorSystem {
      * @param mailboxConfig The mailbox configuration
      */
     public ActorSystem(ThreadPoolFactory threadPoolConfig, BackpressureConfig backpressureConfig, MailboxConfig mailboxConfig) {
-        this(threadPoolConfig, backpressureConfig, mailboxConfig, new DefaultMailboxProvider<>());
+        this(threadPoolConfig, backpressureConfig, mailboxConfig, new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>());
     }
 
     /**
@@ -160,12 +170,13 @@ public class ActorSystem {
         this.threadPoolConfig = threadPoolConfig != null ? threadPoolConfig : new ThreadPoolFactory();
         this.backpressureConfig = backpressureConfig; // Allow null to disable backpressure
         this.mailboxConfig = mailboxConfig != null ? mailboxConfig : new MailboxConfig();
-        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new DefaultMailboxProvider<>();
-        
+        this.mailboxProvider = mailboxProvider != null ? mailboxProvider : new com.cajunsystems.mailbox.config.DefaultMailboxProvider<>();
+
         // Create the delay scheduler based on configuration
         this.delayScheduler = this.threadPoolConfig.createScheduledExecutorService("actor-system");
         this.pendingDelayedMessages = new ConcurrentHashMap<>();
-        
+        this.pendingAskRequests = new ConcurrentHashMap<>();
+
         // Create a shared executor for all actors if enabled
         if (this.threadPoolConfig.isUseSharedExecutor()) {
             this.sharedExecutor = this.threadPoolConfig.createExecutorService("shared-actor");
@@ -764,6 +775,16 @@ public class ActorSystem {
                 }
                 pendingDelayedMessages.clear();
                 
+                // Cancel any pending ask requests
+                for (PendingAskRequest<?> pending : pendingAskRequests.values()) {
+                    if (pending.completed.compareAndSet(false, true)) {
+                        pending.timeoutTask.cancel(true);
+                        pending.future.completeExceptionally(
+                            new IllegalStateException("Actor system is shutting down"));
+                    }
+                }
+                pendingAskRequests.clear();
+
                 // Shutdown the delay scheduler
                 safeShutdownScheduler(delayScheduler);
 
@@ -811,14 +832,20 @@ public class ActorSystem {
     }
 
     /**
-     * Routes a message to an actor by ID.
+     * Routes a message to an actor by ID, or completes an ask request if the ID is a request ID.
      * Automatically unwraps AskPayload messages and wraps them with sender context.
      * 
      * @param <Message> The type of the message
-     * @param actorId The ID of the actor to route the message to
+     * @param actorId The ID of the actor to route the message to, or a request ID for ask pattern
      * @param message The message to route
      */
-    <Message> void routeMessage(String actorId, Message message) {
+    public <Message> void routeMessage(String actorId, Message message) {
+        // Check if this is a reply to an ask request
+        if (actorId.startsWith("ask-")) {
+            completeAskRequest(actorId, message);
+            return;
+        }
+
         Actor<?> actor = actors.get(actorId);
         if (actor != null) {
             try {
@@ -828,11 +855,13 @@ public class ActorSystem {
                     Object unwrappedMessage = askPayload.message();
                     String replyTo = askPayload.replyTo();
                     
-                    // Wrap the unwrapped message with sender context
+                    // Wrap the unwrapped message with sender context (replyTo is now a request ID)
                     MessageWithSender<Object> wrappedMessage = new MessageWithSender<>(unwrappedMessage, replyTo);
                     
+                    // Cast the wrapped message to the actor's expected type
+                    // The actor's receive method will handle MessageWithSender unwrapping
                     @SuppressWarnings("unchecked")
-                    Actor<MessageWithSender<Object>> typedActor = (Actor<MessageWithSender<Object>>) actor;
+                    Actor<Object> typedActor = (Actor<Object>) actor;
                     typedActor.tell(wrappedMessage);
                 } else {
                     // Normal message routing without sender context
@@ -892,7 +921,8 @@ public class ActorSystem {
 
     /**
      * Sends a message to the target actor and returns a CompletableFuture that will be completed with the reply.
-     * 
+     * This implementation uses a promise-based approach without spawning temporary actors.
+     *
      * @param target The Pid of the target actor.
      * @param message The message to send.
      * @param timeout The maximum time to wait for a reply.
@@ -906,77 +936,77 @@ public class ActorSystem {
         
         CompletableFuture<ResponseMessage> result = new CompletableFuture<>();
         AtomicBoolean completed = new AtomicBoolean(false);
-        String replyActorId = "reply-" + generateActorId();
-        
+        String requestId = "ask-" + generateActorId();
+
         // Schedule a timeout
         ScheduledFuture<?> timeoutFuture = delayScheduler.schedule(() -> {
-            if (completed.compareAndSet(false, true)) {
+            PendingAskRequest<?> pending = pendingAskRequests.remove(requestId);
+            if (pending != null && pending.completed.compareAndSet(false, true)) {
                 result.completeExceptionally(
                     new TimeoutException("Timeout waiting for response from " + target.actorId()));
-                shutdown(replyActorId);
             }
         }, timeout.toMillis(), TimeUnit.MILLISECONDS);
 
-        // Create a temporary actor to receive the response
-        Actor<Object> responseActor = new Actor<Object>(this, replyActorId) {
-            @Override
-            protected void receive(Object response) {
-                if (completed.compareAndSet(false, true)) {
-                    try {
-                        result.complete((ResponseMessage) response);
-                    } catch (ClassCastException e) {
-                        result.completeExceptionally(
-                            new IllegalArgumentException("Received response of unexpected type: " + 
-                                response.getClass().getName(), e));
-                    }
-                    
-                    // Cancel the timeout
-                    timeoutFuture.cancel(false);
-                    
-                    // Stop this temporary actor
-                    stop();
-                }
-            }
-
-            @Override
-            protected void postStop() {
-                // Cancel timeout if not already cancelled
-                timeoutFuture.cancel(false);
-                
-                // If the future is not completed yet, complete it exceptionally
-                if (!result.isDone() && completed.compareAndSet(false, true)) {
-                    result.completeExceptionally(new IllegalStateException("Actor stopped before receiving response"));
-                }
-                
-                // Remove this temporary actor from the system
-                actors.remove(replyActorId);
-            }
-        };
-
-        // Register the response actor
-        actors.put(replyActorId, responseActor);
-        responseActor.start();
+        // Register the pending request
+        PendingAskRequest<ResponseMessage> pendingRequest =
+            new PendingAskRequest<>(result, timeoutFuture, completed);
+        pendingAskRequests.put(requestId, pendingRequest);
 
         try {
-            // Send the message with replyTo field
+            // Send the message with the request ID as replyTo
             Actor<?> targetActor = getActor(target);
             if (targetActor != null) {
-                // Create the ask payload with the message and reply actor ID
-                AskPayload<RequestMessage> askMessage = new AskPayload<>(message, replyActorId);
-                
+                // Create the ask payload with the message and request ID
+                AskPayload<RequestMessage> askMessage = new AskPayload<>(message, requestId);
+
                 // Use the more general routeMessage method which handles type casting properly
                 routeMessage(target.actorId(), askMessage);
             } else {
-                // Target actor not found
+                // Target actor not found - clean up and fail
+                pendingAskRequests.remove(requestId);
+                timeoutFuture.cancel(false);
                 result.completeExceptionally(
                     new IllegalArgumentException("Target actor not found: " + target.actorId()));
-                responseActor.stop();
             }
         } catch (Exception e) {
+            // Error sending message - clean up and fail
+            pendingAskRequests.remove(requestId);
+            timeoutFuture.cancel(false);
             result.completeExceptionally(e);
-            responseActor.stop();
         }
 
         return result;
+    }
+
+    /**
+     * Completes a pending ask request with a response.
+     * This is called when an actor sends a reply to an ask request.
+     *
+     * @param requestId The unique request ID from the ask operation
+     * @param response The response to complete the future with
+     * @param <T> The type of the response
+     */
+    @SuppressWarnings("unchecked")
+    public <T> void completeAskRequest(String requestId, T response) {
+        PendingAskRequest<?> pending = pendingAskRequests.remove(requestId);
+        if (pending != null && pending.completed.compareAndSet(false, true)) {
+            try {
+                // Cancel the timeout
+                pending.timeoutTask.cancel(false);
+
+                // Complete the future
+                ((CompletableFuture<T>) pending.future).complete(response);
+                logger.debug("Completed ask request {} with response type: {}",
+                    requestId, response != null ? response.getClass().getName() : "null");
+            } catch (ClassCastException e) {
+                logger.error("Ask request {} received wrong type: {}",
+                    requestId, response != null ? response.getClass().getName() : "null");
+                ((CompletableFuture<T>) pending.future).completeExceptionally(
+                    new IllegalArgumentException("Received response of unexpected type: " +
+                        (response != null ? response.getClass().getName() : "null"), e));
+            }
+        } else {
+            logger.warn("Attempted to complete unknown or already completed ask request: {}", requestId);
+        }
     }
 }

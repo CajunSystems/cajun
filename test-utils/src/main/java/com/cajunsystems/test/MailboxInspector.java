@@ -163,6 +163,11 @@ public class MailboxInspector {
     
     /**
      * Snapshot of mailbox metrics at a point in time.
+     *
+     * @param size the number of messages currently in the mailbox
+     * @param capacity the maximum capacity of the mailbox
+     * @param fillRatio the ratio of current size to capacity (0.0 to 1.0)
+     * @param processingRate the current message processing rate (messages per second)
      */
     public record MailboxMetrics(
         int size,

@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-11-23
+
+### Changed
+- **Promise-Based Ask Pattern**: Completely refactored the ask pattern from an actor-based approach to a **pure promise-based implementation** using CompletableFuture registry
+  - **Performance**: ~100x faster - eliminated temporary actor creation/destruction overhead (~100μs → ~1μs per request)
+  - **Reliability**: Zero race conditions - no thread startup timing issues
+  - **Simplicity**: Direct future completion instead of actor lifecycle management
+  - **Architecture**: 
+    - Removed temporary "reply actor" spawning for each ask request
+    - Added `PendingAskRequest` record to hold futures, timeouts, and completion flags
+    - Added `ConcurrentHashMap<String, PendingAskRequest<?>>` registry for pending requests
+    - Request IDs now use `"ask-" + UUID` pattern for easy identification
+    - `routeMessage()` intercepts ask responses and completes futures directly
+  - **Cleanup**: Proper timeout handling and shutdown cleanup of pending requests
+  - **API**: Public API remains unchanged - transparent improvement
+  - **Documentation**: Updated README.md and all docs to reflect promise-based implementation
+
+- **High-Performance Mailbox Implementations**: Refactored mailbox layer for 2-10x throughput improvement
+  - **New Mailbox Abstraction**: Created `Mailbox<T>` interface to decouple core from specific queue implementations
+  - **LinkedMailbox** (Default): Uses `LinkedBlockingQueue` - 2-3x faster than old `ResizableBlockingQueue`
+    - Lock-free optimizations for common cases (CAS operations)
+    - Bounded or unbounded capacity
+    - Good general-purpose performance (~100ns per operation)
+  - **MpscMailbox** (High-Performance): Uses JCTools `MpscUnboundedArrayQueue` - 5-10x faster
+    - True lock-free multi-producer, single-consumer
+    - Minimal allocation overhead (~20-30ns per operation)
+    - Optimized for high-throughput CPU-bound workloads
+  - **Workload-Specific Selection**: `DefaultMailboxProvider` automatically chooses optimal mailbox based on workload type
+    - `IO_BOUND` → LinkedMailbox (10K capacity, large buffer for bursty I/O)
+    - `CPU_BOUND` → MpscMailbox (unbounded, highest throughput)
+    - `MIXED` → LinkedMailbox (user-defined capacity)
+
+- **Polling Optimization**: Reduced polling timeout from 100ms → 1ms
+  - 99% reduction in empty-queue latency
+  - Faster actor responsiveness
+  - Minimal CPU overhead (virtual threads park efficiently)
+  - Removed unnecessary `Thread.yield()` calls (not needed with virtual threads)
+
+- **Logging Dependencies**: Changed SLF4J from bundled dependency to API-only dependency
+  - **Breaking Change**: Users must now provide their own logging implementation (e.g., Logback, Log4j2)
+  - SLF4J API is still used for all internal logging
+  - Users must add Logback (or preferred SLF4J implementation) to their project dependencies
+  - Example configuration files available in documentation
+  - Provides flexibility for users to configure logging according to their needs
+
+### Added
+- **MailboxProcessor CountDownLatch**: Added thread readiness synchronization to ensure actor threads are running before `start()` returns, reducing timing issues during actor initialization
+- **Mailbox Interface**: New `com.cajunsystems.mailbox.Mailbox<T>` abstraction for pluggable mailbox strategies
+- **Persistence Truncation Modes**: Added configurable journal truncation strategies for stateful actors
+  - **OFF**: Disable automatic truncation (journals grow indefinitely)
+  - **SYNC_ON_SNAPSHOT**: Truncate journals synchronously during snapshot lifecycle (default)
+    - Keeps configurable number of messages behind latest snapshot (default: 500)
+    - Maintains minimum number of recent messages per actor (default: 5,000)
+  - **ASYNC_DAEMON**: Truncate journals asynchronously using background daemon
+    - Non-blocking truncation with configurable interval (default: 5 minutes)
+    - Reduces impact on actor message processing performance
+  - Configuration via `PersistenceTruncationConfig.builder()` with fluent API
+  - Helps manage disk space and improve recovery time for long-running stateful actors
+- **Performance Benchmarks**: Added comprehensive JMH benchmarks comparing actors vs threads vs structured concurrency
+  - Fair benchmark methodology (pre-created actors)
+  - Workload-specific performance validation
+  - Detailed performance analysis in `docs/performance_improvements.md`
+- **Module Breakdown** (In Progress): Started modularization of the library into separate Maven artifacts
+  - `cajun-core`: Core actor abstractions and interfaces
+  - `cajun-mailbox`: Mailbox implementations (LinkedMailbox, MpscMailbox)
+  - `cajun-persistence`: Persistence layer with journaling and snapshots
+  - `cajun-cluster`: Cluster and remote actor support
+  - `cajun-system`: Main ActorSystem implementation (combines all modules)
+  - `test-utils`: Testing utilities for async actor testing
+  - Note: Module separation is ongoing - all functionality currently available through main `cajun` artifact
+
+### Fixed
+- **Ask Pattern Race Condition**: Eliminated race condition where reply actors might not be ready to receive responses (no longer relevant with promise-based approach)
+- **Lock Contention**: Eliminated synchronized lock bottleneck in old `ResizableBlockingQueue` causing 5.5x slowdown in batch processing
+
+### Deprecated
+- **ResizableBlockingQueue**: Deprecated in favor of `LinkedMailbox` and `MpscMailbox` - still works but logs deprecation warning
+- **ResizableMailboxConfig**: Still supported but logs deprecation warning
+
+### Performance
+- **Ask Pattern**: ~100x faster (100μs → 1μs per request)
+- **Batch Processing**: 2-5x throughput improvement with new mailbox implementations
+- **Memory**: 50% reduction in per-message overhead with MpscMailbox
+- **GC Pressure**: Significantly reduced with chunked array allocation
+- **Overall**: Actor overhead now <2x baseline (threads) for pre-created actors, down from 5.5x-18x
+
 ## [0.1.4] - 2025-11-01
 
 ### Added

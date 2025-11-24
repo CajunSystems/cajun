@@ -21,7 +21,7 @@ Add the test utilities to your project's test dependencies:
 **Gradle:**
 ```gradle
 dependencies {
-    testImplementation 'com.cajunsystems:cajun-test:0.1.4'
+    testImplementation 'com.cajunsystems:cajun-test:0.3.0'
 }
 ```
 
@@ -30,7 +30,7 @@ dependencies {
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun-test</artifactId>
-    <version>0.1.4</version>
+    <version>0.3.0</version>
     <scope>test</scope>
 </dependency>
 ```
