@@ -1,6 +1,7 @@
 package com.cajunsystems;
 
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.test.AsyncAssertion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,12 +13,13 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Test to verify that the ask pattern works correctly with stateful actors.
- * This test reproduces the bug where context.getSender() was always empty in stateful actors.
+ * Demonstrates proper use of test-utils library for async actor testing.
  */
 public class StatefulActorAskPatternTest {
 
@@ -54,11 +56,14 @@ public class StatefulActorAskPatternTest {
      * KVStore handler that uses getSender() to reply to Get requests
      */
     static class KVStoreHandler implements StatefulHandler<Map<String, String>, KVCommand> {
+        private static final AtomicInteger processedMessages = new AtomicInteger(0);
+
         @Override
         public Map<String, String> receive(KVCommand command, Map<String, String> state, ActorContext context) {
             switch (command) {
                 case KVCommand.Put put -> {
                     state.put(put.key(), put.value());
+                    processedMessages.incrementAndGet();
                 }
                 case KVCommand.Get get -> {
                     // This is where the bug manifested - getSender() was always empty
@@ -68,6 +73,7 @@ public class StatefulActorAskPatternTest {
                             // Wrap the value in GetResponse to handle null values properly
                             // (actor mailboxes don't accept null messages)
                             sender.tell(new GetResponse(value));
+                            processedMessages.incrementAndGet();
                         },
                         () -> {
                             context.getLogger().error("No sender context for Get request - this is the bug!");
@@ -76,21 +82,36 @@ public class StatefulActorAskPatternTest {
                 }
                 case KVCommand.Delete delete -> {
                     state.remove(delete.key());
+                    processedMessages.incrementAndGet();
                 }
             }
             return state;
+        }
+
+        public static void resetCounter() {
+            processedMessages.set(0);
+        }
+
+        public static int getProcessedCount() {
+            return processedMessages.get();
         }
     }
 
     @Test
     public void testAskPatternWithStatefulActor() throws Exception {
+        KVStoreHandler.resetCounter();
+
         // Create KVStore actor with initial empty state
         Pid kvStore = system.statefulActorOf(KVStoreHandler.class, new HashMap<String, String>())
                 .spawn();
 
         // Put a value
         kvStore.tell(new KVCommand.Put("testKey", "testValue"));
-        Thread.sleep(50); // Small delay to ensure Put is processed before Get
+
+        // Wait for Put to be processed using AsyncAssertion (more reliable than Thread.sleep)
+        AsyncAssertion.eventually(() -> KVStoreHandler.getProcessedCount() >= 1,
+            Duration.ofSeconds(2),
+            10); // poll every 10ms
 
         // Use ask pattern to get the value - this should work now
         CompletableFuture<GetResponse> future = system.ask(kvStore, new KVCommand.Get("testKey"), Duration.of(10, ChronoUnit.SECONDS));
@@ -103,11 +124,13 @@ public class StatefulActorAskPatternTest {
 
     @Test
     public void testAskPatternWithNonExistentKey() throws Exception {
+        KVStoreHandler.resetCounter();
+
         // Create KVStore actor with initial empty state
         Pid kvStore = system.statefulActorOf(KVStoreHandler.class, new HashMap<String, String>())
                 .spawn();
 
-        // Small delay to ensure actor is fully started and ready
+        // Small delay to ensure actor is fully started - using minimal sleep since no messages to wait for
         Thread.sleep(50);
 
         // Ask for a non-existent key
@@ -121,6 +144,8 @@ public class StatefulActorAskPatternTest {
 
     @Test
     public void testMultipleAskRequests() throws Exception {
+        KVStoreHandler.resetCounter();
+
         // Create KVStore actor with initial empty state
         Pid kvStore = system.statefulActorOf(KVStoreHandler.class, new HashMap<String, String>())
                 .spawn();
@@ -129,7 +154,11 @@ public class StatefulActorAskPatternTest {
         kvStore.tell(new KVCommand.Put("key1", "value1"));
         kvStore.tell(new KVCommand.Put("key2", "value2"));
         kvStore.tell(new KVCommand.Put("key3", "value3"));
-        Thread.sleep(50); // Small delay to ensure Puts are processed before Gets
+
+        // Wait for all Puts to be processed using AsyncAssertion (dogfooding test-utils!)
+        AsyncAssertion.eventually(() -> KVStoreHandler.getProcessedCount() >= 3,
+            Duration.ofSeconds(2),
+            10); // poll every 10ms
 
         // Make multiple concurrent ask requests
         CompletableFuture<GetResponse> future1 = system.ask(kvStore, new KVCommand.Get("key1"), Duration.of(10, ChronoUnit.SECONDS));
