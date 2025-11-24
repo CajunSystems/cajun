@@ -463,6 +463,15 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
             FileSystemTruncationDaemon.getInstance().unregisterJournal(actorId);
         }
         
+        // Remove shutdown hook to prevent resource leak
+        if (shutdownHook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException e) {
+                // Already shutting down, hook will run anyway
+            }
+        }
+
         // Ensure the final state is persisted before stopping
         if (stateInitialized && currentState.get() != null) {
             if (stateChanged) {

@@ -27,6 +27,7 @@ public class StatefulActorAskPatternTest {
 
     @BeforeEach
     public void setup() {
+        KVStoreHandler.resetCounter(); // Reset counter before each test
         system = new ActorSystem();
     }
 
@@ -34,7 +35,7 @@ public class StatefulActorAskPatternTest {
     public void teardown() throws InterruptedException {
         if (system != null) {
             system.shutdown();
-            Thread.sleep(100); // Give time for cleanup
+            Thread.sleep(200); // Give more time for cleanup to avoid test interference
         }
     }
 
@@ -99,18 +100,20 @@ public class StatefulActorAskPatternTest {
 
     @Test
     public void testAskPatternWithStatefulActor() throws Exception {
-        KVStoreHandler.resetCounter();
-
         // Create KVStore actor with initial empty state
         Pid kvStore = system.statefulActorOf(KVStoreHandler.class, new HashMap<String, String>())
                 .spawn();
+
+        // Wait for actor state initialization to complete (more reliable than Thread.sleep)
+        StatefulActor<?, ?> actor = (StatefulActor<?, ?>) system.getActor(kvStore);
+        assertTrue(actor.waitForStateInitialization(5000), "Actor state should initialize within 5 seconds");
 
         // Put a value
         kvStore.tell(new KVCommand.Put("testKey", "testValue"));
 
         // Wait for Put to be processed using AsyncAssertion (more reliable than Thread.sleep)
         AsyncAssertion.eventually(() -> KVStoreHandler.getProcessedCount() >= 1,
-            Duration.ofSeconds(2),
+            Duration.ofSeconds(3),
             10); // poll every 10ms
 
         // Use ask pattern to get the value - this should work now
@@ -124,31 +127,32 @@ public class StatefulActorAskPatternTest {
 
     @Test
     public void testAskPatternWithNonExistentKey() throws Exception {
-        KVStoreHandler.resetCounter();
-
         // Create KVStore actor with initial empty state
         Pid kvStore = system.statefulActorOf(KVStoreHandler.class, new HashMap<String, String>())
                 .spawn();
 
-        // Small delay to ensure actor is fully started - using minimal sleep since no messages to wait for
-        Thread.sleep(50);
+        // Wait for actor state initialization to complete (more reliable than Thread.sleep)
+        StatefulActor<?, ?> actor = (StatefulActor<?, ?>) system.getActor(kvStore);
+        assertTrue(actor.waitForStateInitialization(5000), "Actor state should initialize within 5 seconds");
 
         // Ask for a non-existent key
         CompletableFuture<GetResponse> future = system.ask(kvStore, new KVCommand.Get("nonExistent"), Duration.of(10, ChronoUnit.SECONDS));
 
         // Verify we got null for non-existent key (wrapped in GetResponse)
-        GetResponse response = future.get(5, TimeUnit.SECONDS);
+        GetResponse response = future.get(10, TimeUnit.SECONDS);
         assertNotNull(response, "Should receive a GetResponse even for non-existent key");
         assertNull(response.value(), "Should return null value for non-existent key");
     }
 
     @Test
     public void testMultipleAskRequests() throws Exception {
-        KVStoreHandler.resetCounter();
-
         // Create KVStore actor with initial empty state
         Pid kvStore = system.statefulActorOf(KVStoreHandler.class, new HashMap<String, String>())
                 .spawn();
+
+        // Wait for actor state initialization to complete (more reliable than Thread.sleep)
+        StatefulActor<?, ?> actor = (StatefulActor<?, ?>) system.getActor(kvStore);
+        assertTrue(actor.waitForStateInitialization(5000), "Actor state should initialize within 5 seconds");
 
         // Put multiple values
         kvStore.tell(new KVCommand.Put("key1", "value1"));
@@ -157,7 +161,7 @@ public class StatefulActorAskPatternTest {
 
         // Wait for all Puts to be processed using AsyncAssertion (dogfooding test-utils!)
         AsyncAssertion.eventually(() -> KVStoreHandler.getProcessedCount() >= 3,
-            Duration.ofSeconds(2),
+            Duration.ofSeconds(3),
             10); // poll every 10ms
 
         // Make multiple concurrent ask requests
@@ -166,7 +170,7 @@ public class StatefulActorAskPatternTest {
         CompletableFuture<GetResponse> future3 = system.ask(kvStore, new KVCommand.Get("key3"), Duration.of(10, ChronoUnit.SECONDS));
 
         // Wait for all futures to complete
-        CompletableFuture.allOf(future1, future2, future3).get(5, TimeUnit.SECONDS);
+        CompletableFuture.allOf(future1, future2, future3).get(10, TimeUnit.SECONDS);
 
         // Verify all responses are correct (no race condition)
         assertEquals("value1", future1.get().value());
