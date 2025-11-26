@@ -1286,9 +1286,10 @@ public class ProcessorHandler implements Handler<Request> {
 ```
 
 **Key Points:**
-- `getSender()` returns `Optional<Pid>` - use `ifPresent()`, `map()`, or `orElse()` for clean handling
-- Returns `Optional.empty()` for regular `tell()` messages
-- Returns the sender's PID for `ask()` messages
+- `getSender()` returns `Optional<Pid>` – use `ifPresent()`, `map()`, or `orElse()` for clean handling
+- When another actor calls `tell()` (or `forward()`), the sender PID is propagated automatically, so `getSender()` is present and you can reply immediately
+- When the system, an external thread, or test code without an actor context calls `tell()`, the sender is unknown and you’ll see `Optional.empty()`
+- For the ask pattern, the temporary request ID is exposed as the sender, so `context.tell(getSender().get(), response)` completes the `CompletableFuture`
 - Sender context is automatically cleared after message processing
 
 ### Message Forwarding with `forward()`

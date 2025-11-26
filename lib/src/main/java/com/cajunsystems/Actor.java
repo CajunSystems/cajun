@@ -57,6 +57,21 @@ public abstract class Actor<Message> {
     // Sender context for ask pattern - stores the actor ID of the sender/replyTo
     private final ThreadLocal<String> senderContext = new ThreadLocal<>();
 
+    // Tracks the actor currently executing on this thread so tell() can propagate sender info
+    private static final ThreadLocal<String> currentExecutingActor = new ThreadLocal<>();
+
+    static void setCurrentExecutingActor(String actorId) {
+        currentExecutingActor.set(actorId);
+    }
+
+    static void clearCurrentExecutingActor() {
+        currentExecutingActor.remove();
+    }
+
+    static String getCurrentExecutingActor() {
+        return currentExecutingActor.get();
+    }
+
     /**
      * Gets the current number of messages in the mailbox.
      *
@@ -259,22 +274,27 @@ public abstract class Actor<Message> {
 
                     @Override
                     public void receive(Message message) {
-                        // Check if this is a MessageWithSender wrapper
-                        if (message instanceof ActorSystem.MessageWithSender<?>(Object message1, String sender)) {
-                            // Set sender context
-                            setSender(sender);
-                            try {
-                                @SuppressWarnings("unchecked")
-                                Message unwrapped = (Message) message1;
-                                Actor.this.receive(unwrapped);
-                            } finally {
-                                // Clear sender context
-                                clearSender();
+                        setCurrentExecutingActor(actorId);
+                        try {
+                            // Check if this is a MessageWithSender wrapper
+                            if (message instanceof ActorSystem.MessageWithSender<?> wrapped) {
+                                // Set sender context
+                                setSender(wrapped.sender());
+                                try {
+                                    @SuppressWarnings("unchecked")
+                                    Message unwrapped = (Message) wrapped.message();
+                                    Actor.this.receive(unwrapped);
+                                } finally {
+                                    // Clear sender context
+                                    clearSender();
+                                }
+                            } else {
+                                Actor.this.receive(message);
                             }
-                        } else {
-                            Actor.this.receive(message);
+                            lastProcessingTimestamp.set(System.currentTimeMillis());
+                        } finally {
+                            clearCurrentExecutingActor();
                         }
-                        lastProcessingTimestamp.set(System.currentTimeMillis());
                     }
 
                     @Override
@@ -497,7 +517,7 @@ public abstract class Actor<Message> {
         String originalSender = senderContext.get();
         if (originalSender != null) {
             // Wrap the message with the original sender context
-            ActorSystem.MessageWithSender<T> wrapped = new ActorSystem.MessageWithSender<>(message, originalSender);
+            Object wrapped = ActorSystem.wrapWithSender(message, originalSender);
             system.routeMessage(target.actorId(), wrapped);
         } else {
             // No sender context, just send normally

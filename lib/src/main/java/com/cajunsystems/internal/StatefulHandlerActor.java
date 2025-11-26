@@ -236,8 +236,7 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
             // Forward with captured sender context from asyncSenderContext
             String senderActorId = statefulActor.getAsyncSenderContext();
             if (senderActorId != null) {
-                ActorSystem.MessageWithSender<T> wrapped =
-                    new ActorSystem.MessageWithSender<>(message, senderActorId);
+                Object wrapped = ActorSystem.wrapWithSender(message, senderActorId);
                 statefulActor.getSystem().routeMessage(target.actorId(), wrapped);
             } else {
                 statefulActor.getSystem().routeMessage(target.actorId(), message);

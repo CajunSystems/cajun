@@ -74,7 +74,7 @@ public class ActorAskPatternTest {
      * Test that regular tell() doesn't have sender context
      */
     @Test
-    public void testTellDoesNotHaveSenderContext() throws Exception {
+    public void testTellFromSystemDoesNotHaveSenderContext() throws Exception {
         Pid validator = system.register(SenderValidatorActor.class, "validator");
 
         // Send a message with tell - should not have sender
@@ -123,4 +123,42 @@ public class ActorAskPatternTest {
         }
     }
 
+    /**
+     * Actor that records the sender PID when instructed.
+     */
+    static class SenderRecordingActor extends Actor<String> {
+        private static volatile CompletableFuture<Pid> probe;
+        private static final String CAPTURE = "capture";
+
+        public SenderRecordingActor(ActorSystem system, String actorId) {
+            super(system, actorId);
+        }
+
+        static void setProbe(CompletableFuture<Pid> future) {
+            probe = future;
+        }
+
+        @Override
+        protected void receive(String message) {
+            if (CAPTURE.equals(message) && probe != null) {
+                probe.complete(getSender().orElse(null));
+            }
+        }
+    }
+
+    /**
+     * Actor that forwards a capture request to another actor using tell().
+     */
+    static class SenderForwarderActor extends Actor<SenderForwarderActor.SendCommand> {
+        public SenderForwarderActor(ActorSystem system, String actorId) {
+            super(system, actorId);
+        }
+
+        record SendCommand(Pid target) {}
+
+        @Override
+        protected void receive(SendCommand command) {
+            command.target().tell(SenderRecordingActor.CAPTURE);
+        }
+    }
 }
