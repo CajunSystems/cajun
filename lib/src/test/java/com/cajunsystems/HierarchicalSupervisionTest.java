@@ -10,6 +10,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+
+import com.cajunsystems.handler.Handler;
 
 import static org.junit.jupiter.api.Assertions.*;
 // SupervisionStrategy is used implicitly in the tests
@@ -37,6 +40,7 @@ class HierarchicalSupervisionTest {
     record NormalMessage(String content) implements TestMessage {}
     record ErrorMessage(String errorType) implements TestMessage {}
     record GetStateMessage(CountDownLatch latch, AtomicInteger result) implements TestMessage {}
+    record BuilderTestCommand(String childId) implements TestMessage {}
 
     /**
      * Parent actor that can create child actors and handle their errors
@@ -116,6 +120,61 @@ class HierarchicalSupervisionTest {
         }
     }
 
+    /**
+     * Handler-based parent that exercises context.childBuilder()
+     */
+    static class BuilderParentHandler implements Handler<TestMessage> {
+        @Override
+        public void receive(TestMessage message, ActorContext context) {
+            if (message instanceof BuilderTestCommand command) {
+                Pid childPid = context.childBuilder(BuilderChildHandler.class)
+                        .withSupervisionStrategy(SupervisionStrategy.RESTART)
+                        .withId(command.childId())
+                        .spawn();
+
+                context.tell(childPid, new NormalMessage("first"));
+                context.tell(childPid, new ErrorMessage("runtime"));
+                context.tell(childPid, new NormalMessage("second"));
+            }
+        }
+    }
+
+    /**
+     * Handler-based child that tracks restarts to ensure supervision applies
+     */
+    static class BuilderChildHandler implements Handler<TestMessage> {
+        private static final AtomicInteger restartCount = new AtomicInteger();
+        private static final AtomicInteger processedMessages = new AtomicInteger();
+
+        static void resetCounters() {
+            restartCount.set(0);
+            processedMessages.set(0);
+        }
+
+        static int getRestartCount() {
+            return restartCount.get();
+        }
+
+        static int getProcessedCount() {
+            return processedMessages.get();
+        }
+
+        @Override
+        public void preStart(ActorContext context) {
+            Handler.super.preStart(context);
+            restartCount.incrementAndGet();
+        }
+
+        @Override
+        public void receive(TestMessage message, ActorContext context) {
+            if (message instanceof NormalMessage) {
+                processedMessages.incrementAndGet();
+            } else if (message instanceof ErrorMessage) {
+                throw new RuntimeException("builder child failure");
+            }
+        }
+    }
+
     @Test
     void testParentChildRelationship() throws InterruptedException {
         // Create parent actor
@@ -172,6 +231,35 @@ class HierarchicalSupervisionTest {
 
         // Verify parent's children map is empty
         assertTrue(parent.getChildren().isEmpty(), "Parent's children map should be empty after stop");
+    }
+
+    @Test
+    void testChildBuilderAppliesSupervisionStrategy() throws Exception {
+        BuilderChildHandler.resetCounters();
+
+        Pid parentPid = system.actorOf(BuilderParentHandler.class)
+                .withId("builder-parent-handler")
+                .spawn();
+
+        parentPid.tell(new BuilderTestCommand("builder-child"));
+
+        awaitCondition(() -> BuilderChildHandler.getProcessedCount() >= 2, 1_000,
+                "Child should process messages before and after restart");
+        assertTrue(BuilderChildHandler.getRestartCount() >= 2,
+                "childBuilder supervision strategy should restart the child after failure");
+    }
+
+    private static void awaitCondition(BooleanSupplier condition, long timeoutMillis, String failureMessage) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        if (!condition.getAsBoolean()) {
+            throw new AssertionError(failureMessage);
+        }
     }
 
     @Test

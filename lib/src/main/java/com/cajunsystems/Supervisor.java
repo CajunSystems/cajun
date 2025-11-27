@@ -29,11 +29,15 @@ public final class Supervisor {
             }
             case RESTART -> {
                 logger.info("Restarting actor {}", actor.getActorId());
-                actor.stop();
-                actor.start();
-                if (shouldReprocess) {
-                    actor.tell(message);
-                }
+                // Schedule restart asynchronously to avoid ConcurrentModificationException
+                // during batch processing
+                Thread.ofVirtual().start(() -> {
+                    actor.stop();
+                    actor.start();
+                    if (shouldReprocess) {
+                        actor.tell(message);
+                    }
+                });
             }
             case STOP -> {
                 logger.info("Stopping actor {} due to error", actor.getActorId());

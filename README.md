@@ -530,6 +530,22 @@ public class ParentHandler implements Handler<ParentMessage> {
         }
     }
 }
+
+// Need advanced configuration (e.g., supervision) when creating children?
+// Use the new childBuilder() API exposed on ActorContext.
+public class SupervisedParentHandler implements Handler<ParentMessage> {
+    @Override
+    public void receive(ParentMessage message, ActorContext context) {
+        if (message instanceof CreateChild) {
+            Pid childPid = context.childBuilder(ChildHandler.class)
+                .withSupervisionStrategy(SupervisionStrategy.RESTART)
+                .withId("supervised-child")
+                .spawn();
+
+            context.tell(childPid, new ChildMessage());
+        }
+    }
+}
 ```
 
 ## Actor Communication
