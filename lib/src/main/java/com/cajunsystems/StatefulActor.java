@@ -889,7 +889,12 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         long snapshotSequence = snapshot.getSequenceNumber();
                         
                         // Set the state from the snapshot
-                        currentState.set(snapshot.getState());
+                        State recoveredState = snapshot.getState();
+                        
+                        // Rehydrate any Pid references in the state with the current ActorSystem
+                        recoveredState = com.cajunsystems.persistence.PidRehydrator.rehydrate(recoveredState, getSystem());
+                        
+                        currentState.set(recoveredState);
                         lastProcessedSequence.set(snapshotSequence);
                         lastSnapshotTime = System.currentTimeMillis(); // Record snapshot time
                         

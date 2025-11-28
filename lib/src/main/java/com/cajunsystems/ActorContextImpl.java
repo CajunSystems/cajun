@@ -1,5 +1,6 @@
 package com.cajunsystems;
 
+import com.cajunsystems.builder.ActorBuilder;
 import com.cajunsystems.handler.Handler;
 import org.slf4j.Logger;
 
@@ -58,14 +59,20 @@ public class ActorContextImpl implements ActorContext {
     }
     
     @Override
+    public <Message> ActorBuilder<Message> childBuilder(Class<? extends Handler<Message>> handlerClass) {
+        ActorSystem system = actor.getSystem();
+        return system.actorOf(handlerClass)
+                .withParent(actor);
+    }
+
+    @Override
     public <T> Pid createChild(Class<?> handlerClass, String childId) {
         ActorSystem system = actor.getSystem();
         if (Handler.class.isAssignableFrom(handlerClass)) {
             @SuppressWarnings("unchecked")
             Class<? extends Handler<Object>> handlerType =
                 (Class<? extends Handler<Object>>) handlerClass;
-            return system.actorOf(handlerType)
-                    .withParent(actor)
+            return childBuilder(handlerType)
                     .withId(childId)
                     .spawn();
         } else {
