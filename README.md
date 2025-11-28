@@ -1127,9 +1127,37 @@ Pid actor = system.actorOf(MyHandler.class)
 
 While actors typically communicate through one-way asynchronous messages, Cajun provides an "ask pattern" for request-response interactions where you need to wait for a reply.
 
-### Basic Usage
+### The Reply Pattern (Recommended)
 
-The ask pattern allows you to send a message to an actor and receive a response as a `CompletableFuture`:
+Cajun provides a streamlined **3-tier Reply API** that wraps `CompletableFuture` with a more ergonomic interface:
+
+```java
+// Tier 1: Simple - just get the value
+String name = userActor.ask(new GetName(), Duration.ofSeconds(5)).get();
+
+// Tier 2: Safe - pattern matching with Result
+switch (userActor.ask(new GetProfile(), Duration.ofSeconds(5)).await()) {
+    case Result.Success(var profile) -> handleSuccess(profile);
+    case Result.Failure(var error) -> handleError(error);
+}
+
+// Tier 3: Advanced - full CompletableFuture power
+CompletableFuture<Combined> result = userReply.future()
+    .thenCombine(ordersReply.future(), (user, orders) -> combine(user, orders));
+```
+
+**Key Benefits:**
+- **Tier 1 (Simple)**: Clean blocking API with automatic exception handling
+- **Tier 2 (Safe)**: Pattern matching for explicit error handling without exceptions
+- **Tier 3 (Advanced)**: Direct `CompletableFuture` access for complex async composition
+- **Monadic operations**: `map()`, `flatMap()`, `recover()`, `recoverWith()`
+- **Callbacks**: `onSuccess()`, `onFailure()`, `onComplete()` for non-blocking workflows
+
+📖 **See [Reply Pattern Usage Guide](docs/reply_pattern_usage.md) for complete documentation with examples.**
+
+### Basic Usage (CompletableFuture)
+
+You can also use the traditional `CompletableFuture` approach directly:
 
 ```java
 // Send a request to an actor and get a future response

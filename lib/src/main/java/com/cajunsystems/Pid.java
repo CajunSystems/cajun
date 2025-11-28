@@ -5,6 +5,7 @@ import com.cajunsystems.cluster.DeliveryGuarantee;
 import com.cajunsystems.persistence.MessageAdapter;
 
 import java.io.*;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -186,5 +187,22 @@ public record Pid(String actorId, ActorSystem system) implements Serializable {
     public <T extends Serializable> void tellReadOnly(T message, long delay, TimeUnit timeUnit) {
         MessageAdapter<T> adapter = MessageAdapter.readOnly(message);
         tell(adapter, delay, timeUnit);
+    }
+    
+    /**
+     * Sends a message to an actor and returns a Reply for the response.
+     * This is the ask pattern with a fluent 3-tier API:
+     * - Tier 1 (Simple): reply.get() - blocks and returns value
+     * - Tier 2 (Safe): reply.await() - returns Result for pattern matching
+     * - Tier 3 (Advanced): reply.future() - access CompletableFuture
+     * 
+     * @param <RequestMessage> The type of the request message
+     * @param <ResponseMessage> The type of the expected response message
+     * @param message The message to send
+     * @param timeout The maximum time to wait for a reply
+     * @return A Reply that provides multiple ways to access the response
+     */
+    public <RequestMessage, ResponseMessage> Reply<ResponseMessage> ask(RequestMessage message, Duration timeout) {
+        return Reply.from(system.ask(this, message, timeout));
     }
 }
