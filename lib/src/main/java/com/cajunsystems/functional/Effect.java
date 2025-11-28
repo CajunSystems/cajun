@@ -70,7 +70,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that produces the given value
      */
     static <S, M, R> Effect<S, M, R> of(R value) {
-        return (state, message, context) -> EffectResult.success(state, value);
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.success(state, value)
+        );
     }
     
     /**
@@ -85,7 +87,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that returns the current state
      */
     static <S, M> Effect<S, M, S> state() {
-        return (state, message, context) -> EffectResult.success(state, state);
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.success(state, state)
+        );
     }
     
     /**
@@ -101,7 +105,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that modifies the state
      */
     static <S, M> Effect<S, M, Void> modify(Function<S, S> f) {
-        return (state, message, context) -> EffectResult.noResult(f.apply(state));
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.noResult(f.apply(state))
+        );
     }
     
     /**
@@ -122,7 +128,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that returns the state unchanged
      */
     static <S, M> Effect<S, M, Void> identity() {
-        return (state, message, context) -> EffectResult.noResult(state);
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.noResult(state)
+        );
     }
     
     /**
@@ -137,7 +145,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that sets the state
      */
     static <S, M> Effect<S, M, Void> setState(S newState) {
-        return (state, message, context) -> EffectResult.noResult(newState);
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.noResult(newState)
+        );
     }
     
     /**
@@ -154,7 +164,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that applies the transition
      */
     static <S, M> Effect<S, M, Void> fromTransition(BiFunction<S, M, S> f) {
-        return (state, message, context) -> EffectResult.noResult(f.apply(state, message));
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.noResult(f.apply(state, message))
+        );
     }
     
     /**
@@ -170,7 +182,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that fails
      */
     static <S, M, R> Effect<S, M, R> fail(Throwable error) {
-        return (state, message, context) -> EffectResult.failure(state, error);
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.failure(state, error)
+        );
     }
     
     /**
@@ -180,7 +194,9 @@ public interface Effect<State, Message, Result> {
      * @return An effect that leaves state unchanged and produces no result
      */
     static <S, M> Effect<S, M, Void> none() {
-        return (state, message, context) -> EffectResult.noResult(state);
+        return TrampolinedEffect.trampoline(
+            (state, message, context) -> EffectResult.noResult(state)
+        );
     }
     
     // ============================================================================
@@ -865,10 +881,10 @@ public interface Effect<State, Message, Result> {
      * @return An effect that sends the message
      */
     static <S, M> Effect<S, M, Void> tell(Pid target, Object message) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.tell(target, message);
             return EffectResult.noResult(state);
-        };
+        });
     }
     
     /**
@@ -884,10 +900,10 @@ public interface Effect<State, Message, Result> {
      * @return An effect that sends the message to self
      */
     static <S, M> Effect<S, M, Void> tellSelf(Object message) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.tellSelf(message);
             return EffectResult.noResult(state);
-        };
+        });
     }
     
     /**
@@ -906,7 +922,7 @@ public interface Effect<State, Message, Result> {
      * @return An effect that performs the ask and returns the response
      */
     static <S, M, R> Effect<S, M, R> ask(Pid target, Object message, Duration timeout) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             try {
                 @SuppressWarnings("unchecked")
                 R response = (R) target.ask(message, timeout).get();
@@ -914,7 +930,7 @@ public interface Effect<State, Message, Result> {
             } catch (Exception e) {
                 return EffectResult.failure(state, e);
             }
-        };
+        });
     }
     
     // ============================================================================
@@ -934,10 +950,10 @@ public interface Effect<State, Message, Result> {
      * @return An effect that logs the message
      */
     static <S, M> Effect<S, M, Void> log(String message) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().info(message);
             return EffectResult.noResult(state);
-        };
+        });
     }
     
     /**
@@ -953,10 +969,10 @@ public interface Effect<State, Message, Result> {
      * @return An effect that logs the derived message
      */
     static <S, M> Effect<S, M, Void> logState(Function<S, String> messageFunc) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().info(messageFunc.apply(state));
             return EffectResult.noResult(state);
-        };
+        });
     }
     
     /**
@@ -966,10 +982,10 @@ public interface Effect<State, Message, Result> {
      * @return An effect that logs the error
      */
     static <S, M> Effect<S, M, Void> logError(String message) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().error(message);
             return EffectResult.noResult(state);
-        };
+        });
     }
     
     /**
@@ -980,10 +996,10 @@ public interface Effect<State, Message, Result> {
      * @return An effect that logs the error
      */
     static <S, M> Effect<S, M, Void> logError(String message, Throwable error) {
-        return (state, msg, context) -> {
+        return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().error(message, error);
             return EffectResult.noResult(state);
-        };
+        });
     }
     
     // ============================================================================
@@ -1059,13 +1075,13 @@ public interface Effect<State, Message, Result> {
      * @return An effect that safely executes the operation
      */
     static <S, M, R> Effect<S, M, R> attempt(java.util.function.Supplier<R> operation) {
-        return (state, message, context) -> {
+        return TrampolinedEffect.trampoline((state, message, context) -> {
             try {
                 return EffectResult.success(state, operation.get());
             } catch (Exception e) {
                 return EffectResult.failure(state, e);
             }
-        };
+        });
     }
     
     /**
