@@ -52,6 +52,17 @@ public record Pid(String actorId, ActorSystem system) implements Serializable {
     }
 
     /**
+     * Creates a new Pid with the specified ActorSystem.
+     * This is useful for rehydrating Pids after deserialization.
+     *
+     * @param actorSystem The ActorSystem to associate with this Pid
+     * @return A new Pid with the same actorId but with the specified ActorSystem
+     */
+    public Pid withSystem(ActorSystem actorSystem) {
+        return new Pid(actorId, actorSystem);
+    }
+
+    /**
      * Sends a message to the actor.
      * If the actor is local, the message is delivered directly.
      * If the actor is remote (in cluster mode), the message is routed to the appropriate node.

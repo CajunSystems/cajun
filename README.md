@@ -19,6 +19,7 @@
 - [Creating Your First Actors](#creating-your-first-actors)
   - [Stateless Actors](#stateless-actors-with-handler-interface)
   - [Stateful Actors](#stateful-actors-with-statefulhandler-interface)
+  - [Functional Actors with Effects](#functional-actors-with-effects)
   - [Actor Hierarchies](#creating-actor-hierarchies)
 - [Actor Communication](#actor-communication)
   - [Sending Messages (tell)](#sending-messages-to-self)
@@ -700,9 +701,93 @@ The `StatefulHandler` interface provides lifecycle methods:
 - `postStop(State state, ActorContext context)`: Called when the actor stops
 - `onError(Message message, State state, Throwable exception, ActorContext context)`: Called when message processing fails
 
+### Functional Actors with Effects
+
+**New in Cajun**: Build actors using composable Effects for a more functional programming style.
+
+Effects provide a powerful way to build actor behaviors by composing simple operations into complex workflows. Think of Effects as recipes that describe what your actor should do.
+
+#### Quick Example
+
+```java
+import static com.cajunsystems.functional.ActorSystemEffectExtensions.*;
+
+// Define messages
+sealed interface CounterMsg {}
+record Increment(int amount) implements CounterMsg {}
+record Decrement(int amount) implements CounterMsg {}
+record GetCount(Pid replyTo) implements CounterMsg {}
+
+// Build behavior using effects
+Effect<Integer, CounterMsg, Void> counterBehavior = Effect.match()
+    .when(Increment.class, (state, msg, ctx) -> 
+        Effect.modify(s -> s + msg.amount())
+            .andThen(Effect.logState(s -> "Count: " + s)))
+    
+    .when(Decrement.class, (state, msg, ctx) ->
+        Effect.modify(s -> s - msg.amount())
+            .andThen(Effect.logState(s -> "Count: " + s)))
+    
+    .when(GetCount.class, (state, msg, ctx) ->
+        Effect.tell(msg.replyTo(), state))
+    
+    .build();
+
+// Create actor from effect
+Pid counter = fromEffect(system, counterBehavior, 0)
+    .withId("counter")
+    .spawn();
+
+// Use like any actor
+counter.tell(new Increment(5));
+```
+
+#### Why Use Effects?
+
+- **Composable**: Build complex behaviors from simple building blocks
+- **Type-safe**: Compile-time checking of state and message types
+- **Testable**: Pure functions that are easy to test without spawning actors
+- **Error handling**: Explicit error recovery with `.recover()` and `.orElse()`
+- **Readable**: Declarative style makes intent clear
+
+#### Common Effect Patterns
+
+**State Modification:**
+```java
+Effect.modify(count -> count + 1)              // Update state
+Effect.setState(0)                             // Set to specific value
+```
+
+**Messaging:**
+```java
+Effect.tell(otherActor, message)               // Send to another actor
+Effect.tellSelf(message)                       // Send to self
+Effect.ask(actor, request, Duration.ofSeconds(5))  // Request-response
+```
+
+**Composition:**
+```java
+Effect.modify(s -> s + 1)
+    .andThen(Effect.logState(s -> "New state: " + s))
+    .andThen(Effect.tell(monitor, new StateUpdate(s)))
+```
+
+**Error Handling:**
+```java
+Effect.attempt(() -> riskyOperation())
+    .recover(error -> defaultValue)
+    .orElse(Effect.of(fallbackValue))
+```
+
+#### Learn More
+
+- **[Effect Monad Guide](docs/effect_monad_guide.md)** - Beginner-friendly introduction with examples
+- **[Effect API Reference](docs/effect_monad_api.md)** - Complete API documentation
+- **[Functional Actor Evolution](docs/functional_actor_evolution.md)** - Advanced patterns and migration guide
+
 ### Using the Actor System
 
-After creating your handlers, use the actor system to spawn actors and send messages:
+After creating your handlers or effects, use the actor system to spawn actors and send messages:
 
 ```java
 public class CountResultHandler implements Handler<HelloCount> {
@@ -821,6 +906,7 @@ jbang lib/src/test/java/examples/BackpressureActorExample.java
 - `BackpressureStatefulActorExample.java` - Stateful actor with backpressure
 - `ActorVsThreadsExample.java` - Performance comparison
 - `FunctionalWorkflowExample.java` - Functional programming style
+- `KVEffectExample.java` - **NEW**: LSM Tree Key-Value store using Effects
 - `SenderPropagationExample.java` - Sender context propagation
 - `StatefulShoppingCartExample.java` - Shopping cart with persistence
 - `ClusterWorkflowExample.java` - Distributed actor example
