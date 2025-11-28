@@ -108,13 +108,11 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
     }
     
     @Override
-    protected void handleException(Message message, Throwable exception) {
+    protected boolean onError(Message message, Throwable exception) {
         // Create context - sender will be retrieved from asyncSenderContext ThreadLocal
         ActorContext context = new StatefulActorContext(this);
-        boolean handled = handler.onError(message, getState(), exception, context);
-        if (!handled) {
-            super.handleException(message, exception);
-        }
+        // Delegate to handler to get shouldReprocess flag
+        return handler.onError(message, getState(), exception, context);
     }
 
     /**

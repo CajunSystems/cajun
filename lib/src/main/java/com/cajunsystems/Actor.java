@@ -574,6 +574,38 @@ public abstract class Actor<Message> {
     }
 
     /**
+     * Stops the actor for restart, preserving pending messages in the mailbox.
+     * This is used by the supervision system during RESTART strategy.
+     * Note: This is called from within the mailbox loop after it exits, so running=false already.
+     */
+    void stopForRestart() {
+        logger.debug("Stopping actor {} for restart (preserving mailbox)", actorId);
+
+        // Stop all children first
+        for (Actor<?> child : new ConcurrentHashMap<>(children).values()) {
+            logger.debug("Stopping child actor {} of parent {}", child.getActorId(), actorId);
+            child.stop();
+        }
+
+        // Stop mailbox processing WITHOUT clearing messages
+        // Note: running is already false at this point, but we still need to call stop
+        // to clean up the thread reference and call postStop lifecycle
+        mailboxProcessor.stop(false);
+
+        // Note: Don't clean up hierarchy or system - this is a restart, not a full stop
+    }
+
+    /**
+     * Requests a restart of this actor. The restart will happen after the current batch completes.
+     * This method is used by the supervision system to avoid ConcurrentModificationException.
+     *
+     * @param restartCallback The callback to execute for the restart
+     */
+    void requestRestart(Runnable restartCallback) {
+        mailboxProcessor.requestRestart(restartCallback);
+    }
+
+    /**
      * Sets the supervision strategy for this actor.
      *
      * @param strategy The supervision strategy to use

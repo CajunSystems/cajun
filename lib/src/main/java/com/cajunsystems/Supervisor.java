@@ -29,10 +29,11 @@ public final class Supervisor {
             }
             case RESTART -> {
                 logger.info("Restarting actor {}", actor.getActorId());
-                // Schedule restart asynchronously to avoid ConcurrentModificationException
-                // during batch processing
-                Thread.ofVirtual().start(() -> {
-                    actor.stop();
+                // Request restart to happen after current batch completes
+                // This avoids ConcurrentModificationException during batch processing
+                // Preserve mailbox messages during restart (no message loss)
+                actor.requestRestart(() -> {
+                    actor.stopForRestart();
                     actor.start();
                     if (shouldReprocess) {
                         actor.tell(message);
