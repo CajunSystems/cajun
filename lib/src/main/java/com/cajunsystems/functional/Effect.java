@@ -368,6 +368,61 @@ public interface Effect<State, Message, Result> {
     }
     
     /**
+     * Filters the result of this effect using a predicate.
+     * If the predicate fails, executes a fallback effect instead (e.g., send error reply, keep state).
+     * 
+     * <p>This is more flexible than {@link #filter} as it allows custom error handling
+     * without failing the actor. Common use cases:
+     * <ul>
+     *   <li>Send an error response to the sender</li>
+     *   <li>Log validation failures</li>
+     *   <li>Keep the state unchanged (no-reply scenario)</li>
+     * </ul>
+     * 
+     * <p>Example - Send error reply on validation failure:
+     * <pre>{@code
+     * .when(Withdraw.class, (state, msg, ctx) -> {
+     *     return Effect.<BankState, Withdraw, Void>modify(s -> 
+     *         new BankState(s.balance() - msg.amount())
+     *     )
+     *     .filterOrElse(
+     *         s -> s.balance() >= 0,
+     *         (s, m, c) -> {
+     *             m.replyTo().tell(new Error("Insufficient funds"));
+     *             return Effect.identity();
+     *         }
+     *     );
+     * })
+     * }</pre>
+     * 
+     * <p>Example - No reply on validation failure:
+     * <pre>{@code
+     * effect.filterOrElse(
+     *     result -> result.isValid(),
+     *     (state, msg, ctx) -> Effect.identity()  // Keep state, no reply
+     * )
+     * }</pre>
+     * 
+     * @param predicate The predicate to test the state after this effect
+     * @param fallback The effect to execute if the predicate fails
+     * @return A new effect with conditional execution
+     */
+    default Effect<State, Message, Result> filterOrElse(
+            Predicate<State> predicate, 
+            Effect<State, Message, Result> fallback) {
+        return (state, message, context) -> {
+            EffectResult<State, Result> result = this.run(state, message, context);
+            return switch (result) {
+                case EffectResult.Success<State, Result> success -> 
+                    predicate.test(success.state()) 
+                        ? result 
+                        : fallback.run(state, message, context);  // Use original state for fallback
+                default -> result;  // Propagate failures
+            };
+        };
+    }
+    
+    /**
      * Performs a side effect with the result without changing it.
      * Useful for logging, notifications, etc.
      * 
@@ -419,6 +474,376 @@ public interface Effect<State, Message, Result> {
             EffectResult<State, Result> result = this.run(state, message, context);
             action.accept(result.state(), result.value());
             return result;
+        };
+    }
+    
+    // ============================================================================
+    // Error Channel - Exception Handling
+    // ============================================================================
+    
+    /**
+     * Handles errors by transforming them into a fallback effect.
+     * This allows graceful error recovery without crashing the actor.
+     * 
+     * <p>Use this for checked exceptions or when you want to send error replies to clients.
+     * 
+     * <p>Example - Send error reply on exception:
+     * <pre>{@code
+     * .when(LoadFile.class, (state, msg, ctx) -> {
+     *     return Effect.<State, LoadFile, Void>modify(s -> {
+     *         String content = Files.readString(Path.of(msg.filename()));  // May throw IOException
+     *         return new State(content);
+     *     })
+     *     .handleErrorWith((error, s, m, c) -> {
+     *         m.replyTo().tell(new ErrorResponse(error.getMessage()));
+     *         return Effect.identity();  // Keep state unchanged
+     *     });
+     * })
+     * }</pre>
+     * 
+     * @param handler Function that takes (error, state, message, context) and returns a fallback effect
+     * @return A new effect with error handling
+     */
+    default Effect<State, Message, Result> handleErrorWith(
+            QuadFunction<Throwable, State, Message, com.cajunsystems.ActorContext, Effect<State, Message, Result>> handler) {
+        return (state, message, context) -> {
+            try {
+                EffectResult<State, Result> result = this.run(state, message, context);
+                return switch (result) {
+                    case EffectResult.Failure<State, Result> failure -> 
+                        handler.apply(failure.errorValue(), state, message, context).run(state, message, context);
+                    default -> result;
+                };
+            } catch (Exception e) {
+                // Catch any uncaught exceptions and route through error handler
+                return handler.apply(e, state, message, context).run(state, message, context);
+            }
+        };
+    }
+    
+    /**
+     * Handles errors by providing a recovery function that produces a new state.
+     * Simpler version of {@link #handleErrorWith} when you just need to recover the state.
+     * 
+     * <p>Example - Recover with default state:
+     * <pre>{@code
+     * effect.handleError((error, state, msg, ctx) -> {
+     *     ctx.getLogger().error("Operation failed", error);
+     *     return state;  // Keep current state
+     * })
+     * }</pre>
+     * 
+     * @param handler Function that takes (error, state, message, context) and returns a recovery state
+     * @return A new effect with error handling
+     */
+    default Effect<State, Message, Result> handleError(
+            QuadFunction<Throwable, State, Message, com.cajunsystems.ActorContext, State> handler) {
+        return handleErrorWith((error, state, msg, ctx) -> {
+            State recoveredState = handler.apply(error, state, msg, ctx);
+            return (s, m, c) -> EffectResult.noResult(recoveredState);
+        });
+    }
+    
+    /**
+     * Wraps this effect to catch all exceptions and convert them to Failure results.
+     * This is useful for effects that may throw checked exceptions.
+     * 
+     * <p>Unlike {@link #handleErrorWith}, this doesn't provide recovery - it just
+     * ensures exceptions are captured in the error channel rather than propagating.
+     * 
+     * <p>Example:
+     * <pre>{@code
+     * Effect<State, LoadFile, String> safeLoad = Effect.<State, LoadFile, String>modify(s -> {
+     *     return Files.readString(Path.of(msg.filename()));  // May throw IOException
+     * }).attempt();
+     * 
+     * // Later, check for errors
+     * safeLoad.tapError(error -> 
+     *     context.getLogger().error("File load failed", error)
+     * );
+     * }</pre>
+     * 
+     * @return A new effect that captures all exceptions
+     */
+    default Effect<State, Message, Result> attempt() {
+        return (state, message, context) -> {
+            try {
+                return this.run(state, message, context);
+            } catch (Exception e) {
+                return EffectResult.failure(state, e);
+            }
+        };
+    }
+    
+    /**
+     * Performs a side effect when an error occurs, without changing the error.
+     * Useful for logging or sending notifications about errors.
+     * 
+     * <p>Example:
+     * <pre>{@code
+     * effect
+     *     .attempt()
+     *     .tapError(error -> 
+     *         context.getLogger().error("Operation failed", error)
+     *     )
+     *     .handleErrorWith((err, s, m, c) -> {
+     *         m.replyTo().tell(new ErrorResponse(err.getMessage()));
+     *         return Effect.identity();
+     *     });
+     * }</pre>
+     * 
+     * @param action The side effect to perform with the error
+     * @return A new effect with the error tap
+     */
+    default Effect<State, Message, Result> tapError(Consumer<Throwable> action) {
+        return (state, message, context) -> {
+            EffectResult<State, Result> result = this.run(state, message, context);
+            if (result instanceof EffectResult.Failure<State, Result> failure) {
+                action.accept(failure.errorValue());
+            }
+            return result;
+        };
+    }
+    
+    /**
+     * Functional interface for functions that take four arguments.
+     */
+    @FunctionalInterface
+    interface QuadFunction<A, B, C, D, R> {
+        R apply(A a, B b, C c, D d);
+    }
+    
+    // ============================================================================
+    // Parallel Execution - Concurrent Effects
+    // ============================================================================
+    
+    /**
+     * Executes two effects in parallel and combines their results.
+     * Both effects run concurrently with the same initial state.
+     * 
+     * <p>Example - Query multiple services in parallel:
+     * <pre>{@code
+     * Effect<State, Msg, UserData> getUserData = 
+     *     Effect.ask(profileService, new GetProfile(userId), Duration.ofSeconds(5));
+     * 
+     * Effect<State, Msg, List<Order>> getOrders = 
+     *     Effect.ask(orderService, new GetOrders(userId), Duration.ofSeconds(5));
+     * 
+     * Effect<State, Msg, UserView> combined = getUserData.parZip(getOrders,
+     *     (profile, orders) -> new UserView(profile, orders)
+     * );
+     * }</pre>
+     * 
+     * @param other The other effect to run in parallel
+     * @param combiner Function to combine both results
+     * @return A new effect that runs both in parallel and combines results
+     */
+    default <R2, R3> Effect<State, Message, R3> parZip(
+            Effect<State, Message, R2> other,
+            java.util.function.BiFunction<Result, R2, R3> combiner) {
+        return (state, message, context) -> {
+            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future1 = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                    this.run(state, message, context)
+                );
+            
+            java.util.concurrent.CompletableFuture<EffectResult<State, R2>> future2 = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                    other.run(state, message, context)
+                );
+            
+            try {
+                EffectResult<State, Result> result1 = future1.get();
+                EffectResult<State, R2> result2 = future2.get();
+                
+                // If either failed, return failure
+                if (result1 instanceof EffectResult.Failure<State, Result> f1) {
+                    return EffectResult.failure(f1.state(), f1.errorValue());
+                }
+                if (result2 instanceof EffectResult.Failure<State, R2> f2) {
+                    return EffectResult.failure(f2.state(), f2.errorValue());
+                }
+                
+                // Combine successful results
+                java.util.Optional<Result> val1 = result1.value();
+                java.util.Optional<R2> val2 = result2.value();
+                
+                if (val1.isPresent() && val2.isPresent()) {
+                    R3 combined = combiner.apply(val1.get(), val2.get());
+                    return EffectResult.success(result1.state(), combined);
+                }
+                
+                return EffectResult.noResult(result1.state());
+            } catch (Exception e) {
+                return EffectResult.failure(state, e);
+            }
+        };
+    }
+    
+    /**
+     * Executes a list of effects sequentially, threading state through each.
+     * Each effect sees the updated state from the previous effect.
+     * 
+     * <p>Example - Processing pipeline:
+     * <pre>{@code
+     * List<Effect<State, Msg, Void>> steps = List.of(
+     *     Effect.modify(s -> s.validate()),
+     *     Effect.modify(s -> s.transform()),
+     *     Effect.modify(s -> s.persist())
+     * );
+     * 
+     * Effect<State, Msg, List<Void>> pipeline = Effect.sequence(steps);
+     * }</pre>
+     * 
+     * @param effects List of effects to run sequentially
+     * @return A new effect that runs all effects sequentially and collects results
+     */
+    static <S, M, R> Effect<S, M, java.util.List<R>> sequence(java.util.List<Effect<S, M, R>> effects) {
+        return (state, message, context) -> {
+            java.util.List<R> results = new java.util.ArrayList<>();
+            S currentState = state;
+            
+            for (Effect<S, M, R> effect : effects) {
+                EffectResult<S, R> result = effect.run(currentState, message, context);
+                
+                // If any failed, return failure immediately
+                if (result instanceof EffectResult.Failure<S, R> failure) {
+                    return EffectResult.failure(currentState, failure.errorValue());
+                }
+                
+                // Thread state through
+                currentState = result.state();
+                result.value().ifPresent(results::add);
+            }
+            
+            return EffectResult.success(currentState, results);
+        };
+    }
+    
+    /**
+     * Executes a list of effects in parallel and collects all results.
+     * All effects run concurrently with the same initial state.
+     * 
+     * <p>Example - Query multiple data sources:
+     * <pre>{@code
+     * List<Effect<State, Msg, Data>> queries = List.of(
+     *     Effect.ask(service1, new Query("data1"), Duration.ofSeconds(5)),
+     *     Effect.ask(service2, new Query("data2"), Duration.ofSeconds(5)),
+     *     Effect.ask(service3, new Query("data3"), Duration.ofSeconds(5))
+     * );
+     * 
+     * Effect<State, Msg, List<Data>> allData = Effect.parSequence(queries);
+     * }</pre>
+     * 
+     * @param effects List of effects to run in parallel
+     * @return A new effect that runs all effects in parallel and collects results
+     */
+    static <S, M, R> Effect<S, M, java.util.List<R>> parSequence(java.util.List<Effect<S, M, R>> effects) {
+        return (state, message, context) -> {
+            java.util.List<java.util.concurrent.CompletableFuture<EffectResult<S, R>>> futures = 
+                effects.stream()
+                    .map(effect -> java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                        effect.run(state, message, context)
+                    ))
+                    .toList();
+            
+            try {
+                java.util.concurrent.CompletableFuture.allOf(
+                    futures.toArray(new java.util.concurrent.CompletableFuture[0])
+                ).get();
+                
+                java.util.List<R> results = new java.util.ArrayList<>();
+                S finalState = state;
+                
+                for (java.util.concurrent.CompletableFuture<EffectResult<S, R>> future : futures) {
+                    EffectResult<S, R> result = future.get();
+                    
+                    // If any failed, return failure
+                    if (result instanceof EffectResult.Failure<S, R> failure) {
+                        return EffectResult.failure(failure.state(), failure.errorValue());
+                    }
+                    
+                    result.value().ifPresent(results::add);
+                    finalState = result.state();
+                }
+                
+                return EffectResult.success(finalState, results);
+            } catch (Exception e) {
+                return EffectResult.failure(state, e);
+            }
+        };
+    }
+    
+    /**
+     * Races multiple effects - returns the result of whichever completes first.
+     * Useful for timeout patterns or fallback strategies.
+     * 
+     * <p>Example - Primary service with fallback:
+     * <pre>{@code
+     * Effect<State, Msg, Data> primary = 
+     *     Effect.ask(primaryService, new Query(id), Duration.ofSeconds(2));
+     * 
+     * Effect<State, Msg, Data> fallback = 
+     *     Effect.ask(cacheService, new GetCached(id), Duration.ofSeconds(5));
+     * 
+     * Effect<State, Msg, Data> fastest = primary.race(fallback);
+     * }</pre>
+     * 
+     * @param other The other effect to race against
+     * @return A new effect that returns the result of whichever completes first
+     */
+    default Effect<State, Message, Result> race(Effect<State, Message, Result> other) {
+        return (state, message, context) -> {
+            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future1 = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                    this.run(state, message, context)
+                );
+            
+            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future2 = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                    other.run(state, message, context)
+                );
+            
+            try {
+                // Return whichever completes first
+                return java.util.concurrent.CompletableFuture.anyOf(future1, future2)
+                    .thenApply(result -> (EffectResult<State, Result>) result)
+                    .get();
+            } catch (Exception e) {
+                return EffectResult.failure(state, e);
+            }
+        };
+    }
+    
+    /**
+     * Executes an effect with a timeout.
+     * If the effect doesn't complete within the timeout, returns a failure.
+     * 
+     * <p>Example:
+     * <pre>{@code
+     * Effect<State, Msg, Data> timedQuery = 
+     *     Effect.ask(slowService, new Query(id), Duration.ofSeconds(30))
+     *         .withTimeout(Duration.ofSeconds(5));
+     * }</pre>
+     * 
+     * @param timeout Maximum time to wait for the effect to complete
+     * @return A new effect with timeout protection
+     */
+    default Effect<State, Message, Result> withTimeout(java.time.Duration timeout) {
+        return (state, message, context) -> {
+            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                    this.run(state, message, context)
+                );
+            
+            try {
+                return future.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                return EffectResult.failure(state, 
+                    new java.util.concurrent.TimeoutException("Effect timed out after " + timeout));
+            } catch (Exception e) {
+                return EffectResult.failure(state, e);
+            }
         };
     }
     

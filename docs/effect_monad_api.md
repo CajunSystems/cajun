@@ -76,6 +76,9 @@ Effect<Integer, Msg, Void> effect = Effect.modify(s -> s + 10);
 // Set state to specific value
 Effect<Integer, Msg, Void> effect = Effect.setState(100);
 
+// Keep state unchanged (identity)
+Effect<Integer, Msg, Void> effect = Effect.identity();
+
 // Use both state and message
 Effect<Integer, String, Void> effect = 
     Effect.fromTransition((state, msg) -> state + msg.length());
@@ -116,6 +119,67 @@ Effect<Integer, Msg, Void> combined =
 
 ## Error Handling
 
+### Error Channel - Checked Exception Support
+
+The Effect monad provides a comprehensive error channel for handling checked exceptions gracefully:
+
+#### attempt() - Catch All Exceptions
+
+Wraps an effect to catch all exceptions and convert them to Failure results:
+
+```java
+Effect<State, LoadFile, String> safeLoad = Effect.<State, LoadFile, String>modify(s -> {
+    // May throw IOException
+    String content = Files.readString(Path.of(msg.filename()));
+    return new State(content);
+}).attempt();
+```
+
+#### handleErrorWith() - Custom Error Recovery
+
+Transform errors into fallback effects (e.g., send error replies):
+
+```java
+.when(LoadFile.class, (state, msg, ctx) -> {
+    return Effect.<State, LoadFile, Void>modify(s -> {
+        String content = Files.readString(Path.of(msg.filename()));  // May throw
+        return new State(content);
+    })
+    .attempt()
+    .handleErrorWith((error, s, m, c) -> {
+        m.replyTo().tell(new ErrorResponse(error.getMessage()));
+        return Effect.identity();  // Keep state unchanged
+    });
+})
+```
+
+#### handleError() - Simple State Recovery
+
+Simpler version when you just need to recover the state:
+
+```java
+effect.handleError((error, state, msg, ctx) -> {
+    ctx.getLogger().error("Operation failed", error);
+    return state;  // Keep current state
+})
+```
+
+#### tapError() - Log Errors
+
+Perform side effects on errors without changing them:
+
+```java
+effect
+    .attempt()
+    .tapError(error -> 
+        ctx.getLogger().error("Operation failed", error)
+    )
+    .handleErrorWith((err, s, m, c) -> {
+        m.replyTo().tell(new ErrorResponse(err.getMessage()));
+        return Effect.identity();
+    });
+```
+
 ### recover() - Transform Error to Result
 
 ```java
@@ -148,9 +212,37 @@ Effect<Integer, Msg, Integer> safe =
 
 ## Filtering and Validation
 
+### filter() - Validate with Error
+
 ```java
 Effect<Integer, Msg, Integer> validated = 
     effect.filter(count -> count > 0, "Count must be positive");
+```
+
+### filterOrElse() - Validate with Custom Fallback
+
+More flexible than `filter()` - allows custom error handling without crashing the actor:
+
+```java
+// Send error reply on validation failure
+.when(Withdraw.class, (state, msg, ctx) -> {
+    return Effect.<BankState, Withdraw, Void>modify(s -> 
+        new BankState(s.balance() - msg.amount())
+    )
+    .filterOrElse(
+        s -> s.balance() >= 0,  // Validation predicate
+        (s, m, c) -> {          // Fallback on failure
+            m.replyTo().tell(new Error("Insufficient funds"));
+            return Effect.identity();  // Keep original state
+        }
+    );
+})
+
+// Silent rejection (no reply)
+effect.filterOrElse(
+    state -> state.isValid(),
+    (state, msg, ctx) -> Effect.identity()  // Keep state, no reply
+)
 ```
 
 ## Side Effects
@@ -294,6 +386,37 @@ StatefulHandler<State, Message> handler =
     EffectConversions.toStatefulHandler(effect);
 ```
 
+## Persistence and Actor Modes
+
+### Stateful vs Stateless Actors
+
+Effect-based actors can be spawned in two modes:
+
+```java
+// Stateless mode (no persistence) - spawns regular Actor
+Pid actor = fromEffect(system, effect, initialState)
+    .withId("my-actor")
+    .withPersistence(false)  // Default is true
+    .spawn();
+
+// Stateful mode (with persistence) - spawns StatefulActor
+Pid actor = fromEffect(system, effect, initialState)
+    .withId("my-actor")
+    .withPersistence(true)   // Enables persistence and recovery
+    .spawn();
+```
+
+### Pid Rehydration
+
+When using persistence, `Pid` references in state are automatically rehydrated after recovery:
+
+```java
+record MyState(Pid otherActor, String data) implements Serializable {}
+
+// Pids are automatically rehydrated with the ActorSystem after snapshot recovery
+// No manual intervention needed!
+```
+
 ## Best Practices
 
 ### 1. Use Type Inference
@@ -337,13 +460,38 @@ Effect<Integer, Msg, Void> good = Effect.modify(s -> s + 1)
 ### 4. Handle Errors Explicitly
 
 ```java
-// Good - explicit error handling
+// Good - explicit error handling with error channel
+Effect<State, Msg, Result> safe = riskyEffect
+    .attempt()  // Catch exceptions
+    .tapError(error -> ctx.getLogger().error("Failed", error))
+    .handleErrorWith((err, s, m, c) -> {
+        m.replyTo().tell(new ErrorResponse(err.getMessage()));
+        return Effect.identity();
+    });
+
+// Or use recover for simple cases
 Effect<State, Msg, Result> safe = riskyEffect
     .recover(error -> defaultValue)
     .tap(result -> ctx.getLogger().info("Success: " + result));
 ```
 
-### 5. Use Pattern Matching for Message Routing
+### 5. Use Effect.identity() for No-Op State
+
+```java
+// Good - clear intent
+.when(QueryKey.class, (state, msg, ctx) -> {
+    otherActor.tell(new Query(msg.key()));
+    return Effect.identity();  // State unchanged
+})
+
+// Avoid - verbose
+.when(QueryKey.class, (state, msg, ctx) -> {
+    otherActor.tell(new Query(msg.key()));
+    return Effect.modify(s -> s);  // Harder to read
+})
+```
+
+### 6. Use Pattern Matching for Message Routing
 
 ```java
 // Good - clear message routing
@@ -448,6 +596,171 @@ Mono<Result> mono = Mono.fromCallable(() ->
 | Composability | ✅ Good | ✅ Excellent |
 | Performance | ✅ Excellent | ✅ Excellent |
 
+## Parallel Execution
+
+The Effect monad provides powerful operators for concurrent execution of effects, enabling efficient parallel workflows within actors.
+
+### parZip() - Parallel Execution with Result Combination
+
+Runs two effects in parallel and combines their results:
+
+```java
+.when(GetDashboard.class, (state, msg, ctx) -> {
+    Effect<State, GetDashboard, UserProfile> getProfile = 
+        Effect.ask(profileService, new GetProfile(msg.userId()), Duration.ofSeconds(5));
+    
+    Effect<State, GetDashboard, List<Order>> getOrders = 
+        Effect.ask(orderService, new GetOrders(msg.userId()), Duration.ofSeconds(5));
+    
+    // Run both in parallel and combine results
+    return getProfile.parZip(getOrders, (profile, orders) -> 
+        new Dashboard(profile, orders)
+    )
+    .andThen(Effect.tell(msg.replyTo(), result));
+})
+```
+
+**Key Features**:
+- ✅ Both effects run concurrently
+- ✅ Custom combiner function for results
+- ✅ Fails fast if either effect fails
+- ✅ Uses same initial state for both
+
+### parSequence() - Parallel Execution of Multiple Effects
+
+Runs a list of effects in parallel and collects all results:
+
+```java
+.when(AggregateData.class, (state, msg, ctx) -> {
+    List<Effect<State, AggregateData, Data>> queries = msg.sources().stream()
+        .map(source -> Effect.ask(source, new Query(msg.key()), Duration.ofSeconds(5)))
+        .toList();
+    
+    // Execute all queries in parallel
+    return Effect.parSequence(queries)
+        .map(results -> new AggregatedData(results))
+        .andThen(Effect.tell(msg.replyTo(), result));
+})
+```
+
+**Key Features**:
+- ✅ Runs N effects concurrently
+- ✅ Collects all results in a list
+- ✅ Fails if any effect fails
+- ✅ Maintains result order
+
+### sequence() - Sequential Execution of Multiple Effects
+
+Runs a list of effects sequentially, threading state through each:
+
+```java
+.when(ProcessPipeline.class, (state, msg, ctx) -> {
+    List<Effect<State, ProcessPipeline, Void>> steps = List.of(
+        Effect.modify(s -> s.validate()),
+        Effect.modify(s -> s.transform()),
+        Effect.modify(s -> s.persist())
+    );
+    
+    // Execute steps sequentially, each seeing the updated state
+    return Effect.sequence(steps)
+        .andThen(Effect.tell(msg.replyTo(), new Success()));
+})
+```
+
+**Key Features**:
+- ✅ Sequential execution (one after another)
+- ✅ State is threaded through each effect
+- ✅ Each effect sees the updated state from previous
+- ✅ Fails on first error
+
+### race() - First-to-Complete Wins
+
+Races multiple effects and returns whichever completes first:
+
+```java
+.when(GetData.class, (state, msg, ctx) -> {
+    Effect<State, GetData, Data> primary = 
+        Effect.ask(primaryService, new Query(msg.key()), Duration.ofSeconds(2));
+    
+    Effect<State, GetData, Data> cache = 
+        Effect.ask(cacheService, new GetCached(msg.key()), Duration.ofSeconds(5));
+    
+    // Use whichever responds first
+    return primary.race(cache)
+        .andThen(Effect.tell(msg.replyTo(), result));
+})
+```
+
+**Use Cases**:
+- Primary service with cache fallback
+- Multiple redundant data sources
+- Fastest response optimization
+
+### withTimeout() - Timeout Protection
+
+Wraps an effect with a timeout:
+
+```java
+.when(SlowQuery.class, (state, msg, ctx) -> {
+    return Effect.ask(slowService, new Query(msg.key()), Duration.ofSeconds(30))
+        .withTimeout(Duration.ofSeconds(5))
+        .handleErrorWith((err, s, m, c) -> {
+            // Handle timeout
+            m.replyTo().tell(new TimeoutError());
+            return Effect.identity();
+        });
+})
+```
+
+**Key Features**:
+- ✅ Prevents hanging on slow operations
+- ✅ Returns TimeoutException on timeout
+- ✅ Composable with error handlers
+
+### Complete Example: Robust Data Aggregation
+
+```java
+.when(GetFullReport.class, (state, msg, ctx) -> {
+    // Query 3 services in parallel with timeout protection
+    Effect<State, GetFullReport, UserProfile> getProfile = 
+        Effect.ask(profileService, new GetProfile(msg.userId()), Duration.ofSeconds(5))
+            .withTimeout(Duration.ofSeconds(3));
+    
+    Effect<State, GetFullReport, List<Order>> getOrders = 
+        Effect.ask(orderService, new GetOrders(msg.userId()), Duration.ofSeconds(5))
+            .withTimeout(Duration.ofSeconds(3));
+    
+    Effect<State, GetFullReport, Stats> getStats = 
+        Effect.ask(statsService, new GetStats(msg.userId()), Duration.ofSeconds(5))
+            .withTimeout(Duration.ofSeconds(3));
+    
+    // Combine all results in parallel with error recovery
+    return getProfile.parZip(getOrders, (profile, orders) -> 
+        new Tuple2<>(profile, orders)
+    )
+    .parZip(getStats, (tuple, stats) -> 
+        new FullReport(tuple._1(), tuple._2(), stats)
+    )
+    .handleErrorWith((err, s, m, c) -> {
+        // Fallback to cached data on any error
+        return Effect.ask(cacheService, new GetCachedReport(msg.userId()), Duration.ofSeconds(1));
+    })
+    .andThen(Effect.tell(msg.replyTo(), result));
+})
+```
+
+### Performance Benefits
+
+| Operator | Execution | Use Case |
+|----------|-----------|----------|
+| `parZip` | Parallel (2 effects) | Combine independent queries |
+| `parSequence` | Parallel (N effects) | Aggregate multiple sources |
+| `sequence` | Sequential | Pipeline with state threading |
+| `race` | Parallel (first wins) | Redundancy & fallback |
+| `withTimeout` | Single with limit | Prevent hanging |
+
+**Latency Reduction**: Parallel operators can reduce total latency from `O(n)` to `O(1)` when querying multiple independent services.
+
 ## Conclusion
 
 The Effect monad provides a powerful, composable, and type-safe way to build functional actors while maintaining the actor-oriented nature of Cajun. It enables:
@@ -455,6 +768,7 @@ The Effect monad provides a powerful, composable, and type-safe way to build fun
 - **Functional programming patterns** in an actor context
 - **Better error handling** with explicit recovery
 - **Composable behaviors** through monadic operations
+- **Parallel execution** for efficient concurrent workflows
 - **Testable code** with pure functions
 - **Type safety** throughout
 - **Seamless integration** with Java's ecosystem

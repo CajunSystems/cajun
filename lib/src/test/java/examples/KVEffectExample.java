@@ -90,6 +90,16 @@ public class KVEffectExample {
     static Effect<MemTableState, MemTableMsg, Void> createMemTableBehavior(Pid manifestActor, Pid sstableActor) {
         return Effect.<MemTableState, MemTableMsg, Void>match()
             .when(Put.class, (state, msg, ctx) -> {
+                // Example: Could use filterOrElse for validation:
+                // return Effect.<MemTableState, Put, Void>modify(s -> { ... })
+                //     .filterOrElse(
+                //         s -> !msg.key().isEmpty(),
+                //         (s, m, c) -> {
+                //             m.replyTo().tell(new PutResponse(false));
+                //             return Effect.identity();  // Keep state unchanged, send error reply
+                //         }
+                //     );
+                
                 // Add to memtable
                 state.data().put(msg.key(), msg.value());
                 ctx.getLogger().info("PUT {}={} (size: {}/{})", msg.key(), msg.value(), 
