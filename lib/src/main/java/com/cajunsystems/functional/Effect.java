@@ -16,15 +16,15 @@ import java.util.function.Predicate;
  * - Produces a new state
  * - May produce a result
  * - May perform side effects (logging, sending messages, etc.)
- * - May fail with an error
- * 
+ * - May fail with a typed error
+ *
  * <p>The Effect monad provides a composable, type-safe way to build actor behaviors
- * using functional programming patterns. It integrates seamlessly with Java's Stream API
- * and reactive libraries.
- * 
+ * using functional programming patterns with typed error channels (similar to ZIO).
+ * It integrates seamlessly with Java's Stream API and reactive libraries.
+ *
  * <p>Example usage:
  * <pre>{@code
- * Effect<Integer, CounterMsg, Void> counterEffect = Effect.match()
+ * Effect<Integer, Throwable, Void> counterEffect = Effect.match()
  *     .when(Increment.class, (state, msg, ctx) ->
  *         Effect.modify(s -> s + msg.amount())
  *             .andThen(Effect.logState(s -> "Count: " + s))
@@ -34,24 +34,24 @@ import java.util.function.Predicate;
  *             .tap(count -> ctx.tell(msg.replyTo(), count))
  *     );
  * }</pre>
- * 
+ *
  * @param <State> The type of the actor's state
- * @param <Message> The type of messages the actor processes
+ * @param <Error> The type of errors that can occur
  * @param <Result> The type of result produced by the effect
  */
 @FunctionalInterface
-public interface Effect<State, Message, Result> {
+public interface Effect<State, Error, Result> {
     
     /**
      * Execute the effect with the given state, message, and context.
      * Returns an EffectResult containing the new state and optional result.
-     * 
+     *
      * @param state The current state
-     * @param message The message being processed
+     * @param message The message being processed (untyped at Effect level)
      * @param context The actor context for side effects
      * @return The result of executing the effect
      */
-    EffectResult<State, Result> run(State state, Message message, ActorContext context);
+    EffectResult<State, Error, Result> run(State state, Object message, ActorContext context);
     
     // ============================================================================
     // Factory Methods - Creating Effects
@@ -60,16 +60,16 @@ public interface Effect<State, Message, Result> {
     /**
      * Creates an effect that returns a value without changing state.
      * This is the monadic "return" or "pure" operation, named idiomatically for Java.
-     * 
+     *
      * <p>Example:
      * <pre>{@code
-     * Effect<Integer, Msg, String> effect = Effect.of("success");
+     * Effect<Integer, Throwable, String> effect = Effect.of("success");
      * }</pre>
-     * 
+     *
      * @param value The value to return
      * @return An effect that produces the given value
      */
-    static <S, M, R> Effect<S, M, R> of(R value) {
+    static <S, E, R> Effect<S, E, R> of(R value) {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.success(state, value)
         );
@@ -86,7 +86,7 @@ public interface Effect<State, Message, Result> {
      * 
      * @return An effect that returns the current state
      */
-    static <S, M> Effect<S, M, S> state() {
+    static <S, E> Effect<S, E, S> state() {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.success(state, state)
         );
@@ -104,7 +104,7 @@ public interface Effect<State, Message, Result> {
      * @param f The function to apply to the state
      * @return An effect that modifies the state
      */
-    static <S, M> Effect<S, M, Void> modify(Function<S, S> f) {
+    static <S, E> Effect<S, E, Void> modify(Function<S, S> f) {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.noResult(f.apply(state))
         );
@@ -127,7 +127,7 @@ public interface Effect<State, Message, Result> {
      * 
      * @return An effect that returns the state unchanged
      */
-    static <S, M> Effect<S, M, Void> identity() {
+    static <S, E> Effect<S, E, Void> identity() {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.noResult(state)
         );
@@ -144,7 +144,7 @@ public interface Effect<State, Message, Result> {
      * @param newState The new state value
      * @return An effect that sets the state
      */
-    static <S, M> Effect<S, M, Void> setState(S newState) {
+    static <S, E> Effect<S, E, Void> setState(S newState) {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.noResult(newState)
         );
@@ -163,7 +163,7 @@ public interface Effect<State, Message, Result> {
      * @param f The state transition function
      * @return An effect that applies the transition
      */
-    static <S, M> Effect<S, M, Void> fromTransition(BiFunction<S, M, S> f) {
+    static <S, E> Effect<S, E, Void> fromTransition(BiFunction<S, Object, S> f) {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.noResult(f.apply(state, message))
         );
@@ -181,7 +181,7 @@ public interface Effect<State, Message, Result> {
      * @param error The error to fail with
      * @return An effect that fails
      */
-    static <S, M, R> Effect<S, M, R> fail(Throwable error) {
+    static <S, E, R> Effect<S, E, R> fail(Throwable error) {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.failure(state, error)
         );
@@ -193,7 +193,7 @@ public interface Effect<State, Message, Result> {
      * 
      * @return An effect that leaves state unchanged and produces no result
      */
-    static <S, M> Effect<S, M, Void> none() {
+    static <S, E> Effect<S, E, Void> none() {
         return TrampolinedEffect.trampoline(
             (state, message, context) -> EffectResult.noResult(state)
         );
@@ -217,9 +217,9 @@ public interface Effect<State, Message, Result> {
      * @param f The function to transform the result
      * @return A new effect with the transformed result
      */
-    default <R2> Effect<State, Message, R2> map(Function<Result, R2> f) {
+    default <R2> Effect<State, Error, R2> map(Function<Result, R2> f) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Success<State, Result> success -> 
                     EffectResult.success(success.state(), f.apply(success.resultValue()));
@@ -245,9 +245,9 @@ public interface Effect<State, Message, Result> {
      * @param f The function that produces the next effect based on this effect's result
      * @return A new effect that chains the two effects
      */
-    default <R2> Effect<State, Message, R2> flatMap(Function<Result, Effect<State, Message, R2>> f) {
+    default <R2> Effect<State, Error, R2> flatMap(Function<Result, Effect<State, Error, R2>> f) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Success<State, Result> success -> 
                     f.apply(success.resultValue()).run(success.state(), message, context);
@@ -273,9 +273,9 @@ public interface Effect<State, Message, Result> {
      * @param next The effect to run after this one
      * @return A new effect that runs both effects in sequence
      */
-    default <R2> Effect<State, Message, R2> andThen(Effect<State, Message, R2> next) {
+    default <R2> Effect<State, Error, R2> andThen(Effect<State, Error, R2> next) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Success<State, Result> success -> 
                     next.run(success.state(), message, context);
@@ -299,9 +299,9 @@ public interface Effect<State, Message, Result> {
      * @param fallback The effect to run if this effect fails
      * @return A new effect with fallback behavior
      */
-    default Effect<State, Message, Result> orElse(Effect<State, Message, Result> fallback) {
+    default Effect<State, Error, Result> orElse(Effect<State, Error, Result> fallback) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Failure<State, Result> failure -> 
                     fallback.run(failure.state(), message, context);
@@ -322,9 +322,9 @@ public interface Effect<State, Message, Result> {
      * @param f The function to transform errors into results
      * @return A new effect that cannot fail
      */
-    default Effect<State, Message, Result> recover(Function<Throwable, Result> f) {
+    default Effect<State, Error, Result> recover(Function<Throwable, Result> f) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Failure<State, Result> failure -> 
                     EffectResult.success(failure.state(), f.apply(failure.errorValue()));
@@ -345,9 +345,9 @@ public interface Effect<State, Message, Result> {
      * @param f The function that produces a recovery effect from the error
      * @return A new effect with recovery behavior
      */
-    default Effect<State, Message, Result> recoverWith(Function<Throwable, Effect<State, Message, Result>> f) {
+    default Effect<State, Error, Result> recoverWith(Function<Throwable, Effect<State, Error, Result>> f) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Failure<State, Result> failure -> 
                     f.apply(failure.errorValue()).run(failure.state(), message, context);
@@ -370,9 +370,9 @@ public interface Effect<State, Message, Result> {
      * @param errorMsg The error message if the predicate fails
      * @return A new effect with validation
      */
-    default Effect<State, Message, Result> filter(Predicate<Result> predicate, String errorMsg) {
+    default Effect<State, Error, Result> filter(Predicate<Result> predicate, String errorMsg) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Success<State, Result> success -> 
                     predicate.test(success.resultValue()) 
@@ -423,11 +423,11 @@ public interface Effect<State, Message, Result> {
      * @param fallback The effect to execute if the predicate fails
      * @return A new effect with conditional execution
      */
-    default Effect<State, Message, Result> filterOrElse(
+    default Effect<State, Error, Result> filterOrElse(
             Predicate<State> predicate, 
-            Effect<State, Message, Result> fallback) {
+            Effect<State, Error, Result> fallback) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             return switch (result) {
                 case EffectResult.Success<State, Result> success -> 
                     predicate.test(success.state()) 
@@ -451,9 +451,9 @@ public interface Effect<State, Message, Result> {
      * @param action The side effect to perform
      * @return A new effect with the side effect
      */
-    default Effect<State, Message, Result> tap(Consumer<Result> action) {
+    default Effect<State, Error, Result> tap(Consumer<Result> action) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             result.value().ifPresent(action);
             return result;
         };
@@ -471,9 +471,9 @@ public interface Effect<State, Message, Result> {
      * @param action The side effect to perform with the state
      * @return A new effect with the side effect
      */
-    default Effect<State, Message, Result> tapState(Consumer<State> action) {
+    default Effect<State, Error, Result> tapState(Consumer<State> action) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             action.accept(result.state());
             return result;
         };
@@ -485,9 +485,9 @@ public interface Effect<State, Message, Result> {
      * @param action The side effect to perform
      * @return A new effect with the side effect
      */
-    default Effect<State, Message, Result> tapBoth(java.util.function.BiConsumer<State, Optional<Result>> action) {
+    default Effect<State, Error, Result> tapBoth(java.util.function.BiConsumer<State, Optional<Result>> action) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             action.accept(result.state(), result.value());
             return result;
         };
@@ -520,11 +520,11 @@ public interface Effect<State, Message, Result> {
      * @param handler Function that takes (error, state, message, context) and returns a fallback effect
      * @return A new effect with error handling
      */
-    default Effect<State, Message, Result> handleErrorWith(
-            QuadFunction<Throwable, State, Message, com.cajunsystems.ActorContext, Effect<State, Message, Result>> handler) {
+    default Effect<State, Error, Result> handleErrorWith(
+            QuadFunction<Throwable, State, Message, com.cajunsystems.ActorContext, Effect<State, Error, Result>> handler) {
         return (state, message, context) -> {
             try {
-                EffectResult<State, Result> result = this.run(state, message, context);
+                EffectResult<State, Error, Result> result = this.run(state, message, context);
                 return switch (result) {
                     case EffectResult.Failure<State, Result> failure -> 
                         handler.apply(failure.errorValue(), state, message, context).run(state, message, context);
@@ -552,7 +552,7 @@ public interface Effect<State, Message, Result> {
      * @param handler Function that takes (error, state, message, context) and returns a recovery state
      * @return A new effect with error handling
      */
-    default Effect<State, Message, Result> handleError(
+    default Effect<State, Error, Result> handleError(
             QuadFunction<Throwable, State, Message, com.cajunsystems.ActorContext, State> handler) {
         return handleErrorWith((error, state, msg, ctx) -> {
             State recoveredState = handler.apply(error, state, msg, ctx);
@@ -581,7 +581,7 @@ public interface Effect<State, Message, Result> {
      * 
      * @return A new effect that captures all exceptions
      */
-    default Effect<State, Message, Result> attempt() {
+    default Effect<State, Error, Result> attempt() {
         return (state, message, context) -> {
             try {
                 return this.run(state, message, context);
@@ -611,9 +611,9 @@ public interface Effect<State, Message, Result> {
      * @param action The side effect to perform with the error
      * @return A new effect with the error tap
      */
-    default Effect<State, Message, Result> tapError(Consumer<Throwable> action) {
+    default Effect<State, Error, Result> tapError(Consumer<Throwable> action) {
         return (state, message, context) -> {
-            EffectResult<State, Result> result = this.run(state, message, context);
+            EffectResult<State, Error, Result> result = this.run(state, message, context);
             if (result instanceof EffectResult.Failure<State, Result> failure) {
                 action.accept(failure.errorValue());
             }
@@ -654,11 +654,11 @@ public interface Effect<State, Message, Result> {
      * @param combiner Function to combine both results
      * @return A new effect that runs both in parallel and combines results
      */
-    default <R2, R3> Effect<State, Message, R3> parZip(
-            Effect<State, Message, R2> other,
+    default <R2, R3> Effect<State, Error, R3> parZip(
+            Effect<State, Error, R2> other,
             java.util.function.BiFunction<Result, R2, R3> combiner) {
         return (state, message, context) -> {
-            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future1 = 
+            java.util.concurrent.CompletableFuture<EffectResult<State, Error, Result>> future1 = 
                 java.util.concurrent.CompletableFuture.supplyAsync(() -> 
                     this.run(state, message, context)
                 );
@@ -669,7 +669,7 @@ public interface Effect<State, Message, Result> {
                 );
             
             try {
-                EffectResult<State, Result> result1 = future1.get();
+                EffectResult<State, Error, Result> result1 = future1.get();
                 EffectResult<State, R2> result2 = future2.get();
                 
                 // If either failed, return failure
@@ -714,12 +714,12 @@ public interface Effect<State, Message, Result> {
      * @param effects List of effects to run sequentially
      * @return A new effect that runs all effects sequentially and collects results
      */
-    static <S, M, R> Effect<S, M, java.util.List<R>> sequence(java.util.List<Effect<S, M, R>> effects) {
+    static <S, E, R> Effect<S, E, java.util.List<R>> sequence(java.util.List<Effect<S, E, R>> effects) {
         return (state, message, context) -> {
             java.util.List<R> results = new java.util.ArrayList<>();
             S currentState = state;
             
-            for (Effect<S, M, R> effect : effects) {
+            for (Effect<S, E, R> effect : effects) {
                 EffectResult<S, R> result = effect.run(currentState, message, context);
                 
                 // If any failed, return failure immediately
@@ -754,7 +754,7 @@ public interface Effect<State, Message, Result> {
      * @param effects List of effects to run in parallel
      * @return A new effect that runs all effects in parallel and collects results
      */
-    static <S, M, R> Effect<S, M, java.util.List<R>> parSequence(java.util.List<Effect<S, M, R>> effects) {
+    static <S, E, R> Effect<S, E, java.util.List<R>> parSequence(java.util.List<Effect<S, E, R>> effects) {
         return (state, message, context) -> {
             java.util.List<java.util.concurrent.CompletableFuture<EffectResult<S, R>>> futures = 
                 effects.stream()
@@ -808,14 +808,14 @@ public interface Effect<State, Message, Result> {
      * @param other The other effect to race against
      * @return A new effect that returns the result of whichever completes first
      */
-    default Effect<State, Message, Result> race(Effect<State, Message, Result> other) {
+    default Effect<State, Error, Result> race(Effect<State, Error, Result> other) {
         return (state, message, context) -> {
-            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future1 = 
+            java.util.concurrent.CompletableFuture<EffectResult<State, Error, Result>> future1 = 
                 java.util.concurrent.CompletableFuture.supplyAsync(() -> 
                     this.run(state, message, context)
                 );
             
-            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future2 = 
+            java.util.concurrent.CompletableFuture<EffectResult<State, Error, Result>> future2 = 
                 java.util.concurrent.CompletableFuture.supplyAsync(() -> 
                     other.run(state, message, context)
                 );
@@ -823,7 +823,7 @@ public interface Effect<State, Message, Result> {
             try {
                 // Return whichever completes first
                 return java.util.concurrent.CompletableFuture.anyOf(future1, future2)
-                    .thenApply(result -> (EffectResult<State, Result>) result)
+                    .thenApply(result -> (EffectResult<State, Error, Result>) result)
                     .get();
             } catch (Exception e) {
                 return EffectResult.failure(state, e);
@@ -845,9 +845,9 @@ public interface Effect<State, Message, Result> {
      * @param timeout Maximum time to wait for the effect to complete
      * @return A new effect with timeout protection
      */
-    default Effect<State, Message, Result> withTimeout(java.time.Duration timeout) {
+    default Effect<State, Error, Result> withTimeout(java.time.Duration timeout) {
         return (state, message, context) -> {
-            java.util.concurrent.CompletableFuture<EffectResult<State, Result>> future = 
+            java.util.concurrent.CompletableFuture<EffectResult<State, Error, Result>> future = 
                 java.util.concurrent.CompletableFuture.supplyAsync(() -> 
                     this.run(state, message, context)
                 );
@@ -880,7 +880,7 @@ public interface Effect<State, Message, Result> {
      * @param message The message to send
      * @return An effect that sends the message
      */
-    static <S, M> Effect<S, M, Void> tell(Pid target, Object message) {
+    static <S, E> Effect<S, E, Void> tell(Pid target, Object message) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.tell(target, message);
             return EffectResult.noResult(state);
@@ -899,7 +899,7 @@ public interface Effect<State, Message, Result> {
      * @param message The message to send to self
      * @return An effect that sends the message to self
      */
-    static <S, M> Effect<S, M, Void> tellSelf(Object message) {
+    static <S, E> Effect<S, E, Void> tellSelf(Object message) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.tellSelf(message);
             return EffectResult.noResult(state);
@@ -921,7 +921,7 @@ public interface Effect<State, Message, Result> {
      * @param timeout The timeout duration
      * @return An effect that performs the ask and returns the response
      */
-    static <S, M, R> Effect<S, M, R> ask(Pid target, Object message, Duration timeout) {
+    static <S, E, R> Effect<S, E, R> ask(Pid target, Object message, Duration timeout) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             try {
                 @SuppressWarnings("unchecked")
@@ -949,7 +949,7 @@ public interface Effect<State, Message, Result> {
      * @param message The message to log
      * @return An effect that logs the message
      */
-    static <S, M> Effect<S, M, Void> log(String message) {
+    static <S, E> Effect<S, E, Void> log(String message) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().info(message);
             return EffectResult.noResult(state);
@@ -968,7 +968,7 @@ public interface Effect<State, Message, Result> {
      * @param messageFunc The function to derive the log message from state
      * @return An effect that logs the derived message
      */
-    static <S, M> Effect<S, M, Void> logState(Function<S, String> messageFunc) {
+    static <S, E> Effect<S, E, Void> logState(Function<S, String> messageFunc) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().info(messageFunc.apply(state));
             return EffectResult.noResult(state);
@@ -981,7 +981,7 @@ public interface Effect<State, Message, Result> {
      * @param message The error message to log
      * @return An effect that logs the error
      */
-    static <S, M> Effect<S, M, Void> logError(String message) {
+    static <S, E> Effect<S, E, Void> logError(String message) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().error(message);
             return EffectResult.noResult(state);
@@ -995,7 +995,7 @@ public interface Effect<State, Message, Result> {
      * @param error The throwable to log
      * @return An effect that logs the error
      */
-    static <S, M> Effect<S, M, Void> logError(String message, Throwable error) {
+    static <S, E> Effect<S, E, Void> logError(String message, Throwable error) {
         return TrampolinedEffect.trampoline((state, msg, context) -> {
             context.getLogger().error(message, error);
             return EffectResult.noResult(state);
@@ -1021,7 +1021,7 @@ public interface Effect<State, Message, Result> {
      * 
      * @return A new pattern matching builder
      */
-    static <S, M, R> EffectMatcher<S, M, R> match() {
+    static <S, E, R, M> EffectMatcher<S, E, R, M> match() {
         return new EffectMatcher<>();
     }
     
@@ -1043,10 +1043,10 @@ public interface Effect<State, Message, Result> {
      * @param elseEffect The effect to run if condition is false
      * @return A conditional effect
      */
-    static <S, M, R> Effect<S, M, R> when(
+    static <S, E, R> Effect<S, E, R> when(
         Predicate<M> condition,
-        Effect<S, M, R> thenEffect,
-        Effect<S, M, R> elseEffect
+        Effect<S, E, R> thenEffect,
+        Effect<S, E, R> elseEffect
     ) {
         return (state, message, context) -> {
             if (condition.test(message)) {
@@ -1074,7 +1074,7 @@ public interface Effect<State, Message, Result> {
      * @param operation The operation to attempt
      * @return An effect that safely executes the operation
      */
-    static <S, M, R> Effect<S, M, R> attempt(java.util.function.Supplier<R> operation) {
+    static <S, E, R> Effect<S, E, R> attempt(java.util.function.Supplier<R> operation) {
         return TrampolinedEffect.trampoline((state, message, context) -> {
             try {
                 return EffectResult.success(state, operation.get());
@@ -1093,7 +1093,7 @@ public interface Effect<State, Message, Result> {
      * @param context The context to run with
      * @return An Optional containing the result if successful
      */
-    default Optional<Result> toOptional(State state, Message message, ActorContext context) {
+    default Optional<Result> toOptional(State state, Object message, ActorContext context) {
         return this.run(state, message, context).value();
     }
 }

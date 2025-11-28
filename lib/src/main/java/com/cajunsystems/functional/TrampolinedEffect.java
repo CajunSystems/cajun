@@ -17,26 +17,26 @@ import java.util.function.Function;
  * @param <Message> The message type
  * @param <Result> The result type
  */
-final class TrampolinedEffect<State, Message, Result> implements Effect<State, Message, Result> {
+final class TrampolinedEffect<State, Error, Result> implements Effect<State, Error, Result> {
 
-    private final EffectTrampoline<State, Message, Result> trampoline;
+    private final EffectTrampoline<State, Error, Result> trampoline;
 
     /**
      * Creates a trampolined effect from a base effect.
      */
-    TrampolinedEffect(Effect<State, Message, Result> baseEffect) {
+    TrampolinedEffect(Effect<State, Error, Result> baseEffect) {
         this.trampoline = new EffectTrampoline.Pure<>(baseEffect);
     }
 
     /**
      * Creates a trampolined effect from a trampoline structure.
      */
-    private TrampolinedEffect(EffectTrampoline<State, Message, Result> trampoline) {
+    private TrampolinedEffect(EffectTrampoline<State, Error, Result> trampoline) {
         this.trampoline = trampoline;
     }
 
     @Override
-    public EffectResult<State, Result> run(State state, Message message, ActorContext context) {
+    public EffectResult<State, Result> run(State state, Object message, ActorContext context) {
         return EffectTrampoline.evaluate(trampoline, state, message, context);
     }
 
@@ -45,7 +45,7 @@ final class TrampolinedEffect<State, Message, Result> implements Effect<State, M
      * Builds a Map trampoline instead of creating nested lambdas.
      */
     @Override
-    public <R2> Effect<State, Message, R2> map(Function<Result, R2> f) {
+    public <R2> Effect<State, Error, R2> map(Function<Result, R2> f) {
         return new TrampolinedEffect<>(
             new EffectTrampoline.Map<>(this.trampoline, f)
         );
@@ -56,7 +56,7 @@ final class TrampolinedEffect<State, Message, Result> implements Effect<State, M
      * Builds a FlatMap trampoline instead of creating nested lambdas.
      */
     @Override
-    public <R2> Effect<State, Message, R2> flatMap(Function<Result, Effect<State, Message, R2>> f) {
+    public <R2> Effect<State, Error, R2> flatMap(Function<Result, Effect<State, Error, R2>> f) {
         return new TrampolinedEffect<>(
             new EffectTrampoline.FlatMap<>(this.trampoline, f)
         );
@@ -65,7 +65,7 @@ final class TrampolinedEffect<State, Message, Result> implements Effect<State, M
     /**
      * Factory method to create a trampolined effect from a base effect.
      */
-    static <S, M, R> Effect<S, M, R> trampoline(Effect<S, M, R> effect) {
+    static <S, E, R> Effect<S, E, R> trampoline(Effect<S, E, R> effect) {
         if (effect instanceof TrampolinedEffect) {
             return effect; // Already trampolined
         }

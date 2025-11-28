@@ -18,34 +18,34 @@ import java.util.function.Function;
  * @param <Message> The message type
  * @param <Result> The result type
  */
-sealed interface EffectTrampoline<State, Message, Result> {
+sealed interface EffectTrampoline<State, Error, Result> {
 
     /**
      * A pure effect that executes a base computation.
      */
-    record Pure<State, Message, Result>(
-        Effect<State, Message, Result> effect
-    ) implements EffectTrampoline<State, Message, Result> {}
+    record Pure<State, Error, Result>(
+        Effect<State, Error, Result> effect
+    ) implements EffectTrampoline<State, Error, Result> {}
 
     /**
      * A map transformation applied to an effect.
      *
      * @param <R1> The source result type before mapping
      */
-    record Map<State, Message, R1, Result>(
-        EffectTrampoline<State, Message, R1> source,
+    record Map<State, Error, R1, Result>(
+        EffectTrampoline<State, Error, R1> source,
         Function<R1, Result> mapper
-    ) implements EffectTrampoline<State, Message, Result> {}
+    ) implements EffectTrampoline<State, Error, Result> {}
 
     /**
      * A flatMap transformation applied to an effect.
      *
      * @param <R1> The source result type before flat mapping
      */
-    record FlatMap<State, Message, R1, Result>(
-        EffectTrampoline<State, Message, R1> source,
-        Function<R1, Effect<State, Message, Result>> binder
-    ) implements EffectTrampoline<State, Message, Result> {}
+    record FlatMap<State, Error, R1, Result>(
+        EffectTrampoline<State, Error, R1> source,
+        Function<R1, Effect<State, Error, Result>> binder
+    ) implements EffectTrampoline<State, Error, Result> {}
 
     /**
      * Evaluates a trampolined effect iteratively without recursion.
@@ -59,8 +59,8 @@ sealed interface EffectTrampoline<State, Message, Result> {
      * @param context The actor context
      * @return The final effect result
      */
-    static <S, M, R> EffectResult<S, R> evaluate(
-        EffectTrampoline<S, M, R> trampoline,
+    static <S, E, R> EffectResult<S, E, R> evaluate(
+        EffectTrampoline<S, E, R> trampoline,
         S state,
         M message,
         ActorContext context
@@ -69,21 +69,21 @@ sealed interface EffectTrampoline<State, Message, Result> {
         Deque<Function<Object, Object>> transformStack = new ArrayDeque<>();
 
         // Current trampoline being processed
-        EffectTrampoline<S, M, ?> current = trampoline;
+        EffectTrampoline<S, E, ?> current = trampoline;
 
         // Step 1: Unwind the trampoline structure to find the base Pure effect
         // and collect all transformations onto the stack
         while (true) {
             switch (current) {
-                case Pure<S, M, ?> pure -> {
+                case Pure<S, E, ?> pure -> {
                     // Found the base effect - execute it
-                    EffectResult<S, ?> result = pure.effect().run(state, message, context);
+                    EffectResult<S, E, ?> result = pure.effect().run(state, message, context);
 
                     // Step 2: Apply all collected transformations in FIFO order
                     return applyTransformations(result, transformStack, state, message, context);
                 }
 
-                case Map<S, M, ?, ?> map -> {
+                case Map<S, E, ?, ?> map -> {
                     // Push the mapper onto the stack
                     @SuppressWarnings("unchecked")
                     Function<Object, Object> mapper = (Function<Object, Object>) map.mapper();
@@ -93,11 +93,11 @@ sealed interface EffectTrampoline<State, Message, Result> {
                     current = map.source();
                 }
 
-                case FlatMap<S, M, ?, ?> flatMap -> {
+                case FlatMap<S, E, ?, ?> flatMap -> {
                     // Push a marker function that indicates flatMap
                     @SuppressWarnings("unchecked")
-                    Function<Object, Effect<S, M, Object>> binder =
-                        (Function<Object, Effect<S, M, Object>>) flatMap.binder();
+                    Function<Object, Effect<S, E, Object>> binder =
+                        (Function<Object, Effect<S, E, Object>>) flatMap.binder();
 
                     transformStack.push(new FlatMapMarker<>(binder, message, context));
 
@@ -119,36 +119,36 @@ sealed interface EffectTrampoline<State, Message, Result> {
      * @return The final transformed result
      */
     @SuppressWarnings("unchecked")
-    private static <S, M, R> EffectResult<S, R> applyTransformations(
-        EffectResult<S, ?> baseResult,
+    private static <S, E, R> EffectResult<S, E, R> applyTransformations(
+        EffectResult<S, E, ?> baseResult,
         Deque<Function<Object, Object>> transformStack,
         S state,
         M message,
         ActorContext context
     ) {
-        EffectResult<S, ?> current = baseResult;
+        EffectResult<S, E, ?> current = baseResult;
 
         // Apply transformations in reverse order (LIFO from stack)
         while (!transformStack.isEmpty()) {
             Function<Object, Object> transform = transformStack.pop();
 
             // Check if this is a flatMap marker
-            if (transform instanceof FlatMapMarker<S, M, ?, ?> marker) {
-                current = applyFlatMap(current, (FlatMapMarker<S, M, Object, Object>) marker, state);
+            if (transform instanceof FlatMapMarker<S, E, ?, ?> marker) {
+                current = applyFlatMap(current, (FlatMapMarker<S, E, Object, Object>) marker, state);
             } else {
                 // Regular map transformation
                 current = applyMap(current, transform);
             }
         }
 
-        return (EffectResult<S, R>) current;
+        return (EffectResult<S, E, R>) current;
     }
 
     /**
      * Applies a map transformation to a result.
      */
-    private static <S, R1, R2> EffectResult<S, R2> applyMap(
-        EffectResult<S, R1> result,
+    private static <S, R1, R2> EffectResult<S, E, R2> applyMap(
+        EffectResult<S, E, R1> result,
         Function<Object, Object> mapper
     ) {
         return switch (result) {
@@ -168,14 +168,14 @@ sealed interface EffectTrampoline<State, Message, Result> {
     /**
      * Applies a flatMap transformation to a result.
      */
-    private static <S, M, R1, R2> EffectResult<S, R2> applyFlatMap(
-        EffectResult<S, R1> result,
-        FlatMapMarker<S, M, R1, R2> marker,
+    private static <S, E, R1, R2> EffectResult<S, E, R2> applyFlatMap(
+        EffectResult<S, E, R1> result,
+        FlatMapMarker<S, E, R1, R2> marker,
         S state
     ) {
         return switch (result) {
             case EffectResult.Success<S, R1> success -> {
-                Effect<S, M, R2> nextEffect = marker.binder().apply(success.resultValue());
+                Effect<S, E, R2> nextEffect = marker.binder().apply(success.resultValue());
                 yield nextEffect.run(success.state(), marker.message(), marker.context());
             }
             case EffectResult.NoResult<S, R1> noResult ->
@@ -188,8 +188,8 @@ sealed interface EffectTrampoline<State, Message, Result> {
     /**
      * Marker class to distinguish flatMap from map in the transform stack.
      */
-    private record FlatMapMarker<S, M, R1, R2>(
-        Function<R1, Effect<S, M, R2>> binder,
+    private record FlatMapMarker<S, E, R1, R2>(
+        Function<R1, Effect<S, E, R2>> binder,
         M message,
         ActorContext context
     ) implements Function<Object, Object> {
