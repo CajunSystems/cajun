@@ -87,7 +87,7 @@ Effect<Integer, Throwable, Void> effect =
 ## Pattern Matching: Handling Different Messages
 
 Real actors need to handle multiple message types. Use `Effect.match()` to route messages.  
-**Note**: The Message type is specified at the match level, not in the Effect type:
+**Note**: The Message type is specified at the match level (4th type parameter), not in the Effect type:
 
 ```java
 // Message type (CounterMsg) is the 4th type parameter in match()
@@ -320,7 +320,8 @@ Once you've built your effect, turn it into an actor:
 import static com.cajunsystems.functional.ActorSystemEffectExtensions.*;
 
 // Create the effect
-Effect<Integer, CounterMsg, Void> counterEffect = Effect.match()
+Effect<Integer, Throwable, Void> counterEffect = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
     .when(Increment.class, (state, msg, ctx) -> 
         Effect.modify(s -> s + msg.amount()))
     .when(GetCount.class, (state, msg, ctx) ->
@@ -356,7 +357,8 @@ record CartState(Map<String, Double> items, double total) {
 }
 
 // Build the behavior
-Effect<CartState, CartMsg, Void> cartBehavior = Effect.match()
+Effect<CartState, Throwable, Void> cartBehavior = 
+    Effect.<CartState, Throwable, Void, CartMsg>match()
     .when(AddItem.class, (state, msg, ctx) ->
         Effect.modify(s -> {
             s.items().put(msg.item(), msg.price());
@@ -579,7 +581,7 @@ effect.orElse(fallbackEffect)       // Fallback effect
 Effect.attempt(() -> risky())       // Try risky operation
 
 // Pattern matching
-Effect.match()
+Effect.<State, Error, Result, Message>match()
     .when(Type1.class, handler1)
     .when(Type2.class, handler2)
     .otherwise(defaultHandler)

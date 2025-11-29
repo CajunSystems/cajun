@@ -318,7 +318,8 @@ Effect<State, Msg, Void> effect = Effect.logError("Error", throwable);
 ### Type-Based Routing
 
 ```java
-Effect<Integer, CounterMsg, Void> effect = Effect.match()
+Effect<Integer, Throwable, Void> effect = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
     .when(Increment.class, (state, msg, ctx) -> 
         Effect.modify(s -> s + msg.amount()))
     .when(Decrement.class, (state, msg, ctx) ->
@@ -435,8 +436,9 @@ record MyState(Pid otherActor, String data) implements Serializable {}
 ### 1. Use Type Inference
 
 ```java
-// Good - types inferred from variable declaration
-Effect<Integer, CounterMsg, Void> effect = Effect.match()
+// Good - explicit type parameters
+Effect<Integer, Throwable, Void> effect = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
     .when(Increment.class, (state, msg, ctx) ->
         Effect.modify(s -> s + msg.amount()))  // Types inferred
     .build();
@@ -508,7 +510,8 @@ Effect<State, Msg, Result> safe = riskyEffect
 
 ```java
 // Good - clear message routing
-Effect<State, Msg, Void> effect = Effect.match()
+Effect<State, Error, Void> effect = 
+    Effect.<State, Error, Void, Msg>match()
     .when(TypeA.class, handleTypeA)
     .when(TypeB.class, handleTypeB)
     .otherwise(Effect.log("Unknown"));

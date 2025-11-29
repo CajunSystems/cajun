@@ -254,11 +254,19 @@ public class MailboxProcessor<T> {
                 for (T msg : batchBuffer) {
                     if (!running) break;
                     if (restartRequested) {
-                        // Return unprocessed messages back to the front of the mailbox
-                        for (int i = processedCount; i < batchBuffer.size(); i++) {
-                            // Add back to front of mailbox to preserve message order
-                            // Note: This is a best-effort approach - if mailbox is full, messages may be lost
-                            mailbox.offer(batchBuffer.get(i));
+                        // Return unprocessed messages back to the mailbox
+                        // Note: Messages are returned in reverse order to preserve original order
+                        for (int i = batchBuffer.size() - 1; i >= processedCount; i--) {
+                            T unprocessedMsg = batchBuffer.get(i);
+                            try {
+                                // Use put() to block if mailbox is full, ensuring no message loss
+                                mailbox.put(unprocessedMsg);
+                            } catch (InterruptedException e) {
+                                logger.error("Actor {} interrupted while returning message to mailbox during restart: {}", 
+                                    actorId, unprocessedMsg, e);
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
                         }
                         break;
                     }

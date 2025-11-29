@@ -110,7 +110,7 @@ Effect<State, Msg, Result> createEffect() {
 }
 
 // 4. Inside lambda expressions with typed parameters
-Effect.match()
+Effect.<Integer, Throwable, Void, CounterMsg>match()
     .when(Increment.class, (Integer state, Increment msg, ActorContext ctx) ->
         Effect.modify(s -> s + msg.amount())  // Types inferred from lambda params
     );
@@ -140,8 +140,9 @@ var effect = Effect.<Integer, CounterMsg, Void>modify(s -> s + 1);  // Don't do 
 ### Example: Clean Type Inference
 
 ```java
-// Beautiful - no explicit type parameters needed!
-Effect<Integer, CounterMsg, String> counterEffect = Effect.match()
+// Explicit type parameters for clarity
+Effect<Integer, Throwable, String> counterEffect = 
+    Effect.<Integer, Throwable, String, CounterMsg>match()
     .when(Increment.class, (state, msg, ctx) ->
         Effect.modify(s -> s + msg.amount())              // Inferred
             .andThen(Effect.logState(s -> "Count: " + s)) // Inferred
@@ -381,8 +382,9 @@ public class CounterMessages {
     record GetCount(Pid replyTo) implements CounterMsg {}
 }
 
-// Define the behavior using effects - types inferred!
-Effect<Integer, CounterMsg, Void> counterBehavior = Effect.match()
+// Define the behavior using effects
+Effect<Integer, Throwable, Void> counterBehavior = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
     .when(Increment.class, (state, msg, ctx) -> 
         Effect.modify(s -> s + msg.amount())
             .andThen(Effect.logState(s -> "Counter incremented to: " + s))
@@ -408,7 +410,8 @@ Pid counter = system.functionalActorOf(counterBehavior, 0)
 ```java
 record User(String id, String name, int age) {}
 
-Effect<Map<String, User>, UserMsg, User> userService = Effect.match()
+Effect<Map<String, User>, Throwable, User> userService = 
+    Effect.<Map<String, User>, Throwable, User, UserMsg>match()
     .when(CreateUser.class, (state, msg, ctx) ->
         // Validate age
         Effect.pure(msg.user())
@@ -442,7 +445,8 @@ Effect<Map<String, User>, UserMsg, User> userService = Effect.match()
 ### Example 3: Workflow with Ask Pattern
 
 ```java
-Effect<WorkflowState, WorkflowMsg, String> workflowEffect = Effect.match()
+Effect<WorkflowState, Throwable, String> workflowEffect = 
+    Effect.<WorkflowState, Throwable, String, WorkflowMsg>match()
     .when(ProcessOrder.class, (state, msg, ctx) ->
         // Step 1: Validate order
         Effect.pure(msg.order())
@@ -693,8 +697,9 @@ BiFunction<Integer, CounterMsg, Integer> counterLogic = (state, message) -> {
 ### After (Monadic API)
 
 ```java
-// Type inference works! Only need to specify the Effect return type
-Effect<Integer, CounterMsg, Void> counterEffect = Effect.match()
+// Explicit type parameters for clarity
+Effect<Integer, Throwable, Void> counterEffect = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
     .when(Increment.class, (state, msg, ctx) ->
         // Java infers types from context - no explicit type parameters needed!
         Effect.modify(s -> s + msg.amount())
@@ -735,8 +740,8 @@ public class UserServiceActor {
         this.logger = logger;
     }
     
-    public Effect<Map<String, User>, UserMsg, User> behavior() {
-        return Effect.match()
+    public Effect<Map<String, User>, Throwable, User> behavior() {
+        return Effect.<Map<String, User>, Throwable, User, UserMsg>match()
             .when(CreateUser.class, (state, msg, ctx) ->
                 // Dependencies are just fields - simple and clear
                 Effect.modify(s -> {
