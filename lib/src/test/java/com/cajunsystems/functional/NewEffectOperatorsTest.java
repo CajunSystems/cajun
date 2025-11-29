@@ -471,4 +471,193 @@ class NewEffectOperatorsTest {
         
         assertEquals(30, result.state());  // (5 + 10) * 2
     }
+
+    // ============================================================================
+    // Filter Tests (Typed Error Factory)
+    // ============================================================================
+
+    @Test
+    void testFilter_passesWhenPredicateTrue() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(42)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Value must be positive, got: " + v));
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals(42, result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_failsWhenPredicateFalse() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(-5)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Value must be positive, got: " + v));
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertTrue(result.error().isPresent());
+        assertInstanceOf(IllegalArgumentException.class, result.error().get());
+        assertEquals("Value must be positive, got: -5", result.error().get().getMessage());
+    }
+
+    @Test
+    void testFilter_withCustomException() {
+        // Custom validation exception
+        class ValidationError extends Exception {
+            ValidationError(String field, Object value, String reason) {
+                super(String.format("%s: %s (got: %s)", field, reason, value));
+            }
+        }
+        
+        Effect<Integer, ValidationError, Integer> effect = 
+            Effect.<Integer, ValidationError, Integer>of(150)
+                .filter(v -> v <= 100, 
+                        v -> new ValidationError("age", v, "must be <= 100"));
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertTrue(result.error().isPresent());
+        assertInstanceOf(ValidationError.class, result.error().get());
+        assertEquals("age: must be <= 100 (got: 150)", result.error().get().getMessage());
+    }
+
+    @Test
+    void testFilter_chainedFilters() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(50)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Must be positive: " + v))
+                .filter(v -> v < 100, 
+                        v -> new IllegalArgumentException("Must be < 100: " + v))
+                .filter(v -> v % 2 == 0, 
+                        v -> new IllegalArgumentException("Must be even: " + v));
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals(50, result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_chainedFilters_failsOnSecond() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(150)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Must be positive: " + v))
+                .filter(v -> v < 100, 
+                        v -> new IllegalArgumentException("Must be < 100: " + v));
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Must be < 100: 150", result.error().get().getMessage());
+    }
+
+    @Test
+    void testFilter_withRecover() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(-5)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Value must be positive, got: " + v))
+                .recover(error -> {
+                    // Recover with default value
+                    return 0;
+                });
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals(0, result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_withHandleErrorWith() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(-5)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Value must be positive, got: " + v))
+                .handleErrorWith((error, state, msg, ctx) -> 
+                    Effect.of(Math.abs((Integer) msg))  // Use absolute value
+                );
+        
+        EffectResult<Integer, Integer> result = effect.run(0, -5, context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals(5, result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_preservesState() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException>modify(s -> s + 10)
+                .andThen(Effect.of(42))
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Invalid: " + v));
+        
+        EffectResult<Integer, Integer> result = effect.run(5, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals(15, result.state());  // State was modified
+        assertEquals(42, result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_withMap() {
+        Effect<Integer, IllegalArgumentException, String> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(42)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Must be positive: " + v))
+                .map(v -> "Value: " + v);
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals("Value: 42", result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_withFlatMap() {
+        Effect<Integer, IllegalArgumentException, String> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>of(10)
+                .filter(v -> v > 0, 
+                        v -> new IllegalArgumentException("Must be positive: " + v))
+                .flatMap(v -> Effect.of("Doubled: " + (v * 2)));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals("Doubled: 20", result.value().orElseThrow());
+    }
+
+    @Test
+    void testFilter_doesNotAffectNoResult() {
+        Effect<Integer, IllegalArgumentException, Void> effect = 
+            Effect.<Integer, IllegalArgumentException>modify(s -> s + 10)
+                .filter(v -> true,  // This won't be called for NoResult
+                        v -> new IllegalArgumentException("Should not happen"));
+        
+        EffectResult<Integer, Void> result = effect.run(5, "test", context);
+        
+        assertInstanceOf(EffectResult.NoResult.class, result);
+        assertEquals(15, result.state());
+    }
+
+    @Test
+    void testFilter_doesNotAffectFailure() {
+        Effect<Integer, IllegalArgumentException, Integer> effect = 
+            Effect.<Integer, IllegalArgumentException, Integer>fail(
+                new IllegalArgumentException("Original error"))
+                .filter(v -> true,  // This won't be called for Failure
+                        v -> new IllegalArgumentException("Should not happen"));
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Original error", result.error().get().getMessage());
+    }
 }

@@ -303,9 +303,17 @@ Effect<Integer, Msg, String> withFallback = risky
 Check conditions and handle invalid cases:
 
 ```java
-Effect<Integer, Msg, Integer> validated = 
+// Define a custom validation error
+record ValidationError(String field, Object value, String reason) extends Exception {
+    ValidationError(String field, Object value, String reason) {
+        super(String.format("%s: %s (got: %s)", field, reason, value));
+    }
+}
+
+Effect<Integer, ValidationError, Integer> validated = 
     Effect.of(value)
-        .filter(v -> v > 0, "Value must be positive")
+        .filter(v -> v > 0, 
+                v -> new ValidationError("amount", v, "must be positive"))
         .recover(error -> {
             ctx.getLogger().error("Validation failed: " + error.getMessage());
             return 0;
@@ -380,7 +388,8 @@ Effect<CartState, Throwable, Void> cartBehavior =
     
     .when(Checkout.class, (state, msg, ctx) ->
         Effect.of(state.total())
-            .filter(total -> total > 0, "Cart is empty")
+            .filter(total -> total > 0, 
+                    total -> new IllegalStateException("Cart is empty, total: " + total))
             .flatMap(total -> 
                 Effect.tell(paymentService, new ProcessPayment(total))
                     .andThen(Effect.setState(new CartState()))
@@ -416,7 +425,8 @@ The key insight: **You're describing what should happen, not manually doing it**
 
 ```java
 Effect.of(input)
-    .filter(i -> i.isValid(), "Invalid input")
+    .filter(i -> i.isValid(), 
+            i -> new ValidationException("Input validation failed: " + i))
     .map(i -> i.process())
     .flatMap(result -> 
         Effect.modify(s -> s.update(result))

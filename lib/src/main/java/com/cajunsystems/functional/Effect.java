@@ -274,6 +274,58 @@ public interface Effect<S, E, R> {
     // Validation
     // ============================================================================
     
+    /**
+     * Filters the result value based on a predicate. If the predicate fails,
+     * the effect fails with an error created by the error factory.
+     * 
+     * <p>The error factory receives the value that failed validation, allowing
+     * you to create rich, context-aware error messages.
+     * 
+     * <p>Example with custom exception:
+     * <pre>{@code
+     * record ValidationError(String field, Object value, String reason) extends Exception {
+     *     ValidationError(String field, Object value, String reason) {
+     *         super(String.format("%s validation failed: %s (value: %s)", field, reason, value));
+     *     }
+     * }
+     * 
+     * Effect<State, ValidationError, Integer> validated = 
+     *     Effect.of(value)
+     *         .filter(v -> v > 0, 
+     *                 v -> new ValidationError("amount", v, "must be positive"));
+     * }</pre>
+     * 
+     * @param predicate the predicate to test the result value
+     * @param errorFactory function that creates an error from the failed value
+     * @return an effect that fails if the predicate is not satisfied
+     */
+    default Effect<S, E, R> filter(
+            Predicate<R> predicate,
+            Function<R, ? extends E> errorFactory) {
+        return (state, message, context) -> 
+            runT(state, message, context).map(result -> {
+                if (result instanceof EffectResult.Success<S, R> success) {
+                    R value = success.value().orElseThrow();
+                    if (predicate.test(value)) {
+                        return result;
+                    } else {
+                        E error = errorFactory.apply(value);
+                        // Cast to Throwable - E must extend Throwable for Effect to work
+                        return EffectResult.failure(success.state(), (Throwable) error);
+                    }
+                }
+                return result;
+            });
+    }
+    
+    /**
+     * Filters the state based on a predicate. If the predicate fails,
+     * falls back to an alternative effect.
+     * 
+     * @param predicate the predicate to test the state
+     * @param fallback the effect to run if predicate fails
+     * @return an effect that uses fallback if the predicate is not satisfied
+     */
     default Effect<S, E, R> filterOrElse(
             Predicate<S> predicate,
             Effect<S, E, R> fallback) {

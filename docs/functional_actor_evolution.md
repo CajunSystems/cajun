@@ -415,7 +415,8 @@ Effect<Map<String, User>, Throwable, User> userService =
     .when(CreateUser.class, (state, msg, ctx) ->
         // Validate age
         Effect.pure(msg.user())
-            .filter(u -> u.age() >= 18, "User must be 18 or older")
+            .filter(u -> u.age() >= 18, 
+                    u -> new IllegalArgumentException("User must be 18 or older, got age: " + u.age()))
             .flatMap(user -> 
                 // Check if user exists
                 state.containsKey(user.id())
@@ -437,7 +438,8 @@ Effect<Map<String, User>, Throwable, User> userService =
     )
     .when(GetUser.class, (state, msg, ctx) ->
         Effect.pure(state.get(msg.userId()))
-            .filter(Objects::nonNull, "User not found")
+            .filter(Objects::nonNull, 
+                    u -> new IllegalStateException("User not found: " + msg.userId()))
             .tap(user -> ctx.getLogger().info("Retrieved user: " + user.id()))
     );
 ```
@@ -450,7 +452,8 @@ Effect<WorkflowState, Throwable, String> workflowEffect =
     .when(ProcessOrder.class, (state, msg, ctx) ->
         // Step 1: Validate order
         Effect.pure(msg.order())
-            .filter(order -> order.total() > 0, "Order total must be positive")
+            .filter(order -> order.total() > 0, 
+                    order -> new IllegalArgumentException("Order total must be positive, got: " + order.total()))
             
             // Step 2: Check inventory (ask pattern)
             .flatMap(order ->
@@ -708,7 +711,8 @@ Effect<Integer, Throwable, Void> counterEffect =
     )
     .when(Decrement.class, (state, msg, ctx) ->
         Effect.modify(s -> Math.max(0, s - msg.amount()))
-            .filter(s -> s >= 0, "Count cannot be negative")
+            .filter(s -> s >= 0, 
+                    s -> new IllegalStateException("Count cannot be negative: " + s))
             .andThen(Effect.logState(s -> "Count: " + s))
             .recover(error -> {
                 ctx.getLogger().error("Error", error);

@@ -225,11 +225,18 @@ Effect<Integer, Throwable, Integer> safe =
 
 ## Filtering and Validation
 
-### filter() - Validate with Error
+### filter() - Validate Result Value
 
 ```java
-Effect<Integer, Throwable, Integer> validated = 
-    effect.filter(count -> count > 0, "Count must be positive");
+// With typed error
+Effect<Integer, ValidationException, Integer> validated = 
+    effect.filter(count -> count > 0, 
+                  count -> new ValidationException("Count must be positive, got: " + count));
+
+// With standard exception
+Effect<Integer, IllegalArgumentException, Integer> validated2 = 
+    effect.filter(count -> count > 0, 
+                  count -> new IllegalArgumentException("Invalid count: " + count));
 ```
 
 ### filterOrElse() - Validate with Custom Fallback
@@ -342,9 +349,10 @@ Effect<State, Msg, Void> conditional = Effect.when(
 ### Multi-Step Processing
 
 ```java
-Effect<State, Msg, String> workflow = Effect.of(data)
+Effect<State, Throwable, String> workflow = Effect.of(data)
     .tap(d -> ctx.getLogger().info("Processing: " + d))
-    .filter(d -> d.isValid(), "Invalid data")
+    .filter(d -> d.isValid(), 
+            d -> new IllegalStateException("Invalid data: " + d))
     .map(d -> d.transform())
     .flatMap(transformed -> 
         Effect.modify(s -> s.update(transformed))
@@ -358,8 +366,9 @@ Effect<State, Msg, String> workflow = Effect.of(data)
 ### With Ask Pattern
 
 ```java
-Effect<State, Msg, Result> workflow = Effect.of(order)
-    .filter(o -> o.total() > 0, "Invalid order")
+Effect<State, Throwable, Result> workflow = Effect.of(order)
+    .filter(o -> o.total() > 0, 
+            o -> new IllegalArgumentException("Invalid order total: " + o.total()))
     .flatMap(order ->
         Effect.ask(inventoryActor, new CheckStock(order.items()), Duration.ofSeconds(5))
             .map(inStock -> new Tuple2<>(order, inStock)))
@@ -448,9 +457,9 @@ Effect<Integer, Throwable, Void> effect =
 
 ```java
 // Good - fluent chaining
-Effect<State, Msg, Result> effect = Effect.of(value)
+Effect<State, Throwable, Result> effect = Effect.of(value)
     .map(transform)
-    .filter(validate, "Invalid")
+    .filter(validate, v -> new ValidationException("Invalid value: " + v))
     .tap(log)
     .recover(handleError);
 ```
