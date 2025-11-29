@@ -703,9 +703,14 @@ The `StatefulHandler` interface provides lifecycle methods:
 
 ### Functional Actors with Effects
 
-**New in Cajun**: Build actors using composable Effects for a more functional programming style.
+**New in Cajun**: Build actors using composable Effects with **typed error channels** and **stack safety**.
 
 Effects provide a powerful way to build actor behaviors by composing simple operations into complex workflows. Think of Effects as recipes that describe what your actor should do.
+
+**Latest improvements:**
+- 🎯 **Typed error channels** (like ZIO/cats-effect): `Effect<State, Error, Result>`
+- 🔒 **Stack-safe execution**: Deep chains of map/flatMap won't overflow
+- 🎨 **Cleaner signatures**: Message type only appears in pattern matching
 
 #### Quick Example
 
@@ -719,19 +724,21 @@ record Decrement(int amount) implements CounterMsg {}
 record GetCount(Pid replyTo) implements CounterMsg {}
 
 // Build behavior using effects
-Effect<Integer, CounterMsg, Void> counterBehavior = Effect.match()
-    .when(Increment.class, (state, msg, ctx) -> 
-        Effect.modify(s -> s + msg.amount())
-            .andThen(Effect.logState(s -> "Count: " + s)))
-    
-    .when(Decrement.class, (state, msg, ctx) ->
-        Effect.modify(s -> s - msg.amount())
-            .andThen(Effect.logState(s -> "Count: " + s)))
-    
-    .when(GetCount.class, (state, msg, ctx) ->
-        Effect.tell(msg.replyTo(), state))
-    
-    .build();
+// Note: Effect<State, Error, Result> with Message type in match()
+Effect<Integer, Throwable, Void> counterBehavior =
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) ->
+            Effect.modify(s -> s + msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+
+        .when(Decrement.class, (state, msg, ctx) ->
+            Effect.modify(s -> s - msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+
+        .when(GetCount.class, (state, msg, ctx) ->
+            Effect.tell(msg.replyTo(), state))
+
+        .build();
 
 // Create actor from effect
 Pid counter = fromEffect(system, counterBehavior, 0)
@@ -745,7 +752,9 @@ counter.tell(new Increment(5));
 #### Why Use Effects?
 
 - **Composable**: Build complex behaviors from simple building blocks
-- **Type-safe**: Compile-time checking of state and message types
+- **Type-safe**: Compile-time checking of state, error, and result types
+- **Typed errors**: Use custom error types like `sealed interface AppError` for better error handling
+- **Stack-safe**: Chain 10,000+ map/flatMap operations without stack overflow
 - **Testable**: Pure functions that are easy to test without spawning actors
 - **Error handling**: Explicit error recovery with `.recover()` and `.orElse()`
 - **Readable**: Declarative style makes intent clear
