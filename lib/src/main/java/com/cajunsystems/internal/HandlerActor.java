@@ -88,10 +88,8 @@ public class HandlerActor<Message> extends Actor<Message> {
     }
     
     @Override
-    protected void handleException(Message message, Throwable exception) {
-        boolean handled = handler.onError(message, exception, context);
-        if (!handled) {
-            super.handleException(message, exception);
-        }
+    protected boolean onError(Message message, Throwable exception) {
+        // Delegate to handler to get shouldReprocess flag
+        return handler.onError(message, exception, context);
     }
 }

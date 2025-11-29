@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Effect Monad for Functional Actors**: Complete functional programming API for actor behaviors
+  - **Stack-Safe**: Uses Trampoline for unbounded effect composition without stack overflow
+  - **Type-Safe Error Handling**: `Effect<State, Error, Result>` with explicit error channel
+  - **Composable Operations**: `map`, `flatMap`, `andThen`, `filter`, `recover`, `zip`, `parZip`
+  - **Request-Response Pattern**: `Effect.ask(pid, message, timeout)` for actor communication
+  - **Checked Exception Support**: `Effect.attempt(() -> ...)` with `ThrowingSupplier` interface
+  - **Pattern Matching**: `Effect.match()` with type-safe message routing at match level
+  - **Parallel Execution**: `parSequence`, `parZip`, `parTraverse`, `race`, `withTimeout` for concurrent operations
+  - **Conditional Logic**: `Effect.when(predicate, effect, fallback)` for conditional execution
+  - **Resource Management**: `bracket` for safe acquire/use/release patterns
+  - **Retry Logic**: `retry(maxAttempts, initialDelay)` with exponential backoff
+  - **Lazy Evaluation**: `suspend` for deferred computations
+  - **Time Control**: `delay(duration)` for suspending execution
+  - **Future Integration**: `fromFuture` for CompletableFuture interop
+  - **Guaranteed Cleanup**: `ensure` for finalizers that always run
+  - **Virtual Thread Optimized**: Natural blocking code without CompletableFuture complexity
+  - **Factory Methods**: `of`, `pure`, `state`, `modify`, `setState`, `identity`, `fail`, `attempt`, `suspend`, `delay`
+  - **Messaging**: `tell`, `tellSelf`, `ask` for actor communication
+  - **Logging**: `log`, `logError`, `logState` for debugging
+  - **Documentation**: Comprehensive guides with failure semantics, cancellation semantics, and evaluation strategy
+
+- **3-Tier Ask Pattern**: Flexible request-response API with multiple access patterns
+  - **Tier 1 - Direct Future**: `CompletableFuture<Response> future = system.ask(pid, request, timeout)`
+    - Raw CompletableFuture for maximum flexibility
+    - Compose with other futures using standard Java API
+  - **Tier 2 - Reply Wrapper**: `Reply<Response> reply = pid.ask(request, timeout)`
+    - Convenience methods: `get()`, `getOrElse(default)`, `getOrThrow()`
+    - Functional operations: `map()`, `flatMap()`, `filter()`, `recover()`
+    - Wraps CompletableFuture with ergonomic API
+  - **Tier 3 - Effect Integration**: `Effect.ask(pid, request, timeout)`
+    - Seamless integration with Effect monad
+    - Automatic error handling and state threading
+    - Suspension point for virtual threads
+  - All tiers share the same underlying promise-based implementation
+  - Choose the right abstraction level for your use case
+
+### Changed
+- **Effect Type Signature**: Simplified from `Effect<State, Message, Result>` to `Effect<State, Error, Result>`
+  - Message type moved to match level: `Effect.<S, E, R, Message>match()`
+  - Cleaner type signatures for effect composition
+  - Error type is now explicit (typically `Throwable` or custom exception types)
+
+### Documentation
+- Added **Effect Monad Guide** (`docs/effect_monad_guide.md`) - Beginner-friendly introduction
+- Added **Effect API Reference** (`docs/effect_monad_api.md`) - Complete API documentation
+- Added **Functional Actor Evolution** (`docs/functional_actor_evolution.md`) - Advanced patterns
+- Updated **README.md** with Effect examples and Virtual Threads advantages
+- Added Mermaid diagrams for effect pipeline visualization
+
 ## [0.3.1] - 2025-11-24
 
 ### Fixed

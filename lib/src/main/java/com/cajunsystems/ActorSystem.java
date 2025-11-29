@@ -4,7 +4,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.time.Duration;
 import java.util.function.Consumer;
@@ -59,7 +58,46 @@ public class ActorSystem {
      * Internal wrapper for messages that includes sender context.
      * This is used to pass sender information through the mailbox.
      */
-    public record MessageWithSender<T>(T message, String sender) {}
+    static final class MessageWithSender<T> {
+        private final T message;
+        private final String sender;
+
+        private MessageWithSender(T message, String sender) {
+            this.message = message;
+            this.sender = sender;
+        }
+
+        T message() {
+            return message;
+        }
+
+        String sender() {
+            return sender;
+        }
+    }
+
+    public static boolean isMessageWithSender(Object message) {
+        return message instanceof MessageWithSender<?>;
+    }
+
+    public static String extractSender(Object message) {
+        if (message instanceof MessageWithSender<?> wrapped) {
+            return wrapped.sender();
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T unwrapMessage(Object message) {
+        if (message instanceof MessageWithSender<?> wrapped) {
+            return (T) wrapped.message();
+        }
+        throw new IllegalArgumentException("Message is not wrapped with sender context");
+    }
+
+    public static <T> Object wrapWithSender(T message, String sender) {
+        return new MessageWithSender<>(message, sender);
+    }
 
     /**
      * Internal structure to hold pending ask requests with their futures and timeout tasks.
@@ -738,82 +776,90 @@ public class ActorSystem {
     
     public void shutdown() {
         logger.info("Shutting down all actors in the system");
-        
-        // Get a copy of all actor IDs to avoid ConcurrentModificationException
+
         List<String> actorIds = new ArrayList<>(actors.keySet());
-        
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
-            // Submit shutdown task for each actor
-            for (String actorId : actorIds) {
-                scope.fork(() -> {
-                    Actor<?> actor = actors.get(actorId);
-                    if (actor != null && actor.isRunning()) {
-                        try {
-                            actor.stop();
-                            logger.debug("Actor {} shut down successfully", actorId);
-                        } catch (Exception e) {
-                            logger.warn("Error shutting down actor {}", actorId, e);
-                            throw e; // Propagate exception to the scope
-                        }
-                    }
-                    return null;
-                });
+
+        try {
+            stopActors(actorIds);
+
+            // Clear the actor registry
+            actors.clear();
+
+            // Cancel any scheduled messages
+            for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
+                future.cancel(true);
             }
-            
+            pendingDelayedMessages.clear();
+
+            // Cancel any pending ask requests
+            for (PendingAskRequest<?> pending : pendingAskRequests.values()) {
+                if (pending.completed.compareAndSet(false, true)) {
+                    pending.timeoutTask.cancel(true);
+                    pending.future.completeExceptionally(
+                        new IllegalStateException("Actor system is shutting down"));
+                }
+            }
+            pendingAskRequests.clear();
+
+            // Shutdown the delay scheduler
+            safeShutdownScheduler(delayScheduler);
+
+            // Shutdown the shared executor if it exists
+            safeShutdownScheduler(sharedExecutor);
+
+            // Signal the keep-alive thread to exit
+            shutdownLatch.countDown();
+
+            // Wait for keep-alive thread to finish (with timeout)
             try {
-                // Wait for all tasks to complete or fail
-                scope.join();
-                // Ensure no failures occurred
-                scope.throwIfFailed(e -> new RuntimeException("Error during actor system shutdown", e));
-                
-                // Clear the actor registry
-                actors.clear();
-                
-                // Cancel any scheduled messages
-                for (ScheduledFuture<?> future : pendingDelayedMessages.values()) {
-                    future.cancel(true);
+                if (!keepAliveThread.join(Duration.ofSeconds(2))) {
+                    logger.warn("Keep-alive thread did not exit within timeout");
+                    keepAliveThread.interrupt();
                 }
-                pendingDelayedMessages.clear();
-                
-                // Cancel any pending ask requests
-                for (PendingAskRequest<?> pending : pendingAskRequests.values()) {
-                    if (pending.completed.compareAndSet(false, true)) {
-                        pending.timeoutTask.cancel(true);
-                        pending.future.completeExceptionally(
-                            new IllegalStateException("Actor system is shutting down"));
-                    }
-                }
-                pendingAskRequests.clear();
-
-                // Shutdown the delay scheduler
-                safeShutdownScheduler(delayScheduler);
-
-                // Shutdown the shared executor if it exists
-                safeShutdownScheduler(sharedExecutor);
-                
-                // Signal the keep-alive thread to exit
-                shutdownLatch.countDown();
-                
-                // Wait for keep-alive thread to finish (with timeout)
-                try {
-                    if (!keepAliveThread.join(Duration.ofSeconds(2))) {
-                        logger.warn("Keep-alive thread did not exit within timeout");
-                        keepAliveThread.interrupt();
-                    }
-                } catch (InterruptedException e) {
-                    logger.warn("Interrupted while waiting for keep-alive thread");
-                    Thread.currentThread().interrupt();
-                }
-
-                logger.info("Actor system shut down successfully");
             } catch (InterruptedException e) {
-                logger.error("Actor system shutdown was interrupted", e);
+                logger.warn("Interrupted while waiting for keep-alive thread");
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Actor system shutdown was interrupted", e);
             }
+
+            logger.info("Actor system shut down successfully");
+        } catch (InterruptedException e) {
+            logger.error("Actor system shutdown was interrupted", e);
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Actor system shutdown was interrupted", e);
         } catch (Exception e) {
             logger.error("Error during actor system shutdown", e);
             throw new RuntimeException("Error during actor system shutdown: " + e.getMessage(), e);
+        }
+    }
+
+    private void stopActors(List<String> actorIds) throws InterruptedException {
+        if (actorIds.isEmpty()) {
+            return;
+        }
+
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<CompletableFuture<Void>> futures = new ArrayList<>(actorIds.size());
+            for (String actorId : actorIds) {
+                futures.add(CompletableFuture.runAsync(() -> stopActor(actorId), executor));
+            }
+            CompletableFuture<Void> combined = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+            combined.get();
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new RuntimeException("Error shutting down actors", cause);
+        }
+    }
+
+    private void stopActor(String actorId) {
+        Actor<?> actor = actors.get(actorId);
+        if (actor != null && actor.isRunning()) {
+            try {
+                actor.stop();
+                logger.debug("Actor {} shut down successfully", actorId);
+            } catch (Exception e) {
+                logger.warn("Error shutting down actor {}", actorId, e);
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -864,10 +910,17 @@ public class ActorSystem {
                     Actor<Object> typedActor = (Actor<Object>) actor;
                     typedActor.tell(wrappedMessage);
                 } else {
-                    // Normal message routing without sender context
+                    Object messageToDeliver = message;
+                    if (!(message instanceof MessageWithSender<?>)) {
+                        String currentActorId = Actor.getCurrentExecutingActor();
+                        if (currentActorId != null) {
+                            messageToDeliver = new MessageWithSender<>(message, currentActorId);
+                        }
+                    }
+
                     @SuppressWarnings("unchecked")
-                    Actor<Message> typedActor = (Actor<Message>) actor;
-                    typedActor.tell(message);
+                    Actor<Object> typedActor = (Actor<Object>) actor;
+                    typedActor.tell(messageToDeliver);
                 }
             } catch (ClassCastException e) {
                 logger.warn("Failed to route message to actor {}: Message type mismatch", actorId, e);

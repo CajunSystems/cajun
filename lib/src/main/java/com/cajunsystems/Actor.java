@@ -57,6 +57,21 @@ public abstract class Actor<Message> {
     // Sender context for ask pattern - stores the actor ID of the sender/replyTo
     private final ThreadLocal<String> senderContext = new ThreadLocal<>();
 
+    // Tracks the actor currently executing on this thread so tell() can propagate sender info
+    private static final ThreadLocal<String> currentExecutingActor = new ThreadLocal<>();
+
+    static void setCurrentExecutingActor(String actorId) {
+        currentExecutingActor.set(actorId);
+    }
+
+    static void clearCurrentExecutingActor() {
+        currentExecutingActor.remove();
+    }
+
+    static String getCurrentExecutingActor() {
+        return currentExecutingActor.get();
+    }
+
     /**
      * Gets the current number of messages in the mailbox.
      *
@@ -259,22 +274,27 @@ public abstract class Actor<Message> {
 
                     @Override
                     public void receive(Message message) {
-                        // Check if this is a MessageWithSender wrapper
-                        if (message instanceof ActorSystem.MessageWithSender<?>(Object message1, String sender)) {
-                            // Set sender context
-                            setSender(sender);
-                            try {
-                                @SuppressWarnings("unchecked")
-                                Message unwrapped = (Message) message1;
-                                Actor.this.receive(unwrapped);
-                            } finally {
-                                // Clear sender context
-                                clearSender();
+                        setCurrentExecutingActor(actorId);
+                        try {
+                            // Check if this is a MessageWithSender wrapper
+                            if (message instanceof ActorSystem.MessageWithSender<?> wrapped) {
+                                // Set sender context
+                                setSender(wrapped.sender());
+                                try {
+                                    @SuppressWarnings("unchecked")
+                                    Message unwrapped = (Message) wrapped.message();
+                                    Actor.this.receive(unwrapped);
+                                } finally {
+                                    // Clear sender context
+                                    clearSender();
+                                }
+                            } else {
+                                Actor.this.receive(message);
                             }
-                        } else {
-                            Actor.this.receive(message);
+                            lastProcessingTimestamp.set(System.currentTimeMillis());
+                        } finally {
+                            clearCurrentExecutingActor();
                         }
-                        lastProcessingTimestamp.set(System.currentTimeMillis());
                     }
 
                     @Override
@@ -497,7 +517,7 @@ public abstract class Actor<Message> {
         String originalSender = senderContext.get();
         if (originalSender != null) {
             // Wrap the message with the original sender context
-            ActorSystem.MessageWithSender<T> wrapped = new ActorSystem.MessageWithSender<>(message, originalSender);
+            Object wrapped = ActorSystem.wrapWithSender(message, originalSender);
             system.routeMessage(target.actorId(), wrapped);
         } else {
             // No sender context, just send normally
@@ -551,6 +571,38 @@ public abstract class Actor<Message> {
             parent.removeChild(actorId);
         }
         system.shutdown(actorId);
+    }
+
+    /**
+     * Stops the actor for restart, preserving pending messages in the mailbox.
+     * This is used by the supervision system during RESTART strategy.
+     * Note: This is called from within the mailbox loop after it exits, so running=false already.
+     */
+    void stopForRestart() {
+        logger.debug("Stopping actor {} for restart (preserving mailbox)", actorId);
+
+        // Stop all children first
+        for (Actor<?> child : new ConcurrentHashMap<>(children).values()) {
+            logger.debug("Stopping child actor {} of parent {}", child.getActorId(), actorId);
+            child.stop();
+        }
+
+        // Stop mailbox processing WITHOUT clearing messages
+        // Note: running is already false at this point, but we still need to call stop
+        // to clean up the thread reference and call postStop lifecycle
+        mailboxProcessor.stop(false);
+
+        // Note: Don't clean up hierarchy or system - this is a restart, not a full stop
+    }
+
+    /**
+     * Requests a restart of this actor. The restart will happen after the current batch completes.
+     * This method is used by the supervision system to avoid ConcurrentModificationException.
+     *
+     * @param restartCallback The callback to execute for the restart
+     */
+    void requestRestart(Runnable restartCallback) {
+        mailboxProcessor.requestRestart(restartCallback);
     }
 
     /**

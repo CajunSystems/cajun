@@ -1,6 +1,7 @@
 package com.cajunsystems.internal;
 
 import com.cajunsystems.*;
+import com.cajunsystems.builder.ActorBuilder;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ResizableMailboxConfig;
@@ -107,13 +108,11 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
     }
     
     @Override
-    protected void handleException(Message message, Throwable exception) {
+    protected boolean onError(Message message, Throwable exception) {
         // Create context - sender will be retrieved from asyncSenderContext ThreadLocal
         ActorContext context = new StatefulActorContext(this);
-        boolean handled = handler.onError(message, getState(), exception, context);
-        if (!handled) {
-            super.handleException(message, exception);
-        }
+        // Delegate to handler to get shouldReprocess flag
+        return handler.onError(message, getState(), exception, context);
     }
 
     /**
@@ -159,14 +158,22 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
         }
 
         @Override
-        public <T> Pid createChild(Class<?> handlerClass, String childId) {
+        public <Message> ActorBuilder<Message> childBuilder(Class<? extends Handler<Message>> handlerClass) {
             ActorSystem system = statefulActor.getSystem();
+            if (!Handler.class.isAssignableFrom(handlerClass)) {
+                throw new IllegalArgumentException("Only Handler-based actors can be created as children. Use Handler or StatefulHandler interface.");
+            }
+            return system.actorOf(handlerClass)
+                    .withParent(statefulActor);
+        }
+
+        @Override
+        public <T> Pid createChild(Class<?> handlerClass, String childId) {
             if (Handler.class.isAssignableFrom(handlerClass)) {
                 @SuppressWarnings("unchecked")
                 Class<? extends Handler<Object>> handlerType =
                     (Class<? extends Handler<Object>>) handlerClass;
-                return system.actorOf(handlerType)
-                        .withParent(statefulActor)
+                return childBuilder(handlerType)
                         .withId(childId)
                         .spawn();
             } else {
@@ -176,14 +183,11 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
 
         @Override
         public <T> Pid createChild(Class<?> handlerClass) {
-            ActorSystem system = statefulActor.getSystem();
             if (Handler.class.isAssignableFrom(handlerClass)) {
                 @SuppressWarnings("unchecked")
                 Class<? extends Handler<Object>> handlerType =
                     (Class<? extends Handler<Object>>) handlerClass;
-                return system.actorOf(handlerType)
-                        .withParent(statefulActor)
-                        .spawn();
+                return childBuilder(handlerType).spawn();
             } else {
                 throw new IllegalArgumentException("Only Handler-based actors can be created as children. Use Handler or StatefulHandler interface.");
             }
@@ -236,8 +240,7 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
             // Forward with captured sender context from asyncSenderContext
             String senderActorId = statefulActor.getAsyncSenderContext();
             if (senderActorId != null) {
-                ActorSystem.MessageWithSender<T> wrapped =
-                    new ActorSystem.MessageWithSender<>(message, senderActorId);
+                Object wrapped = ActorSystem.wrapWithSender(message, senderActorId);
                 statefulActor.getSystem().routeMessage(target.actorId(), wrapped);
             } else {
                 statefulActor.getSystem().routeMessage(target.actorId(), message);
