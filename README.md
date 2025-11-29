@@ -801,8 +801,7 @@ Effect.attempt(() -> {
 
 - **[Effect Monad Guide](docs/effect_monad_guide.md)** - Beginner-friendly introduction with examples
 - **[Effect API Reference](docs/effect_monad_api.md)** - Complete API documentation
-- **[Effect Refactoring Guide](docs/effect_refactoring_guide.md)** - Migration guide for the new stack-safe API
-- **[Functional Actor Evolution](docs/functional_actor_evolution.md)** - Advanced patterns and migration guide
+- **[Functional Actor Evolution](docs/functional_actor_evolution.md)** - Advanced patterns and best practices
 
 ### Using the Actor System
 

@@ -1,8 +1,5 @@
 # Building Actors with Effects
 
-> **🎉 Updated for Latest Version**: Effect is now stack-safe with simplified type signature!  
-> See the [Effect Refactoring Guide](effect_refactoring_guide.md) for migration details.
-
 ## What are Effects?
 
 Think of an **Effect** as a recipe for what your actor should do when it receives a message. Just like a cooking recipe tells you the steps to make a dish, an Effect tells the actor:
@@ -553,9 +550,11 @@ Effect.ask(service1, request1, timeout)
         combineResults(r1, r2)
     );
 
-// ✅ Spawn a child actor for long-running work
-Effect.spawn(WorkerActor.class, initialState, workerBehavior)
-    .flatMap(worker -> Effect.tell(worker, new DoWork(data)));
+// ✅ Spawn a child actor for long-running work (use context)
+Effect.attempt(() -> {
+    Pid worker = fromEffect(ctx.system(), workerBehavior, initialState).spawn();
+    return worker;
+}).flatMap(worker -> Effect.tell(worker, new DoWork(data)));
 ```
 
 ## Tips for Beginners
@@ -617,6 +616,5 @@ Remember: Effects are just descriptions of what to do. They don't execute until 
 ## Learn More
 
 - **[Effect API Reference](effect_monad_api.md)** - Complete API documentation with all operators
-- **[Effect Refactoring Guide](effect_refactoring_guide.md)** - Migration guide for the new stack-safe API
-- **[ThrowableEffect API](throwable_effect_api.md)** - Documentation for the simpler ThrowableEffect alternative
+- **[Functional Actor Evolution](functional_actor_evolution.md)** - Advanced patterns and best practices
 - **[Checked Exception Tests](../lib/src/test/java/com/cajunsystems/functional/EffectCheckedExceptionTest.java)** - Examples of using checked exceptions with Effect

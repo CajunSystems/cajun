@@ -214,6 +214,42 @@ public interface Effect<S, E, R> {
         return of(value);
     }
     
+    /**
+     * Conditional effect execution. Runs the effect if the predicate is true,
+     * otherwise runs the fallback effect.
+     * 
+     * @param predicate the condition to test
+     * @param effect the effect to run if predicate is true
+     * @param fallback the effect to run if predicate is false
+     * @return an effect that conditionally executes based on the predicate
+     */
+    static <S, E, R> Effect<S, E, R> when(
+            Predicate<Object> predicate,
+            Effect<S, E, R> effect,
+            Effect<S, E, R> fallback) {
+        return (state, message, context) -> {
+            if (predicate.test(message)) {
+                return effect.runT(state, message, context);
+            } else {
+                return fallback.runT(state, message, context);
+            }
+        };
+    }
+    
+    /**
+     * Conditional effect execution. Runs the effect if the predicate is true,
+     * otherwise does nothing.
+     * 
+     * @param predicate the condition to test
+     * @param effect the effect to run if predicate is true
+     * @return an effect that conditionally executes based on the predicate
+     */
+    static <S, E> Effect<S, E, Void> when(
+            Predicate<Object> predicate,
+            Effect<S, E, Void> effect) {
+        return when(predicate, effect, identity());
+    }
+    
     // ============================================================================
     // Monadic Operations - Stack-Safe
     // ============================================================================

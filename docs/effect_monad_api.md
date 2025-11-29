@@ -1,8 +1,5 @@
 # Effect Monad API Guide
 
-> **🎉 New in Latest Version**: Effect has been refactored for stack safety and simplicity!  
-> See the [Effect Refactoring Guide](effect_refactoring_guide.md) for migration details.
-
 ## Overview
 
 The Effect monad provides a composable, type-safe, **stack-safe** way to build actor behaviors using functional programming patterns. It integrates seamlessly with Java's Stream API and reactive libraries while maintaining the actor-oriented nature of Cajun.

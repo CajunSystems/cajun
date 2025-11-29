@@ -720,4 +720,132 @@ class NewEffectOperatorsTest {
         assertEquals(result1.value(), result2.value());
         assertEquals(result1.state(), result2.state());
     }
+
+    // ============================================================================
+    // Effect.when (Conditional Execution) Tests
+    // ============================================================================
+
+    @Test
+    void testWhen_executesEffectWhenPredicateTrue() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.when(
+                msg -> msg.equals("execute"),
+                Effect.of("executed"),
+                Effect.of("fallback")
+            );
+        
+        EffectResult<Integer, String> result = effect.run(0, "execute", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals("executed", result.value().orElseThrow());
+    }
+
+    @Test
+    void testWhen_executesFallbackWhenPredicateFalse() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.when(
+                msg -> msg.equals("execute"),
+                Effect.of("executed"),
+                Effect.of("fallback")
+            );
+        
+        EffectResult<Integer, String> result = effect.run(0, "other", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals("fallback", result.value().orElseThrow());
+    }
+
+    @Test
+    void testWhen_withStateModification() {
+        Effect<Integer, Throwable, Void> effect = 
+            Effect.when(
+                msg -> ((String) msg).startsWith("inc"),
+                Effect.modify(s -> s + 10),
+                Effect.modify(s -> s - 5)
+            );
+        
+        EffectResult<Integer, Void> result1 = effect.run(100, "increment", context);
+        assertEquals(110, result1.state());
+        
+        EffectResult<Integer, Void> result2 = effect.run(100, "other", context);
+        assertEquals(95, result2.state());
+    }
+
+    @Test
+    void testWhen_twoArgOverload_executesWhenTrue() {
+        Effect<Integer, Throwable, Void> effect = 
+            Effect.when(
+                msg -> msg.equals("process"),
+                Effect.modify(s -> s + 1)
+            );
+        
+        EffectResult<Integer, Void> result = effect.run(5, "process", context);
+        
+        assertEquals(6, result.state());
+    }
+
+    @Test
+    void testWhen_twoArgOverload_doesNothingWhenFalse() {
+        Effect<Integer, Throwable, Void> effect = 
+            Effect.when(
+                msg -> msg.equals("process"),
+                Effect.modify(s -> s + 1)
+            );
+        
+        EffectResult<Integer, Void> result = effect.run(5, "skip", context);
+        
+        assertEquals(5, result.state());  // State unchanged
+        assertInstanceOf(EffectResult.NoResult.class, result);
+    }
+
+    @Test
+    void testWhen_canBeChained() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>when(
+                msg -> msg.equals("start"),
+                Effect.of("started"),
+                Effect.of("skipped")
+            )
+            .map(s -> s.toUpperCase());
+        
+        EffectResult<Integer, String> result1 = effect.run(0, "start", context);
+        assertEquals("STARTED", result1.value().orElseThrow());
+        
+        EffectResult<Integer, String> result2 = effect.run(0, "other", context);
+        assertEquals("SKIPPED", result2.value().orElseThrow());
+    }
+
+    record TestPriority(int level) {}
+    
+    @Test
+    void testWhen_withComplexPredicate() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.when(
+                msg -> msg instanceof TestPriority p && p.level() > 5,
+                Effect.of("high-priority"),
+                Effect.of("low-priority")
+            );
+        
+        EffectResult<Integer, String> result1 = effect.run(0, new TestPriority(8), context);
+        assertEquals("high-priority", result1.value().orElseThrow());
+        
+        EffectResult<Integer, String> result2 = effect.run(0, new TestPriority(3), context);
+        assertEquals("low-priority", result2.value().orElseThrow());
+    }
+
+    @Test
+    void testWhen_preservesErrorsInBranches() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.when(
+                msg -> msg.equals("fail"),
+                Effect.fail(new IllegalStateException("Branch failed")),
+                Effect.of("success")
+            );
+        
+        EffectResult<Integer, String> result = effect.run(0, "fail", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertInstanceOf(IllegalStateException.class, result.error().get());
+        assertEquals("Branch failed", result.error().get().getMessage());
+    }
 }
