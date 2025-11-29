@@ -101,6 +101,112 @@ Effect<Integer, Throwable, String> effect =
 Effect<Integer, Throwable, Void> effect = Effect.none();
 ```
 
+## Advanced Operators
+
+### delay() - Suspend Execution
+
+Suspends execution for a specified duration. Safe with virtual threads.
+
+```java
+// Wait 1 second before continuing
+Effect.delay(Duration.ofSeconds(1))
+    .andThen(Effect.log("Delayed execution"));
+
+// Debounce pattern
+Effect.delay(Duration.ofMillis(300))
+    .andThen(Effect.modify(s -> s.processInput()));
+```
+
+### suspend() - Lazy Evaluation
+
+Creates an effect from a lazy computation that won't execute until the effect runs.
+
+```java
+// Computation deferred until effect executes
+Effect<State, Throwable, Data> effect = 
+    Effect.suspend(() -> expensiveComputation());
+
+// Compare to eager evaluation:
+var data = expensiveComputation();  // Runs immediately!
+Effect.of(data);  // Just wraps the value
+```
+
+### bracket() - Resource Management
+
+Ensures resources are properly acquired and released, even if errors occur.
+
+```java
+Effect.bracket(
+    // Acquire: open connection
+    Effect.attempt(() -> database.connect()),
+    
+    // Use: query the database
+    conn -> Effect.attempt(() -> conn.query("SELECT * FROM users")),
+    
+    // Release: always close connection
+    conn -> Effect.attempt(() -> conn.close())
+);
+```
+
+**Guarantees:**
+- Release always runs if acquire succeeds
+- Release runs even if use fails
+- If release fails, use result is still preserved
+
+### fromFuture() - CompletableFuture Integration
+
+Converts a CompletableFuture into an Effect. Blocks safely on virtual threads.
+
+```java
+CompletableFuture<String> future = httpClient.getAsync("https://api.example.com");
+
+Effect<State, Throwable, String> effect = 
+    Effect.fromFuture(future)
+        .map(response -> parseJson(response));
+```
+
+### parTraverse() - Parallel Collection Processing
+
+Applies an effect to each element of a collection in parallel.
+
+```java
+List<UserId> userIds = List.of(id1, id2, id3);
+
+Effect<State, Throwable, List<User>> effect = 
+    Effect.parTraverse(userIds, userId -> 
+        Effect.ask(userService, new GetUser(userId), timeout)
+    );
+
+// All requests happen in parallel, results collected in order
+```
+
+### ensure() - Guaranteed Finalization
+
+Ensures a finalizer effect runs after this effect completes, regardless of success or failure.
+
+```java
+Effect.modify(s -> s.processData())
+    .ensure(Effect.log("Processing complete"))
+    .ensure(Effect.modify(s -> s.cleanup()));
+
+// Finalizers run even if processData() fails
+```
+
+### retry() - Automatic Retry with Backoff
+
+Retries an effect up to maxAttempts times with exponential backoff.
+
+```java
+Effect.attempt(() -> unreliableService.call())
+    .retry(maxAttempts = 3, initialDelay = Duration.ofMillis(100));
+
+// Retry schedule:
+// - Attempt 1: immediate
+// - Attempt 2: after 100ms
+// - Attempt 3: after 200ms
+// - Attempt 4: after 400ms
+```
+
 ## Monadic Operations
 
 ### map() - Transform Result

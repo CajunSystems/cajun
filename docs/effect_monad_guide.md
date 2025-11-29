@@ -77,6 +77,53 @@ Effect<Integer, Throwable, Void> effect =
 // State is now 15
 ```
 
+## How Effects Run Inside an Actor
+
+Understanding how effects are executed is crucial to using them effectively.
+
+### The Actor-Effect Lifecycle
+
+When you create an actor with an Effect-based behavior, here's what happens:
+
+```java
+// 1. You define the effect (the recipe)
+Effect<Integer, Throwable, Void> behavior = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) -> 
+            Effect.modify(s -> s + msg.amount())
+        )
+        .build();
+
+// 2. You spawn the actor
+Pid counter = fromEffect(system, behavior, 0).spawn();
+
+// 3. You send a message
+counter.tell(new Increment(5));
+```
+
+**What happens when the message arrives:**
+
+1. **Message Queued**: The message enters the actor's mailbox (a queue)
+2. **Actor Wakes Up**: The actor's virtual thread picks up the message
+3. **Effect Executes**: The effect's runT() method is called with current state, message, and context
+4. **Trampoline Runs**: The effect returns a Trampoline which is immediately evaluated
+5. **State Updated**: If successful, the actor's state is updated
+6. **Next Message**: The actor processes the next message in the mailbox
+
+### Key Insights
+
+**Effects are Lazy Descriptions**
+
+Effects don't execute until the actor runs them. They're just descriptions of what to do.
+
+**One Message at a Time**
+
+Even if 100 messages arrive, the actor processes them sequentially. This is the actor model guarantee.
+
+**Virtual Threads Make Blocking Safe**
+
+When an effect blocks (database call, HTTP request), only the virtual thread suspends, not the OS thread.
+
 ## Composing Effects: Chaining Actions
 
 The real power comes from chaining effects together. Use `.andThen()` to say "do this, then do that":
@@ -555,6 +602,397 @@ Effect.attempt(() -> {
     Pid worker = fromEffect(ctx.system(), workerBehavior, initialState).spawn();
     return worker;
 }).flatMap(worker -> Effect.tell(worker, new DoWork(data)));
+```
+
+## Failure Semantics
+
+Understanding how errors propagate through effects is critical for building reliable actors.
+
+### Error Propagation Table
+
+| Scenario | What Happens | State | Example |
+|----------|--------------|-------|---------|
+| **Exception in `map`** | Effect fails, error captured | State preserved | `Effect.of(5).map(x -> x / 0)` → Failure |
+| **Exception in `flatMap`** | Effect fails, error captured | State preserved | `Effect.of(5).flatMap(x -> throw ex)` → Failure |
+| **Timeout in `ask`** | TimeoutException, effect fails | State preserved | `Effect.ask(pid, msg, 1ms)` → Failure after timeout |
+| **NPE in finalizer (`ensure`)** | Original result preserved, NPE logged | Finalizer's state used | Effect completes, NPE in cleanup |
+| **Exception in `recover`** | New exception replaces original | State from recover | Recovery handler itself fails |
+| **Exception in `bracket` acquire** | Effect fails immediately | Original state | Resource never acquired |
+| **Exception in `bracket` use** | Release runs, use failure preserved | Release's state | Resource cleaned up, error propagated |
+| **Exception in `bracket` release** | Use result preserved, release error logged | Best effort state | Cleanup failed but use succeeded |
+| **Defect in user code** | Uncaught exception, actor may restart | Depends on supervisor | Programmer error, not recoverable |
+| **InterruptedException** | Effect fails, interrupt flag restored | State preserved | Thread interrupted during blocking |
+
+### Error Recovery Strategies
+
+```java
+// 1. Simple recovery with fallback value
+Effect.attempt(() -> riskyOperation())
+    .recover(error -> fallbackValue);
+
+// 2. Recover with different effect
+Effect.attempt(() -> primaryService.call())
+    .recoverWith(error -> Effect.attempt(() -> backupService.call()));
+
+// 3. Retry with exponential backoff
+Effect.attempt(() -> unreliableService.call())
+    .retry(maxAttempts = 3, initialDelay = Duration.ofMillis(100));
+
+// 4. Handle specific errors
+Effect.attempt(() -> operation())
+    .handleErrorWith(error -> {
+        if (error instanceof TimeoutException) {
+            return Effect.log("Timeout, using cache");
+        } else {
+            return Effect.fail(error);  // Re-throw
+        }
+    });
+```
+
+### Defects vs Errors
+
+**Errors** (Expected): Timeouts, validation failures, network errors
+- Represented in the error channel (`E` type parameter)
+- Recoverable with `recover`, `recoverWith`, `handleError`
+
+**Defects** (Unexpected): NullPointerException, ClassCastException, OutOfMemoryError
+- Programming bugs, not business logic failures
+- May cause actor restart depending on supervisor strategy
+- Should be fixed in code, not caught and recovered
+
+## Effects in Supervision Trees
+
+Understanding how effects interact with actor supervision is crucial for building fault-tolerant systems.
+
+### How Supervision Works with Effects
+
+When an effect-based actor fails, the supervisor's strategy determines what happens:
+
+```java
+// Define supervisor strategy
+SupervisorStrategy strategy = SupervisorStrategy.builder()
+    .withMaxRetries(3)
+    .withWithinTimeRange(Duration.ofMinutes(1))
+    .withDecider(error -> {
+        if (error instanceof ValidationException) {
+            return SupervisorDirective.RESUME;  // Continue with current state
+        } else if (error instanceof TransientException) {
+            return SupervisorDirective.RESTART;  // Restart with initial state
+        } else {
+            return SupervisorDirective.STOP;  // Stop the actor
+        }
+    })
+    .build();
+
+// Spawn actor with supervision
+Pid actor = fromEffect(system, behavior, initialState)
+    .withSupervisorStrategy(strategy)
+    .spawn();
+```
+
+### Supervisor Directives and Effect Behavior
+
+| Directive | What Happens | State | Effect Execution |
+|-----------|--------------|-------|------------------|
+| **RESUME** | Actor continues | State preserved | Next message processed |
+| **RESTART** | Actor restarts | Reset to initial state | Current effect abandoned, mailbox preserved |
+| **STOP** | Actor stops | N/A | Actor terminated, mailbox cleared |
+| **ESCALATE** | Supervisor's supervisor decides | Depends on parent | Failure propagated up |
+
+### Effect Failure Scenarios
+
+**1. Handled Errors (Recovered)**
+```java
+Effect.attempt(() -> riskyOperation())
+    .recover(error -> fallbackValue);
+
+// Error is caught and recovered - supervisor never sees it
+// Actor continues normally
+```
+
+**2. Unhandled Errors (Propagated)**
+```java
+Effect.attempt(() -> riskyOperation());
+// No recovery - error propagates to EffectResult.Failure
+
+// Supervisor's decider function is invoked
+// Directive determines actor's fate
+```
+
+**3. Defects (Uncaught Exceptions)**
+```java
+Effect.modify(s -> {
+    String value = null;
+    return value.length();  // NullPointerException!
+});
+
+// Uncaught exception escapes effect system
+// Supervisor catches it and applies strategy
+```
+
+### State Preservation Patterns
+
+**Pattern 1: Preserve State on Transient Failures**
+```java
+SupervisorStrategy.builder()
+    .withDecider(error -> {
+        if (error instanceof NetworkException) {
+            return SupervisorDirective.RESUME;  // Keep state, retry later
+        }
+        return SupervisorDirective.RESTART;
+    })
+    .build();
+```
+
+**Pattern 2: Reset State on Corruption**
+```java
+SupervisorStrategy.builder()
+    .withDecider(error -> {
+        if (error instanceof StateCorruptedException) {
+            return SupervisorDirective.RESTART;  // Fresh start
+        }
+        return SupervisorDirective.RESUME;
+    })
+    .build();
+```
+
+**Pattern 3: Graceful Degradation**
+```java
+Effect.attempt(() -> primaryService.call())
+    .recoverWith(error -> {
+        // Try fallback before failing
+        return Effect.attempt(() -> fallbackService.call());
+    })
+    .recover(error -> {
+        // Last resort: return cached value
+        return cachedValue;
+    });
+
+// Supervisor only sees failure if all recovery attempts fail
+```
+
+### Child Actor Supervision
+
+When an effect spawns child actors, failures can propagate:
+
+```java
+Effect.attempt(() -> {
+    // Spawn child actor
+    Pid child = fromEffect(ctx.system(), childBehavior, childState)
+        .withSupervisorStrategy(childStrategy)
+        .spawn();
+    return child;
+})
+.flatMap(child -> {
+    // Send work to child
+    return Effect.ask(child, new DoWork(data), timeout);
+})
+.recover(error -> {
+    // Handle child failure
+    if (error instanceof TimeoutException) {
+        return Effect.log("Child timed out, using default");
+    }
+    return Effect.fail(error);  // Escalate to parent supervisor
+});
+```
+
+### Best Practices
+
+**1. Use Recovery for Expected Failures**
+```java
+// Good: Handle expected errors in effects
+Effect.attempt(() -> parseJson(input))
+    .recover(error -> defaultConfig);
+```
+
+**2. Let Supervisor Handle Defects**
+```java
+// Good: Let programming errors bubble up
+Effect.modify(s -> s.processData());
+// If processData() has a bug, supervisor will restart
+```
+
+**3. Design for Restartability**
+```java
+// Good: Initial state is always valid
+record State(Map<String, Value> cache, int requestCount) {
+    static State initial() {
+        return new State(new HashMap<>(), 0);
+    }
+}
+
+// Actor can restart cleanly to initial state
+```
+
+**4. Avoid Shared Mutable State**
+```java
+// Bad: Shared mutable state survives restarts
+static Map<String, Value> globalCache = new HashMap<>();
+
+// Good: State is immutable and local to actor
+record State(Map<String, Value> cache) {
+    State withValue(String key, Value value) {
+        var newCache = new HashMap<>(cache);
+        newCache.put(key, value);
+        return new State(newCache);
+    }
+}
+```
+
+**5. Use Circuit Breaker Pattern for External Services**
+```java
+Effect.attempt(() -> externalService.call())
+    .retry(maxAttempts = 3, initialDelay = Duration.ofMillis(100))
+    .recover(error -> {
+        // After retries exhausted, use fallback
+        return cachedResponse;
+    });
+
+// Prevents supervisor from restarting actor repeatedly
+```
+
+### Supervision Tree Example
+
+```java
+// Parent actor supervises multiple children
+Effect.<State, Throwable, Void, ParentMsg>match()
+    .when(StartWorkers.class, (state, msg, ctx) -> {
+        // Spawn supervised workers
+        List<Pid> workers = IntStream.range(0, 5)
+            .mapToObj(i -> fromEffect(ctx.system(), workerBehavior, WorkerState.initial())
+                .withSupervisorStrategy(workerStrategy)
+                .spawn())
+            .toList();
+        
+        return Effect.modify(s -> s.withWorkers(workers));
+    })
+    .when(WorkFailed.class, (state, msg, ctx) -> {
+        // Worker failure notification
+        // Parent can decide to redistribute work or escalate
+        return Effect.log("Worker " + msg.workerId() + " failed, redistributing work");
+    })
+    .build();
+```
+
+### Key Takeaways
+
+1. **Effects don't change supervision** - Standard actor supervision applies
+2. **Recover in effects** - Handle expected errors before they reach supervisor
+3. **Let supervisor handle defects** - Programming bugs should trigger restarts
+4. **Design for restarts** - Initial state should always be valid
+5. **Use immutable state** - Makes restarts predictable and safe
+6. **Circuit breakers** - Prevent cascading failures in supervision trees
+
+## Cancellation Semantics
+
+Effects in Cajun do not have built-in cancellation support. Here's why and what to do instead:
+
+### Why No Cancellation?
+
+1. **Actor Model**: Actors process one message at a time. You can't "cancel" a message that's being processed.
+2. **Virtual Threads**: Interrupting virtual threads is safe, but effects complete quickly in practice.
+3. **Simplicity**: Cancellation adds significant complexity to the effect system.
+
+### Alternatives to Cancellation
+
+**1. Use Timeouts**
+```java
+Effect.ask(slowService, request, Duration.ofSeconds(5))
+    .recover(error -> defaultValue);  // Timeout after 5 seconds
+```
+
+**2. Use `race` for Competitive Execution**
+```java
+Effect.ask(service1, request, timeout)
+    .race(Effect.ask(service2, request, timeout));  // First to complete wins
+```
+
+**3. Stop the Actor**
+```java
+// If you need to cancel ongoing work, stop the actor
+system.stop(actorPid);
+```
+
+**4. Use Interruption for Blocking Operations**
+```java
+Effect.attempt(() -> {
+    // This will respect thread interruption
+    Thread.sleep(Duration.ofMinutes(10));
+    return result;
+});
+
+// From outside: interrupt the actor's thread (advanced)
+// Note: This is rarely needed and should be used carefully
+```
+
+### What About Long-Running Operations?
+
+If an effect takes a long time:
+- **Spawn a child actor** to handle it
+- **Use `parZip`** to do other work in parallel
+- **Set appropriate timeouts** on `ask` operations
+- **Break work into smaller messages** that can be processed incrementally
+
+## Evaluation Strategy
+
+Understanding when effects execute is important for reasoning about your code.
+
+### Lazy Construction, Eager Execution
+
+**Construction is Lazy**
+```java
+// This doesn't execute anything - it's just building a description
+Effect<Int, Throwable, String> effect = 
+    Effect.modify(s -> s + 1)
+        .andThen(Effect.log("Modified!"))
+        .map(v -> v.toString());
+
+// Still nothing has happened!
+```
+
+**Execution is Eager**
+```java
+// When the actor runs the effect, it executes immediately
+EffectResult<Int, String> result = effect.run(state, message, context);
+
+// The trampoline ensures stack safety, but execution is eager:
+// 1. modify runs
+// 2. log runs
+// 3. map runs
+// All happen immediately, in sequence
+```
+
+### Key Points
+
+1. **Effects are values** - You can store them, pass them around, compose them
+2. **Composition is lazy** - Chaining effects doesn't execute them
+3. **Execution is eager** - Once `run()` is called, the effect runs to completion
+4. **Trampolining is transparent** - Stack safety doesn't change eager semantics
+
+### Suspended Computations
+
+Use `suspend` or `attempt` for truly lazy evaluation:
+
+```java
+// This lambda won't execute until the effect runs
+Effect.suspend(() -> {
+    System.out.println("This prints when effect runs, not when created");
+    return expensiveComputation();
+});
+
+// Compare to:
+var value = expensiveComputation();  // Runs immediately!
+Effect.of(value);  // Effect just wraps the already-computed value
+```
+
+### Parallel Execution
+
+Parallel combinators execute eagerly but concurrently:
+
+```java
+// Both effects start immediately when run, execute in parallel
+Effect.ask(service1, req1, timeout)
+    .parZip(Effect.ask(service2, req2, timeout), (r1, r2) -> combine(r1, r2));
 ```
 
 ## Tips for Beginners

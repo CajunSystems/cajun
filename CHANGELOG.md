@@ -15,13 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Request-Response Pattern**: `Effect.ask(pid, message, timeout)` for actor communication
   - **Checked Exception Support**: `Effect.attempt(() -> ...)` with `ThrowingSupplier` interface
   - **Pattern Matching**: `Effect.match()` with type-safe message routing at match level
-  - **Parallel Execution**: `parSequence`, `parZip`, `race`, `withTimeout` for concurrent operations
+  - **Parallel Execution**: `parSequence`, `parZip`, `parTraverse`, `race`, `withTimeout` for concurrent operations
   - **Conditional Logic**: `Effect.when(predicate, effect, fallback)` for conditional execution
+  - **Resource Management**: `bracket` for safe acquire/use/release patterns
+  - **Retry Logic**: `retry(maxAttempts, initialDelay)` with exponential backoff
+  - **Lazy Evaluation**: `suspend` for deferred computations
+  - **Time Control**: `delay(duration)` for suspending execution
+  - **Future Integration**: `fromFuture` for CompletableFuture interop
+  - **Guaranteed Cleanup**: `ensure` for finalizers that always run
   - **Virtual Thread Optimized**: Natural blocking code without CompletableFuture complexity
-  - **Factory Methods**: `of`, `pure`, `state`, `modify`, `setState`, `identity`, `fail`, `attempt`
+  - **Factory Methods**: `of`, `pure`, `state`, `modify`, `setState`, `identity`, `fail`, `attempt`, `suspend`, `delay`
   - **Messaging**: `tell`, `tellSelf`, `ask` for actor communication
   - **Logging**: `log`, `logError`, `logState` for debugging
-  - **Documentation**: Comprehensive guides in `/docs` with beginner-friendly examples
+  - **Documentation**: Comprehensive guides with failure semantics, cancellation semantics, and evaluation strategy
 
 - **3-Tier Ask Pattern**: Flexible request-response API with multiple access patterns
   - **Tier 1 - Direct Future**: `CompletableFuture<Response> future = system.ask(pid, request, timeout)`

@@ -250,6 +250,192 @@ public interface Effect<S, E, R> {
         return when(predicate, effect, identity());
     }
     
+    /**
+     * Creates an effect that suspends execution for the specified duration.
+     * Uses virtual thread blocking, which is safe and efficient.
+     * 
+     * @param duration how long to suspend
+     * @return an effect that completes after the delay
+     */
+    static <S, E> Effect<S, E, Void> delay(Duration duration) {
+        return (state, message, context) -> {
+            try {
+                Thread.sleep(duration.toMillis());
+                return Trampoline.done(EffectResult.noResult(state));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Trampoline.done(EffectResult.failure(state, e));
+            }
+        };
+    }
+    
+    /**
+     * Creates an effect from a lazy computation that will be evaluated when run.
+     * The computation is suspended until the effect is executed.
+     * 
+     * @param computation the suspended computation
+     * @return an effect that evaluates the computation
+     */
+    static <S, E, R> Effect<S, E, R> suspend(ThrowingSupplier<R> computation) {
+        return attempt(computation);
+    }
+    
+    /**
+     * Resource management with automatic cleanup. Ensures the release effect
+     * runs even if the use effect fails.
+     * 
+     * <pre>{@code
+     * Effect.bracket(
+     *     Effect.attempt(() -> openConnection()),
+     *     conn -> Effect.attempt(() -> conn.query(sql)),
+     *     conn -> Effect.attempt(() -> conn.close())
+     * )
+     * }</pre>
+     * 
+     * @param acquire effect to acquire the resource
+     * @param use effect to use the resource
+     * @param release effect to release the resource
+     * @return an effect that manages the resource lifecycle
+     */
+    static <S, E, R, Resource> Effect<S, E, R> bracket(
+            Effect<S, E, Resource> acquire,
+            Function<Resource, Effect<S, E, R>> use,
+            Function<Resource, Effect<S, E, Void>> release) {
+        return (state, message, context) -> {
+            return acquire.runT(state, message, context).flatMap(acquireResult -> {
+                if (acquireResult.isFailure()) {
+                    return Trampoline.done(EffectResult.failure(acquireResult.state(), acquireResult.error().get()));
+                }
+                
+                Resource resource = acquireResult.value().orElseThrow();
+                S acquireState = acquireResult.state();
+                
+                return use.apply(resource).runT(acquireState, message, context).flatMap(useResult -> {
+                    // Always run release, even if use failed
+                    return release.apply(resource).runT(useResult.state(), message, context).map(releaseResult -> {
+                        // If use succeeded, return its result; if use failed, preserve the failure
+                        if (useResult.isFailure()) {
+                            return EffectResult.failure(releaseResult.state(), useResult.error().get());
+                        } else {
+                            return EffectResult.success(releaseResult.state(), useResult.value().orElse(null));
+                        }
+                    });
+                });
+            });
+        };
+    }
+    
+    /**
+     * Creates an effect from a CompletableFuture. The effect will block
+     * (safely on virtual threads) until the future completes.
+     * 
+     * @param future the future to convert
+     * @return an effect that produces the future's result
+     */
+    static <S, E, R> Effect<S, E, R> fromFuture(java.util.concurrent.CompletableFuture<R> future) {
+        return (state, message, context) -> {
+            try {
+                R result = future.get();
+                return Trampoline.done(EffectResult.success(state, result));
+            } catch (Exception e) {
+                return Trampoline.done(EffectResult.failure(state, e));
+            }
+        };
+    }
+    
+    /**
+     * Traverses a collection, applying an effect to each element in parallel,
+     * and collecting the results.
+     * 
+     * @param items the collection to traverse
+     * @param f function to create an effect for each item
+     * @return an effect that produces a list of results
+     */
+    static <S, E, A, B> Effect<S, E, java.util.List<B>> parTraverse(
+            java.util.Collection<A> items,
+            Function<A, Effect<S, E, B>> f) {
+        return (state, message, context) -> {
+            java.util.List<java.util.concurrent.CompletableFuture<EffectResult<S, B>>> futures = 
+                new java.util.ArrayList<>();
+            
+            for (A item : items) {
+                futures.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> 
+                    f.apply(item).run(state, message, context)
+                ));
+            }
+            
+            try {
+                java.util.List<B> results = new java.util.ArrayList<>();
+                S finalState = state;
+                
+                for (var future : futures) {
+                    EffectResult<S, B> result = future.get();
+                    if (result.isFailure()) {
+                        return Trampoline.done(EffectResult.failure(result.state(), result.error().get()));
+                    }
+                    results.add(result.value().orElseThrow());
+                    finalState = result.state();
+                }
+                
+                return Trampoline.done(EffectResult.success(finalState, results));
+            } catch (Exception e) {
+                return Trampoline.done(EffectResult.failure(state, e));
+            }
+        };
+    }
+    
+    /**
+     * Ensures a finalizer effect runs after this effect completes,
+     * regardless of success or failure.
+     * 
+     * @param finalizer the effect to run after completion
+     * @return an effect that guarantees the finalizer runs
+     */
+    default Effect<S, E, R> ensure(Effect<S, E, Void> finalizer) {
+        return (state, message, context) -> {
+            return runT(state, message, context).flatMap(result -> {
+                return finalizer.runT(result.state(), message, context).map(finalizerResult -> {
+                    // Preserve original result, but use finalizer's state
+                    if (result.isSuccess()) {
+                        return EffectResult.success(finalizerResult.state(), result.value().orElse(null));
+                    } else {
+                        return EffectResult.failure(finalizerResult.state(), result.error().get());
+                    }
+                });
+            });
+        };
+    }
+    
+    /**
+     * Retries this effect up to maxAttempts times with exponential backoff.
+     * 
+     * @param maxAttempts maximum number of retry attempts
+     * @param initialDelay initial delay between retries
+     * @return an effect that retries on failure
+     */
+    default Effect<S, E, R> retry(int maxAttempts, Duration initialDelay) {
+        return (state, message, context) -> {
+            EffectResult<S, R> result = run(state, message, context);
+            int attempts = 1;
+            long delayMillis = initialDelay.toMillis();
+            
+            while (result.isFailure() && attempts < maxAttempts) {
+                try {
+                    Thread.sleep(delayMillis);
+                    delayMillis *= 2; // Exponential backoff
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return Trampoline.done(EffectResult.failure(state, e));
+                }
+                
+                result = run(result.state(), message, context);
+                attempts++;
+            }
+            
+            return Trampoline.done(result);
+        };
+    }
+    
     // ============================================================================
     // Monadic Operations - Stack-Safe
     // ============================================================================

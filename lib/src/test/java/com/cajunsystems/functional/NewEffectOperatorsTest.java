@@ -848,4 +848,425 @@ class NewEffectOperatorsTest {
         assertInstanceOf(IllegalStateException.class, result.error().get());
         assertEquals("Branch failed", result.error().get().getMessage());
     }
+    
+    // ============================================================================
+    // Tests for New Operators
+    // ============================================================================
+    
+    @Test
+    void testDelay_suspendsExecutionForSpecifiedDuration() {
+        long startTime = System.currentTimeMillis();
+        
+        Effect<Integer, Throwable, Void> effect = Effect.delay(Duration.ofMillis(100));
+        EffectResult<Integer, Void> result = effect.run(42, "test", context);
+        
+        long elapsed = System.currentTimeMillis() - startTime;
+        
+        assertInstanceOf(EffectResult.NoResult.class, result);
+        assertEquals(42, result.state());
+        assertTrue(elapsed >= 100, "Should delay at least 100ms, was: " + elapsed);
+    }
+    
+    @Test
+    void testDelay_canBeChainedWithOtherEffects() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable>delay(Duration.ofMillis(50))
+                .andThen(Effect.of("delayed result"));
+        
+        EffectResult<Integer, String> result = effect.run(10, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("delayed result", result.value().get());
+        assertEquals(10, result.state());
+    }
+    
+    @Test
+    void testSuspend_defersComputationUntilExecution() {
+        var counter = new java.util.concurrent.atomic.AtomicInteger(0);
+        
+        // Create effect - computation should NOT run yet
+        Effect<Integer, Throwable, Integer> effect = Effect.suspend(() -> {
+            counter.incrementAndGet();
+            return 42;
+        });
+        
+        assertEquals(0, counter.get(), "Computation should not run during effect creation");
+        
+        // Run effect - now computation should execute
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertEquals(1, counter.get(), "Computation should run once");
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals(42, result.value().get());
+    }
+    
+    @Test
+    void testSuspend_capturesExceptions() {
+        Effect<Integer, Throwable, String> effect = Effect.suspend(() -> {
+            throw new RuntimeException("Suspended computation failed");
+        });
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Suspended computation failed", result.error().get().getMessage());
+    }
+    
+    @Test
+    void testBracket_ensuresResourceIsReleased() {
+        var log = new java.util.ArrayList<String>();
+        
+        Effect<Integer, Throwable, String> effect = Effect.bracket(
+            // Acquire
+            Effect.attempt(() -> {
+                log.add("acquire");
+                return "resource";
+            }),
+            // Use
+            resource -> Effect.attempt(() -> {
+                log.add("use: " + resource);
+                return "result";
+            }),
+            // Release
+            resource -> Effect.attempt(() -> {
+                log.add("release: " + resource);
+                return null;
+            })
+        );
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("result", result.value().get());
+        assertEquals(java.util.List.of("acquire", "use: resource", "release: resource"), log);
+    }
+    
+    @Test
+    void testBracket_releasesResourceEvenOnFailure() {
+        var log = new java.util.ArrayList<String>();
+        
+        Effect<Integer, Throwable, String> effect = Effect.bracket(
+            // Acquire
+            Effect.attempt(() -> {
+                log.add("acquire");
+                return "resource";
+            }),
+            // Use - fails
+            resource -> Effect.attempt(() -> {
+                log.add("use: " + resource);
+                throw new RuntimeException("Use failed");
+            }),
+            // Release - should still run
+            resource -> Effect.attempt(() -> {
+                log.add("release: " + resource);
+                return null;
+            })
+        );
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Use failed", result.error().get().getMessage());
+        assertEquals(java.util.List.of("acquire", "use: resource", "release: resource"), log);
+    }
+    
+    @Test
+    void testBracket_doesNotReleaseIfAcquireFails() {
+        var log = new java.util.ArrayList<String>();
+        
+        Effect<Integer, Throwable, String> effect = Effect.bracket(
+            // Acquire - fails
+            Effect.attempt(() -> {
+                log.add("acquire");
+                throw new RuntimeException("Acquire failed");
+            }),
+            // Use - should not run
+            resource -> Effect.attempt(() -> {
+                log.add("use: " + resource);
+                return "result";
+            }),
+            // Release - should not run
+            resource -> Effect.attempt(() -> {
+                log.add("release: " + resource);
+                return null;
+            })
+        );
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Acquire failed", result.error().get().getMessage());
+        assertEquals(java.util.List.of("acquire"), log);
+    }
+    
+    @Test
+    void testFromFuture_convertsCompletedFuture() {
+        var future = java.util.concurrent.CompletableFuture.completedFuture("success");
+        
+        Effect<Integer, Throwable, String> effect = Effect.fromFuture(future);
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("success", result.value().get());
+    }
+    
+    @Test
+    void testFromFuture_waitsForAsyncFuture() {
+        var future = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return "async result";
+        });
+        
+        Effect<Integer, Throwable, String> effect = Effect.fromFuture(future);
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("async result", result.value().get());
+    }
+    
+    @Test
+    void testFromFuture_capturesFailedFuture() {
+        var future = new java.util.concurrent.CompletableFuture<String>();
+        future.completeExceptionally(new RuntimeException("Future failed"));
+        
+        Effect<Integer, Throwable, String> effect = Effect.fromFuture(future);
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertTrue(result.error().get().getMessage().contains("Future failed"));
+    }
+    
+    @Test
+    void testParTraverse_processesCollectionInParallel() {
+        var items = java.util.List.of(1, 2, 3, 4, 5);
+        
+        Effect<Integer, Throwable, java.util.List<Integer>> effect = 
+            Effect.parTraverse(items, item -> 
+                Effect.attempt(() -> item * 2)
+            );
+        
+        EffectResult<Integer, java.util.List<Integer>> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals(java.util.List.of(2, 4, 6, 8, 10), result.value().get());
+    }
+    
+    @Test
+    void testParTraverse_failsIfAnyItemFails() {
+        var items = java.util.List.of(1, 2, 3, 4, 5);
+        
+        Effect<Integer, Throwable, java.util.List<Integer>> effect = 
+            Effect.parTraverse(items, item -> 
+                Effect.attempt(() -> {
+                    if (item == 3) {
+                        throw new RuntimeException("Item 3 failed");
+                    }
+                    return item * 2;
+                })
+            );
+        
+        EffectResult<Integer, java.util.List<Integer>> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Item 3 failed", result.error().get().getMessage());
+    }
+    
+    @Test
+    void testParTraverse_handlesEmptyCollection() {
+        var items = java.util.List.<Integer>of();
+        
+        Effect<Integer, Throwable, java.util.List<Integer>> effect = 
+            Effect.parTraverse(items, item -> Effect.of(item * 2));
+        
+        EffectResult<Integer, java.util.List<Integer>> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertTrue(result.value().get().isEmpty());
+    }
+    
+    @Test
+    void testEnsure_runsFinalizer() {
+        var log = new java.util.ArrayList<String>();
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                log.add("main");
+                return "result";
+            })
+            .ensure(Effect.attempt(() -> {
+                log.add("finalizer");
+                return null;
+            }));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("result", result.value().get());
+        assertEquals(java.util.List.of("main", "finalizer"), log);
+    }
+    
+    @Test
+    void testEnsure_runsFinalizerEvenOnFailure() {
+        var log = new java.util.ArrayList<String>();
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                log.add("main");
+                throw new RuntimeException("Main failed");
+            })
+            .ensure(Effect.attempt(() -> {
+                log.add("finalizer");
+                return null;
+            }));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Main failed", result.error().get().getMessage());
+        assertEquals(java.util.List.of("main", "finalizer"), log);
+    }
+    
+    @Test
+    void testEnsure_canChainMultipleFinalizers() {
+        var log = new java.util.ArrayList<String>();
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                log.add("main");
+                return "result";
+            })
+            .ensure(Effect.attempt(() -> {
+                log.add("finalizer1");
+                return null;
+            }))
+            .ensure(Effect.attempt(() -> {
+                log.add("finalizer2");
+                return null;
+            }));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals(java.util.List.of("main", "finalizer1", "finalizer2"), log);
+    }
+    
+    @Test
+    void testRetry_succeedsOnFirstAttempt() {
+        var attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                attempts.incrementAndGet();
+                return "success";
+            })
+            .retry(3, Duration.ofMillis(10));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("success", result.value().get());
+        assertEquals(1, attempts.get(), "Should succeed on first attempt");
+    }
+    
+    @Test
+    void testRetry_retriesOnFailure() {
+        var attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                int count = attempts.incrementAndGet();
+                if (count < 3) {
+                    throw new RuntimeException("Attempt " + count + " failed");
+                }
+                return "success on attempt " + count;
+            })
+            .retry(5, Duration.ofMillis(10));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals("success on attempt 3", result.value().get());
+        assertEquals(3, attempts.get());
+    }
+    
+    @Test
+    void testRetry_failsAfterMaxAttempts() {
+        var attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                attempts.incrementAndGet();
+                throw new RuntimeException("Always fails");
+            })
+            .retry(3, Duration.ofMillis(10));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertEquals("Always fails", result.error().get().getMessage());
+        assertEquals(3, attempts.get(), "Should attempt exactly maxAttempts times");
+    }
+    
+    @Test
+    void testRetry_implementsExponentialBackoff() {
+        var attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+        var timestamps = new java.util.ArrayList<Long>();
+        
+        Effect<Integer, Throwable, String> effect = 
+            Effect.<Integer, Throwable, String>attempt(() -> {
+                timestamps.add(System.currentTimeMillis());
+                int count = attempts.incrementAndGet();
+                if (count < 4) {
+                    throw new RuntimeException("Retry");
+                }
+                return "success";
+            })
+            .retry(5, Duration.ofMillis(50));
+        
+        EffectResult<Integer, String> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals(4, attempts.get());
+        
+        // Check backoff delays (approximate due to timing variance)
+        // Attempt 1: immediate
+        // Attempt 2: after ~50ms
+        // Attempt 3: after ~100ms
+        // Attempt 4: after ~200ms
+        if (timestamps.size() >= 2) {
+            long delay1 = timestamps.get(1) - timestamps.get(0);
+            assertTrue(delay1 >= 40, "First retry delay should be ~50ms, was: " + delay1);
+        }
+        if (timestamps.size() >= 3) {
+            long delay2 = timestamps.get(2) - timestamps.get(1);
+            assertTrue(delay2 >= 80, "Second retry delay should be ~100ms, was: " + delay2);
+        }
+    }
+    
+    @Test
+    void testRetry_preservesStateFromLastAttempt() {
+        var attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+        
+        // Retry re-runs the entire effect, so state modifications happen on each attempt
+        Effect<Integer, Throwable, Integer> effect = 
+            Effect.<Integer, Throwable, Integer>attempt(() -> {
+                int count = attempts.incrementAndGet();
+                if (count < 2) {
+                    throw new RuntimeException("Retry");
+                }
+                return count;
+            })
+            .retry(3, Duration.ofMillis(10));
+        
+        EffectResult<Integer, Integer> result = effect.run(10, "test", context);
+        
+        assertInstanceOf(EffectResult.Success.class, result);
+        assertEquals(2, result.value().get());
+        // State is preserved from the last successful attempt
+        assertEquals(10, result.state());
+    }
 }
