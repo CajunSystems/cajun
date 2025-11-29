@@ -60,6 +60,16 @@ That's it! This effect says: "When you get an Increment message, add 1 to the co
 
 Think of your actor's state as a value that flows through a pipeline. Each effect is a transformation in that pipeline:
 
+```mermaid
+graph LR
+    Msg[Message: Increment 10] --> Match{Match Type}
+    State1[State: 5] --> Modify[Modify: +10]
+    Match --> Modify
+    Modify --> Log[Log State]
+    Log --> State2[State: 15]
+    State2 --> Result[✓ Complete]
+```
+
 ```java
 // Start with state = 5
 // Message arrives: Increment(10)
@@ -369,16 +379,20 @@ Effect<CartState, Throwable, Void> cartBehavior =
     Effect.<CartState, Throwable, Void, CartMsg>match()
     .when(AddItem.class, (state, msg, ctx) ->
         Effect.modify(s -> {
-            s.items().put(msg.item(), msg.price());
-            return new CartState(s.items(), s.total() + msg.price());
+            // IMPORTANT: Copy the map to avoid mutating shared state
+            var newItems = new HashMap<>(s.items());
+            newItems.put(msg.item(), msg.price());
+            return new CartState(newItems, s.total() + msg.price());
         })
         .andThen(Effect.logState(s -> "Cart total: $" + s.total())))
     
     .when(RemoveItem.class, (state, msg, ctx) ->
         Effect.modify(s -> {
-            Double price = s.items().remove(msg.item());
+            // IMPORTANT: Copy the map to avoid mutating shared state
+            var newItems = new HashMap<>(s.items());
+            Double price = newItems.remove(msg.item());
             if (price != null) {
-                return new CartState(s.items(), s.total() - price);
+                return new CartState(newItems, s.total() - price);
             }
             return s;
         }))

@@ -87,6 +87,43 @@ public interface Effect<S, E, R> {
             Trampoline.done(EffectResult.failure(state, (Throwable) error));
     }
     
+    /**
+     * Creates an effect that executes a potentially throwing operation.
+     * This allows you to write natural blocking code that may throw checked exceptions.
+     * 
+     * <p>Example with checked exceptions:
+     * <pre>{@code
+     * Effect<State, IOException, String> readFile = 
+     *     Effect.attempt(() -> Files.readString(Path.of("data.txt")));
+     * 
+     * Effect<State, SQLException, User> queryDb = 
+     *     Effect.attempt(() -> database.findUser(userId));
+     * }</pre>
+     * 
+     * @param supplier the operation that may throw an exception
+     * @return an effect that catches exceptions and converts them to failures
+     */
+    static <S, E, R> Effect<S, E, R> attempt(ThrowingSupplier<R> supplier) {
+        return (state, message, context) -> {
+            try {
+                R result = supplier.get();
+                return Trampoline.done(EffectResult.success(state, result));
+            } catch (Throwable t) {
+                return Trampoline.done(EffectResult.failure(state, t));
+            }
+        };
+    }
+    
+    /**
+     * Functional interface for operations that may throw checked exceptions.
+     * This is used by {@link #attempt(ThrowingSupplier)} to allow natural
+     * exception handling without wrapping in try-catch blocks.
+     */
+    @FunctionalInterface
+    interface ThrowingSupplier<R> {
+        R get() throws Exception;
+    }
+    
     @SuppressWarnings("unchecked")
     static <S, E, M> Effect<S, E, Void> fromTransition(
             java.util.function.BiFunction<S, M, S> transition) {
@@ -140,6 +177,41 @@ public interface Effect<S, E, R> {
             context.self().tell(message);
             return Trampoline.done(EffectResult.noResult(state));
         };
+    }
+    
+    /**
+     * Sends a message to an actor and waits for a response (request-response pattern).
+     * This is a suspension point - the actor's virtual thread will be suspended
+     * (non-blockingly) until the response arrives or the timeout expires.
+     * 
+     * <p>Example:
+     * <pre>{@code
+     * Effect<State, Throwable, UserData> getUserData = 
+     *     Effect.ask(userService, new GetUser(userId), Duration.ofSeconds(5))
+     *         .recover(error -> UserData.empty());
+     * }</pre>
+     * 
+     * @param target the actor to send the message to
+     * @param message the message to send
+     * @param timeout how long to wait for a response
+     * @return an effect that produces the response value
+     */
+    static <S, E, M, R> Effect<S, E, R> ask(Pid target, M message, Duration timeout) {
+        return (state, msg, context) -> {
+            try {
+                R response = target.<M, R>ask(message, timeout).get();
+                return Trampoline.done(EffectResult.success(state, response));
+            } catch (Exception e) {
+                return Trampoline.done(EffectResult.failure(state, e));
+            }
+        };
+    }
+    
+    /**
+     * Alias for {@link #of(Object)}. Creates an effect that returns a pure value.
+     */
+    static <S, E, R> Effect<S, E, R> pure(R value) {
+        return of(value);
     }
     
     // ============================================================================

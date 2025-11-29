@@ -660,4 +660,64 @@ class NewEffectOperatorsTest {
         assertInstanceOf(EffectResult.Failure.class, result);
         assertEquals("Original error", result.error().get().getMessage());
     }
+
+    // ============================================================================
+    // Effect.attempt (Static Factory) Tests
+    // ============================================================================
+
+    @Test
+    void testAttemptStaticFactory_success() throws Exception {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.attempt(() -> "success");
+        
+        EffectResult<Integer, String> result = effect.run(42, "test", context);
+        
+        assertTrue(result.isSuccess());
+        assertEquals("success", result.value().orElseThrow());
+        assertEquals(42, result.state());
+    }
+
+    @Test
+    void testAttemptStaticFactory_handlesCheckedException() {
+        Effect<Integer, Throwable, String> effect = 
+            Effect.attempt(() -> {
+                if (true) throw new java.io.IOException("File not found");
+                return "never";
+            });
+        
+        EffectResult<Integer, String> result = effect.run(42, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertInstanceOf(java.io.IOException.class, result.error().get());
+        assertEquals("File not found", result.error().get().getMessage());
+    }
+
+    @Test
+    void testAttemptStaticFactory_handlesRuntimeException() {
+        Effect<Integer, Throwable, Integer> effect = 
+            Effect.attempt(() -> {
+                throw new IllegalStateException("Bad state");
+            });
+        
+        EffectResult<Integer, Integer> result = effect.run(0, "test", context);
+        
+        assertInstanceOf(EffectResult.Failure.class, result);
+        assertInstanceOf(IllegalStateException.class, result.error().get());
+    }
+
+    // ============================================================================
+    // Effect.pure Tests
+    // ============================================================================
+
+    @Test
+    void testPure_isAliasForOf() {
+        Effect<Integer, Throwable, String> effect1 = Effect.of("test");
+        Effect<Integer, Throwable, String> effect2 = Effect.pure("test");
+        
+        EffectResult<Integer, String> result1 = effect1.run(42, "msg", context);
+        EffectResult<Integer, String> result2 = effect2.run(42, "msg", context);
+        
+        assertEquals(result1.value(), result2.value());
+        assertEquals(result1.state(), result2.state());
+    }
 }
