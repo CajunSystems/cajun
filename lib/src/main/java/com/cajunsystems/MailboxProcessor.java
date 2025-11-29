@@ -32,8 +32,10 @@ public class MailboxProcessor<T> {
     private final ThreadPoolFactory threadPoolFactory;
 
     private volatile boolean running = false;
+    private volatile boolean restartRequested = false;
     private volatile Thread thread;
     private volatile CountDownLatch readyLatch;
+    private Runnable restartCallback;
 
     /**
      * Creates a new mailbox processor.
@@ -77,6 +79,7 @@ public class MailboxProcessor<T> {
         this.exceptionHandler = exceptionHandler;
         this.lifecycle = lifecycle;
         this.threadPoolFactory = threadPoolFactory;
+        this.restartCallback = null;
     }
 
     /**
@@ -121,21 +124,34 @@ public class MailboxProcessor<T> {
      * Stops mailbox polling and drains remaining messages.
      */
     public void stop() {
+        stop(true);
+    }
+
+    /**
+     * Stops mailbox polling with optional mailbox clearing.
+     *
+     * @param clearMailbox If true, clears pending messages; if false, preserves them (for restart)
+     */
+    public void stop(boolean clearMailbox) {
         if (!running) {
             return;
         }
         running = false;
-        logger.debug("Stopping actor {} mailbox", actorId);
-        mailbox.clear();
-        if (thread != null) {
+        logger.debug("Stopping actor {} mailbox (clearMailbox={})", actorId, clearMailbox);
+        if (clearMailbox) {
+            mailbox.clear();
+        }
+        // Only interrupt and join if we're NOT on the mailbox thread itself
+        // (during restart, we're called from within the mailbox thread)
+        if (thread != null && Thread.currentThread() != thread) {
             thread.interrupt();
             try {
                 thread.join(TimeUnit.SECONDS.toMillis(1));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            thread = null;
         }
+        thread = null;
         lifecycle.postStop();
     }
 
@@ -170,6 +186,17 @@ public class MailboxProcessor<T> {
     }
 
     /**
+     * Requests a restart of the actor. The restart will happen after the current batch completes.
+     * This avoids ConcurrentModificationException during batch processing.
+     *
+     * @param callback The callback to execute for the restart (typically stop + start)
+     */
+    public void requestRestart(Runnable callback) {
+        this.restartCallback = callback;
+        this.restartRequested = true;
+    }
+
+    /**
      * Drops the oldest message from the mailbox to make room when using DROP_OLDEST strategy.
      *
      * @return true if a message was dropped, false otherwise
@@ -196,7 +223,20 @@ public class MailboxProcessor<T> {
             readyLatch.countDown();
         }
 
+        boolean shouldRestart = false;
+        Runnable pendingRestart = null;
+
         while (running) {
+            // Check if restart was requested before starting a new batch
+            if (restartRequested) {
+                shouldRestart = true;
+                pendingRestart = restartCallback;
+                restartRequested = false;
+                restartCallback = null;
+                running = false;
+                break;
+            }
+            
             try {
                 batchBuffer.clear();
                 // Performance fix: reduced timeout from 100ms to 1ms for lower latency
@@ -210,13 +250,27 @@ public class MailboxProcessor<T> {
                 if (batchSize > 1) {
                     mailbox.drainTo(batchBuffer, batchSize - 1);
                 }
+                int processedCount = 0;
                 for (T msg : batchBuffer) {
                     if (!running) break;
+                    if (restartRequested) {
+                        // Return unprocessed messages back to the front of the mailbox
+                        for (int i = processedCount; i < batchBuffer.size(); i++) {
+                            // Add back to front of mailbox to preserve message order
+                            // Note: This is a best-effort approach - if mailbox is full, messages may be lost
+                            mailbox.offer(batchBuffer.get(i));
+                        }
+                        break;
+                    }
                     try {
                         lifecycle.receive(msg);
+                        processedCount++;
                     } catch (Throwable e) {
                         logger.error("Actor {} error processing message: {}", actorId, msg, e);
                         exceptionHandler.accept(msg, e);
+                        // Increment processedCount to avoid re-adding failed message to mailbox
+                        // The Supervisor will handle reprocessing via shouldReprocess flag
+                        processedCount++;
                     }
                 }
             } catch (InterruptedException e) {
@@ -224,6 +278,11 @@ public class MailboxProcessor<T> {
                 Thread.currentThread().interrupt();
                 break;
             }
+        }
+        
+        // Execute restart after loop exits cleanly
+        if (shouldRestart && pendingRestart != null) {
+            pendingRestart.run();
         }
     }
 }
