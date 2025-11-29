@@ -87,8 +87,8 @@ public class KVEffectExample {
     }
     
     // MemTable Actor
-    static Effect<MemTableState, MemTableMsg, Void> createMemTableBehavior(Pid manifestActor, Pid sstableActor) {
-        return Effect.<MemTableState, MemTableMsg, Void>match()
+    static Effect<MemTableState, Throwable, Void> createMemTableBehavior(Pid manifestActor, Pid sstableActor) {
+        return Effect.<MemTableState, Throwable, Void, MemTableMsg>match()
             .when(Put.class, (state, msg, ctx) -> {
                 // Example: Could use filterOrElse for validation:
                 // return Effect.<MemTableState, Put, Void>modify(s -> { ... })
@@ -142,8 +142,8 @@ public class KVEffectExample {
     }
     
     // SSTable Actor
-    static Effect<SSTableState, SSTableMsg, Void> createSSTableBehavior() {
-        return Effect.<SSTableState, SSTableMsg, Void>match()
+    static Effect<SSTableState, Throwable, Void> createSSTableBehavior() {
+        return Effect.<SSTableState, Throwable, Void, SSTableMsg>match()
             .when(WriteSSTable.class, (state, msg, ctx) -> {
                 try {
                     Path filePath = Paths.get(state.dataDir(), msg.filename());
@@ -185,8 +185,8 @@ public class KVEffectExample {
     }
     
     // Manifest Actor
-    static Effect<ManifestState, ManifestMsg, Void> createManifestBehavior(Pid sstableActor) {
-        return Effect.<ManifestState, ManifestMsg, Void>match()
+    static Effect<ManifestState, Throwable, Void> createManifestBehavior(Pid sstableActor) {
+        return Effect.<ManifestState, Throwable, Void, ManifestMsg>match()
             .when(RegisterSSTable.class, (state, msg, ctx) -> {
                 List<String> newFiles = new ArrayList<>(state.sstableFiles());
                 newFiles.add(msg.filename());

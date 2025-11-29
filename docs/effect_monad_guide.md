@@ -1,5 +1,8 @@
 # Building Actors with Effects
 
+> **🎉 Updated for Latest Version**: Effect is now stack-safe with simplified type signature!  
+> See the [Effect Refactoring Guide](effect_refactoring_guide.md) for migration details.
+
 ## What are Effects?
 
 Think of an **Effect** as a recipe for what your actor should do when it receives a message. Just like a cooking recipe tells you the steps to make a dish, an Effect tells the actor:
@@ -9,7 +12,31 @@ Think of an **Effect** as a recipe for what your actor should do when it receive
 3. What to log or track
 4. How to handle errors
 
-The beauty of Effects is that you can **compose** them - combine simple recipes into complex behaviors, just like combining basic cooking techniques to create elaborate dishes.
+The beauty of Effects is that you can **compose** them - combine simple recipes into complex behaviors, just like combining basic cooking techniques to create elaborate dishes. And now, Effects are **stack-safe**, meaning you can chain thousands of operations without worrying about stack overflow!
+
+### 🚀 Blocking is Safe!
+
+**Coming from Akka or reactive frameworks?** Great news: **You can forget about `CompletableFuture` chains and async/await complexity!**
+
+Cajun runs on **Java 21+ Virtual Threads** (Project Loom), which means:
+
+- ✅ **Write normal blocking code** - Database calls, HTTP requests, file I/O - just write them naturally
+- ✅ **No Future/Promise hell** - No `.thenCompose()`, `.thenApply()`, or callback chains
+- ✅ **Efficient under the hood** - When you block, only the virtual thread suspends, never the OS thread
+- ✅ **Simple imperative style** - Code looks synchronous but executes efficiently
+
+```java
+// This is perfectly fine in Cajun! No CompletableFuture needed.
+Effect.attempt(() -> {
+    // Looks like blocking code, but it's efficient!
+    var data = database.query("SELECT * FROM users");  // Blocks the VT, not the OS
+    var result = httpClient.get("https://api.example.com");  // Also fine!
+    return processData(data, result);
+})
+.recover(error -> "Fallback value");
+```
+
+**The catch?** While blocking is efficient for the system, remember that **actors process one message at a time**. If your actor blocks for 5 seconds waiting for an API call, it won't process the next message until that call finishes. For parallel work, spawn child actors or use the parallel combinators (`parZip`, `parSequence`).
 
 ## Your First Effect
 
@@ -22,7 +49,8 @@ record Increment(int amount) implements CounterMsg {}
 record GetCount(Pid replyTo) implements CounterMsg {}
 
 // Create an effect that increments the counter
-Effect<Integer, Increment, Void> incrementEffect = 
+// Note: Effect<State, Error, Result> - Message type is at match level
+Effect<Integer, Throwable, Void> incrementEffect = 
     Effect.modify(count -> count + 1);
 ```
 
@@ -36,7 +64,7 @@ Think of your actor's state as a value that flows through a pipeline. Each effec
 // Start with state = 5
 // Message arrives: Increment(10)
 
-Effect<Integer, Increment, Void> effect = 
+Effect<Integer, Throwable, Void> effect = 
     Effect.modify(count -> count + 10);  // Transform: 5 → 15
 
 // State is now 15
@@ -47,7 +75,7 @@ Effect<Integer, Increment, Void> effect =
 The real power comes from chaining effects together. Use `.andThen()` to say "do this, then do that":
 
 ```java
-Effect<Integer, Increment, Void> effect = 
+Effect<Integer, Throwable, Void> effect = 
     Effect.modify(count -> count + 10)           // First: add 10
         .andThen(Effect.logState(c -> "Count is now: " + c));  // Then: log it
 
@@ -58,28 +86,135 @@ Effect<Integer, Increment, Void> effect =
 
 ## Pattern Matching: Handling Different Messages
 
-Real actors need to handle multiple message types. Use `Effect.match()` to route messages:
+Real actors need to handle multiple message types. Use `Effect.match()` to route messages.  
+**Note**: The Message type is specified at the match level, not in the Effect type:
 
 ```java
-Effect<Integer, CounterMsg, Void> counterBehavior = Effect.match()
-    .when(Increment.class, (state, msg, ctx) -> 
-        Effect.modify(s -> s + msg.amount())
-            .andThen(Effect.logState(s -> "Incremented to: " + s)))
-    
-    .when(Decrement.class, (state, msg, ctx) ->
-        Effect.modify(s -> s - msg.amount())
-            .andThen(Effect.logState(s -> "Decremented to: " + s)))
-    
-    .when(GetCount.class, (state, msg, ctx) ->
-        Effect.tell(msg.replyTo(), state))
-    
-    .build();
+// Message type (CounterMsg) is the 4th type parameter in match()
+Effect<Integer, Throwable, Void> counterBehavior = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) -> 
+            Effect.modify(s -> s + msg.amount())
+                .andThen(Effect.logState(s -> "Incremented to: " + s)))
+        
+        .when(Decrement.class, (state, msg, ctx) ->
+            Effect.modify(s -> s - msg.amount())
+                .andThen(Effect.logState(s -> "Decremented to: " + s)))
+        
+        .when(GetCount.class, (state, msg, ctx) ->
+            Effect.tell(msg.replyTo(), state))
+        
+        .build();
 ```
 
 **What's happening here?**
 - When an `Increment` arrives → modify state and log
 - When a `Decrement` arrives → modify state and log  
 - When a `GetCount` arrives → send current state to the requester
+
+## Understanding the Error Type Parameter
+
+You may have noticed `Throwable` as the second type parameter in `Effect<State, Throwable, Result>`. This is the **Error type** - it tells the Effect what kind of errors it can handle.
+
+### Why Not Just Use Throwable Everywhere?
+
+While `Throwable` works for most cases, you can use **specific exception types** for better type safety:
+
+```java
+// Using IOException for file operations
+Effect<FileState, IOException, String> readFile = 
+    Effect.<FileState, IOException, String>attempt(() -> {
+        String content = Files.readString(Path.of("data.txt"));
+        return content;
+    });
+
+// Using SQLException for database operations  
+Effect<DbState, SQLException, ResultSet> queryDb =
+    Effect.<DbState, SQLException, ResultSet>attempt(() -> {
+        // Your database query code
+        return resultSet;
+    });
+
+// Using custom checked exceptions
+class ValidationException extends Exception {
+    ValidationException(String msg) { super(msg); }
+}
+
+Effect<OrderState, ValidationException, Void> validateOrder = 
+    Effect.<OrderState, ValidationException>modify(state -> {
+        if (state.items().isEmpty()) {
+            throw new ValidationException("Order cannot be empty");
+        }
+        return state.withValidated(true);
+    }).attempt();
+```
+
+### When to Use Specific Exception Types
+
+**Use specific exception types when:**
+- You want compile-time guarantees about what errors can occur
+- You're integrating with APIs that throw checked exceptions (File I/O, JDBC, etc.)
+- You have custom domain-specific exceptions
+- You want to handle different error types differently
+
+**Use `Throwable` when:**
+- You're handling multiple different exception types
+- You want maximum flexibility
+- You're just getting started and want simplicity
+
+### Handling Multiple Exception Types
+
+If you need to handle multiple exception types, use their common supertype:
+
+```java
+// Both IOException and SQLException extend Exception
+Effect<State, Exception, Result> effect = 
+    Effect.<State, Exception, Result>attempt(() -> {
+        // Code that might throw IOException or SQLException
+        String data = Files.readString(Path.of("data.txt"));  // throws IOException
+        database.execute(data);  // throws SQLException
+        return result;
+    });
+
+// Then handle them differently in recovery
+Effect<State, Exception, String> handled = effect.handleErrorWith((err, s, m, c) -> {
+    if (err instanceof IOException) {
+        return Effect.of("IO Error: " + err.getMessage());
+    } else if (err instanceof SQLException) {
+        return Effect.of("DB Error: " + err.getMessage());
+    }
+    return Effect.of("Unknown error");
+});
+```
+
+## Alternative: ThrowableEffect
+
+If you find the type parameters verbose, Cajun also provides **`ThrowableEffect<State, Result>`** - a simpler alternative with only 2 type parameters:
+
+```java
+// ThrowableEffect - simpler, always uses Throwable for errors
+ThrowableEffect<Integer, Void> increment = 
+    ThrowableEffect.modify(count -> count + 1);
+
+// Pattern matching with ThrowableEffect
+ThrowableEffect<Integer, Void> behavior = 
+    ThrowableEffect.<Integer, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) -> 
+            ThrowableEffect.modify(s -> s + msg.amount()))
+        .build();
+```
+
+**When to use ThrowableEffect:**
+- You always use `Throwable` as your error type
+- You want less verbose type signatures
+- You're building simple actors
+
+**When to use Effect:**
+- You need specific checked exception types
+- You want maximum type safety
+- You're integrating with APIs that throw checked exceptions
+
+Both `Effect` and `ThrowableEffect` are **stack-safe** and have the same operators. Choose based on your needs!
 
 ## Common Effect Patterns
 
@@ -320,6 +455,83 @@ Effect.when(
 )
 ```
 
+## Best Practices for Virtual Threads
+
+### ✅ DO: Write Simple Blocking Code
+
+```java
+// This is the Cajun way - simple and efficient!
+Effect.attempt(() -> {
+    var user = database.findUser(userId);        // Blocking call - totally fine!
+    var orders = orderService.getOrders(userId); // Another blocking call - great!
+    return new UserProfile(user, orders);
+})
+.recover(error -> UserProfile.empty());
+```
+
+### ⚠️ AVOID: synchronized Blocks
+
+**Important:** `synchronized` blocks can pin virtual threads to OS threads, defeating the purpose of Virtual Threads.
+
+```java
+// ❌ BAD - synchronized pins the virtual thread
+Effect.attempt(() -> {
+    synchronized(lock) {  // This pins the VT to the carrier thread!
+        return sharedResource.read();
+    }
+})
+
+// ✅ GOOD - Use ReentrantLock instead
+Effect.attempt(() -> {
+    lock.lock();  // ReentrantLock is VT-friendly
+    try {
+        return sharedResource.read();
+    } finally {
+        lock.unlock();
+    }
+})
+```
+
+### 🎯 Understanding Effect.ask
+
+`Effect.ask` is a **suspension point** - it looks synchronous but executes efficiently:
+
+```java
+Effect.ask(inventoryActor, new CheckStock(item), Duration.ofSeconds(5))
+    .flatMap(inStock -> {
+        // When the runtime encounters ask, it suspends this actor's virtual thread
+        // until the reply arrives. The code looks synchronous, but the execution
+        // is non-blocking - the OS thread is free to do other work!
+        
+        if (inStock) {
+            return Effect.tell(orderActor, new CreateOrder(item));
+        } else {
+            return Effect.log("Out of stock: " + item);
+        }
+    });
+```
+
+**Remember:** While the OS thread isn't blocked, **this specific actor** won't process its next message until the reply arrives. If you need this actor to remain responsive, consider:
+- Using a child actor to handle the slow operation
+- Using `parZip` to do multiple asks in parallel
+- Setting appropriate timeouts
+
+### 💡 Parallel Operations
+
+When you need an actor to do multiple things at once:
+
+```java
+// ✅ Parallel asks - both happen simultaneously
+Effect.ask(service1, request1, timeout)
+    .parZip(Effect.ask(service2, request2, timeout), (r1, r2) -> 
+        combineResults(r1, r2)
+    );
+
+// ✅ Spawn a child actor for long-running work
+Effect.spawn(WorkerActor.class, initialState, workerBehavior)
+    .flatMap(worker -> Effect.tell(worker, new DoWork(data)));
+```
+
 ## Tips for Beginners
 
 1. **Start Simple** - Begin with basic `modify` and `log` effects
@@ -328,6 +540,8 @@ Effect.when(
 4. **Use Pattern Matching** - It makes message handling clear
 5. **Handle Errors** - Always add `.recover()` for risky operations
 6. **Think in Pipelines** - Data flows through transformations
+7. **Embrace Blocking** - Write natural blocking code, Virtual Threads handle the rest
+8. **Avoid synchronized** - Use `ReentrantLock` if you need locks
 
 ## Next Steps
 
@@ -373,3 +587,10 @@ Effect.match()
 ```
 
 Remember: Effects are just descriptions of what to do. They don't execute until the actor runs them. This makes them easy to test, compose, and reason about!
+
+## Learn More
+
+- **[Effect API Reference](effect_monad_api.md)** - Complete API documentation with all operators
+- **[Effect Refactoring Guide](effect_refactoring_guide.md)** - Migration guide for the new stack-safe API
+- **[ThrowableEffect API](throwable_effect_api.md)** - Documentation for the simpler ThrowableEffect alternative
+- **[Checked Exception Tests](../lib/src/test/java/com/cajunsystems/functional/EffectCheckedExceptionTest.java)** - Examples of using checked exceptions with Effect

@@ -1,15 +1,21 @@
 # Effect Monad API Guide
 
+> **🎉 New in Latest Version**: Effect has been refactored for stack safety and simplicity!  
+> See the [Effect Refactoring Guide](effect_refactoring_guide.md) for migration details.
+
 ## Overview
 
-The Effect monad provides a composable, type-safe way to build actor behaviors using functional programming patterns. It integrates seamlessly with Java's Stream API and reactive libraries while maintaining the actor-oriented nature of Cajun.
+The Effect monad provides a composable, type-safe, **stack-safe** way to build actor behaviors using functional programming patterns. It integrates seamlessly with Java's Stream API and reactive libraries while maintaining the actor-oriented nature of Cajun.
 
 ## Key Features
 
+- **Stack-Safe** - Uses Trampoline pattern to prevent stack overflow on deep compositions
+- **Simplified Type Signature** - `Effect<State, Error, Result>` with Message type at match level
 - **Idiomatic Java naming** - Uses `.of()` instead of `.pure()`, familiar to Java developers
 - **Composable** - Build complex behaviors from simple building blocks
-- **Type-safe** - State transitions and message types are compile-time checked
-- **Error handling** - Explicit error recovery with `.recover()` and `.orElse()`
+- **Type-safe** - State transitions and error types are compile-time checked
+- **Rich Error Handling** - Explicit error recovery with `.recover()`, `.orElse()`, `.attempt()`, and more
+- **Parallel Execution** - Built-in `parZip`, `parSequence`, `race`, and `withTimeout`
 - **Testable** - Pure functions that are easy to test without spawning actors
 - **Stream-compatible** - Works with Java's Stream API and reactive libraries
 
@@ -23,17 +29,18 @@ record Increment(int amount) implements CounterMsg {}
 record Decrement(int amount) implements CounterMsg {}
 record GetCount(Pid replyTo) implements CounterMsg {}
 
-// Define behavior using effects
-Effect<Integer, CounterMsg, Void> counterEffect = Effect.match()
-    .when(Increment.class, (state, msg, ctx) -> 
-        Effect.modify(s -> s + msg.amount())
-            .andThen(Effect.logState(s -> "Count: " + s)))
-    .when(Decrement.class, (state, msg, ctx) ->
-        Effect.modify(s -> s - msg.amount())
-            .andThen(Effect.logState(s -> "Count: " + s)))
-    .when(GetCount.class, (state, msg, ctx) ->
-        Effect.tell(msg.replyTo(), state))
-    .build();
+// Define behavior using effects - Message type is at match level
+Effect<Integer, Throwable, Void> counterEffect = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) -> 
+            Effect.modify(s -> s + msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+        .when(Decrement.class, (state, msg, ctx) ->
+            Effect.modify(s -> s - msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+        .when(GetCount.class, (state, msg, ctx) ->
+            Effect.tell(msg.replyTo(), state))
+        .build();
 
 // Create actor with effect-based behavior
 Pid counter = ActorSystemEffectExtensions.fromEffect(system, counterEffect, 0)
@@ -43,14 +50,20 @@ Pid counter = ActorSystemEffectExtensions.fromEffect(system, counterEffect, 0)
 
 ## Core Concepts
 
-### Effect<State, Message, Result>
+### Effect<State, Error, Result>
 
-An `Effect` represents a computation that:
-- Takes a **state** and **message**
+An `Effect` represents a **stack-safe** computation that:
+- Takes a **state** and **message** (message type specified at match level)
 - Produces a **new state**
 - May produce a **result** value
 - May perform **side effects** (logging, sending messages, etc.)
-- May **fail** with an error
+- May **fail** with an **error** of type `Error` (typically `Throwable`)
+- Returns a `Trampoline<EffectResult<State, Result>>` for stack safety
+
+**Key Changes from Previous Version:**
+- Message type moved from interface to `match()` method
+- All operations return `Trampoline` for stack-safe execution
+- Explicit `Error` type parameter for better type safety
 
 ### EffectResult<State, Result>
 
@@ -65,30 +78,30 @@ The result of executing an effect, which can be:
 
 ```java
 // Return a value without changing state
-Effect<Integer, Msg, String> effect = Effect.of("success");
+Effect<Integer, Throwable, String> effect = Effect.of("success");
 
 // Return current state as result
-Effect<Integer, Msg, Integer> effect = Effect.state();
+Effect<Integer, Throwable, Integer> effect = Effect.state();
 
 // Modify state
-Effect<Integer, Msg, Void> effect = Effect.modify(s -> s + 10);
+Effect<Integer, Throwable, Void> effect = Effect.modify(s -> s + 10);
 
 // Set state to specific value
-Effect<Integer, Msg, Void> effect = Effect.setState(100);
+Effect<Integer, Throwable, Void> effect = Effect.setState(100);
 
 // Keep state unchanged (identity)
-Effect<Integer, Msg, Void> effect = Effect.identity();
+Effect<Integer, Throwable, Void> effect = Effect.identity();
 
-// Use both state and message
-Effect<Integer, String, Void> effect = 
-    Effect.fromTransition((state, msg) -> state + msg.length());
+// Use both state and message (with type casting)
+Effect<Integer, Throwable, Void> effect = 
+    Effect.fromTransition((Integer state, String msg) -> state + msg.length());
 
 // Create failing effect
-Effect<Integer, Msg, String> effect = 
+Effect<Integer, Throwable, String> effect = 
     Effect.fail(new IllegalStateException("error"));
 
 // No-op effect
-Effect<Integer, Msg, Void> effect = Effect.none();
+Effect<Integer, Throwable, Void> effect = Effect.none();
 ```
 
 ## Monadic Operations
@@ -96,15 +109,15 @@ Effect<Integer, Msg, Void> effect = Effect.none();
 ### map() - Transform Result
 
 ```java
-Effect<Integer, Msg, Integer> effect = Effect.of(10);
-Effect<Integer, Msg, String> mapped = effect.map(n -> "Count: " + n);
+Effect<Integer, Throwable, Integer> effect = Effect.of(10);
+Effect<Integer, Throwable, String> mapped = effect.map(n -> "Count: " + n);
 ```
 
 ### flatMap() - Chain Effects
 
 ```java
-Effect<Integer, Msg, Integer> effect = Effect.of(10);
-Effect<Integer, Msg, Integer> chained = effect.flatMap(n -> 
+Effect<Integer, Throwable, Integer> effect = Effect.of(10);
+Effect<Integer, Throwable, Integer> chained = effect.flatMap(n -> 
     Effect.modify(s -> s + n).andThen(Effect.of(n * 2))
 );
 ```
@@ -112,7 +125,7 @@ Effect<Integer, Msg, Integer> chained = effect.flatMap(n ->
 ### andThen() - Sequence Effects
 
 ```java
-Effect<Integer, Msg, Void> combined = 
+Effect<Integer, Throwable, Void> combined = 
     Effect.modify(s -> s + 10)
         .andThen(Effect.modify(s -> s * 2));
 ```
@@ -183,14 +196,14 @@ effect
 ### recover() - Transform Error to Result
 
 ```java
-Effect<Integer, Msg, String> safe = 
+Effect<Integer, Throwable, String> safe = 
     riskyEffect.recover(error -> "Error: " + error.getMessage());
 ```
 
 ### recoverWith() - Run Recovery Effect
 
 ```java
-Effect<Integer, Msg, String> safe = 
+Effect<Integer, Throwable, String> safe = 
     riskyEffect.recoverWith(error -> 
         Effect.modify(s -> s + 100).andThen(Effect.of("recovered"))
     );
@@ -199,14 +212,14 @@ Effect<Integer, Msg, String> safe =
 ### orElse() - Fallback Effect
 
 ```java
-Effect<Integer, Msg, String> robust = 
+Effect<Integer, Throwable, String> robust = 
     riskyEffect.orElse(Effect.of("default"));
 ```
 
 ### attempt() - Catch Exceptions
 
 ```java
-Effect<Integer, Msg, Integer> safe = 
+Effect<Integer, Throwable, Integer> safe = 
     Effect.attempt(() -> riskyOperation());
 ```
 
@@ -215,7 +228,7 @@ Effect<Integer, Msg, Integer> safe =
 ### filter() - Validate with Error
 
 ```java
-Effect<Integer, Msg, Integer> validated = 
+Effect<Integer, Throwable, Integer> validated = 
     effect.filter(count -> count > 0, "Count must be positive");
 ```
 
@@ -250,21 +263,21 @@ effect.filterOrElse(
 ### tap() - Perform Side Effect with Result
 
 ```java
-Effect<Integer, Msg, Result> logged = 
+Effect<Integer, Throwable, Result> logged = 
     effect.tap(result -> System.out.println("Result: " + result));
 ```
 
 ### tapState() - Perform Side Effect with State
 
 ```java
-Effect<Integer, Msg, Result> logged = 
+Effect<Integer, Throwable, Result> logged = 
     effect.tapState(state -> System.out.println("State: " + state));
 ```
 
 ### tapBoth() - Perform Side Effect with Both
 
 ```java
-Effect<Integer, Msg, Result> logged = 
+Effect<Integer, Throwable, Result> logged = 
     effect.tapBoth((state, result) -> 
         System.out.println("State: " + state + ", Result: " + result));
 ```
@@ -292,7 +305,7 @@ Effect<State, Msg, Response> effect =
 Effect<State, Msg, Void> effect = Effect.log("Processing started");
 
 // Log derived from state
-Effect<Integer, Msg, Void> effect = 
+Effect<Integer, Throwable, Void> effect = 
     Effect.logState(count -> "Current count: " + count);
 
 // Log error
@@ -444,16 +457,16 @@ Effect<State, Msg, Result> effect = Effect.of(value)
 
 ```java
 // Good - pure state transformation
-Effect<Integer, Msg, Void> effect = Effect.modify(s -> s + 1);
+Effect<Integer, Throwable, Void> effect = Effect.modify(s -> s + 1);
 
 // Avoid - side effects in modify
-Effect<Integer, Msg, Void> bad = Effect.modify(s -> {
+Effect<Integer, Throwable, Void> bad = Effect.modify(s -> {
     System.out.println("Don't do this");  // Side effect!
     return s + 1;
 });
 
 // Better - use tap for side effects
-Effect<Integer, Msg, Void> good = Effect.modify(s -> s + 1)
+Effect<Integer, Throwable, Void> good = Effect.modify(s -> s + 1)
     .tapState(s -> System.out.println("State: " + s));
 ```
 
@@ -524,7 +537,7 @@ void testEffect() {
 ```java
 @Test
 void testComposition() {
-    Effect<Integer, Msg, String> workflow = Effect.of(10)
+    Effect<Integer, Throwable, String> workflow = Effect.of(10)
         .map(n -> n * 2)
         .flatMap(n -> Effect.modify(s -> s + n).andThen(Effect.of("done")));
     

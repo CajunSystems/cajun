@@ -25,6 +25,15 @@ public final class EffectConversions {
     // ============================================================================
     
     /**
+     * Creates a no-op effect that does nothing and returns the state unchanged.
+     * 
+     * @return An Effect that performs no operation
+     */
+    public static <State, E> Effect<State, E, Void> noOp() {
+        return (state, message, context) -> Trampoline.done(EffectResult.noResult(state));
+    }
+    
+    /**
      * Converts a BiFunction state transition to an Effect.
      * This is the simplest conversion for pure state transitions.
      * 
@@ -37,10 +46,10 @@ public final class EffectConversions {
      * @param transition The state transition function
      * @return An Effect that applies the transition
      */
-    public static <State, Message> Effect<State, Message, Void> fromBiFunction(
+    public static <State, Message, E> Effect<State, E, Void> fromBiFunction(
         BiFunction<State, Message, State> transition
     ) {
-        return Effect.fromTransition(transition);
+        return fromBiFunctionWithErrorHandling(transition, null);
     }
     
     /**
@@ -51,19 +60,20 @@ public final class EffectConversions {
      * @param errorHandler Optional error handler for side effects (logging, etc.)
      * @return An Effect that applies the transition with error handling
      */
-    public static <State, Message> Effect<State, Message, Void> fromBiFunctionWithErrorHandling(
+    @SuppressWarnings("unchecked")
+    public static <State, Message, E> Effect<State, E, Void> fromBiFunctionWithErrorHandling(
         BiFunction<State, Message, State> transition,
         BiConsumer<State, Exception> errorHandler
     ) {
         return (state, message, context) -> {
             try {
-                State newState = transition.apply(state, message);
-                return EffectResult.noResult(newState);
+                State newState = transition.apply(state, (Message) message);
+                return Trampoline.done(EffectResult.noResult(newState));
             } catch (Exception e) {
                 if (errorHandler != null) {
                     errorHandler.accept(state, e);
                 }
-                return EffectResult.failure(state, e);
+                return Trampoline.done(EffectResult.failure(state, e));
             }
         };
     }
@@ -84,8 +94,8 @@ public final class EffectConversions {
      * @param effect The effect to convert
      * @return A BiFunction that executes the effect
      */
-    public static <State, Message, Result> BiFunction<State, Message, State> toBiFunction(
-        Effect<State, Message, Result> effect
+    public static <State, Message, Result, E> BiFunction<State, Message, State> toBiFunction(
+        Effect<State, E, Result> effect
     ) {
         return (state, message) -> {
             EffectResult<State, Result> result = effect.run(state, message, null);
@@ -106,8 +116,8 @@ public final class EffectConversions {
      * @param effect The effect to convert
      * @return A StatefulHandler that executes the effect
      */
-    public static <State, Message, Result> StatefulHandler<State, Message> toStatefulHandler(
-        Effect<State, Message, Result> effect
+    public static <State, Message, Result, E> StatefulHandler<State, Message> toStatefulHandler(
+        Effect<State, E, Result> effect
     ) {
         return new StatefulHandler<State, Message>() {
             @Override
@@ -133,8 +143,8 @@ public final class EffectConversions {
      * @param onError Custom error handler (receives state and error)
      * @return A StatefulHandler that executes the effect with custom error handling
      */
-    public static <State, Message, Result> StatefulHandler<State, Message> toStatefulHandlerWithErrorHandling(
-        Effect<State, Message, Result> effect,
+    public static <State, Message, Result, E> StatefulHandler<State, Message> toStatefulHandlerWithErrorHandling(
+        Effect<State, E, Result> effect,
         BiConsumer<State, Throwable> onError
     ) {
         return new StatefulHandler<State, Message>() {
@@ -166,15 +176,16 @@ public final class EffectConversions {
      * @param handler The handler to convert
      * @return An Effect that delegates to the handler
      */
-    public static <State, Message> Effect<State, Message, Void> fromStatefulHandler(
+    @SuppressWarnings("unchecked")
+    public static <State, Message, E> Effect<State, E, Void> fromStatefulHandler(
         StatefulHandler<State, Message> handler
     ) {
         return (state, message, context) -> {
             try {
-                State newState = handler.receive(message, state, context);
-                return EffectResult.noResult(newState);
+                State newState = handler.receive((Message) message, state, context);
+                return Trampoline.done(EffectResult.noResult(newState));
             } catch (Exception e) {
-                return EffectResult.failure(state, e);
+                return Trampoline.done(EffectResult.failure(state, e));
             }
         };
     }
@@ -213,12 +224,12 @@ public final class EffectConversions {
      * @param sideEffect The side effect to perform
      * @return An Effect that performs the side effect
      */
-    public static <State, Message> Effect<State, Message, Void> liftSideEffect(
+    public static <State, E> Effect<State, E, Void> liftSideEffect(
         java.util.function.Consumer<State> sideEffect
     ) {
         return (state, message, context) -> {
             sideEffect.accept(state);
-            return EffectResult.noResult(state);
+            return Trampoline.done(EffectResult.noResult(state));
         };
     }
 }

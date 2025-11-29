@@ -1,49 +1,60 @@
 package com.cajunsystems.functional;
 
 import com.cajunsystems.ActorContext;
-import com.cajunsystems.Pid;
 
-import java.time.Duration;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * A stack-safe, composable effect monad with explicit error handling.
+ * A stack-safe, composable effect monad with built-in error handling.
  * 
- * <p>Simplified from the original Effect by:
+ * <p>Simplified from {@link Effect} by removing the Message type parameter,
+ * making it less verbose while maintaining full functionality. The Message type
+ * is only specified at the {@link #match()} level where it's actually needed.
+ * 
+ * <p><strong>Key Differences from Effect:</strong>
  * <ul>
- * <li>Using 3 type parameters: State, Error, Result (Message type only at match level)
- * <li>Stack-safe via {@link Trampoline}
- * <li>Explicit Error type instead of just Throwable
+ * <li><strong>Less Verbose</strong> - Only 2 type parameters (State, Result) instead of 3
+ * <li><strong>Stack-Safe</strong> - Uses {@link Trampoline} to prevent StackOverflowError
+ * <li><strong>Built-in Error Channel</strong> - Throwable handling is part of the type
+ * <li><strong>Message Type at Match</strong> - Type constraint only where needed
  * </ul>
  * 
  * <p>Example:
  * <pre>{@code
- * Effect<BankState, String, Void> behavior = 
- *     Effect.<BankState, String, Void, BankMsg>match()
- *         .when(Deposit.class, (state, msg, ctx) -> 
- *             Effect.modify(s -> new BankState(s.balance() + msg.amount()))
- *         )
- *         .build();
+ * // Old Effect - verbose
+ * Effect<BankState, BankMsg, Void> behavior = Effect.<BankState, BankMsg, Void>match()
+ *     .when(Deposit.class, (state, msg, ctx) -> ...)
+ *     .build();
+ * 
+ * // New ThrowableEffect - concise
+ * ThrowableEffect<BankState, Void> behavior = ThrowableEffect.<BankState>match()
+ *     .when(Deposit.class, (state, msg, ctx) -> ...)
+ *     .build();
  * }</pre>
  * 
  * @param <S> The state type
- * @param <E> The error type
  * @param <R> The result type
  */
 @FunctionalInterface
-public interface Effect<S, E, R> {
+public interface ThrowableEffect<S, R> {
     
     /**
      * Runs this effect with the given state, message, and context.
      * Returns a {@link Trampoline} for stack-safe evaluation.
+     * 
+     * @param state The current state
+     * @param message The message being processed
+     * @param context The actor context
+     * @return A trampoline that will produce the effect result
      */
     Trampoline<EffectResult<S, R>> runT(S state, Object message, ActorContext context);
     
     /**
-     * Convenience method that runs the trampoline immediately.
+     * Runs this effect and evaluates the trampoline immediately.
+     * Convenience method for {@code runT(state, message, context).run()}.
      */
     default EffectResult<S, R> run(S state, Object message, ActorContext context) {
         return runT(state, message, context).run();
@@ -53,105 +64,70 @@ public interface Effect<S, E, R> {
     // Factory Methods
     // ============================================================================
     
-    static <S, E, R> Effect<S, E, R> of(R value) {
+    /**
+     * Creates an effect that returns a constant value.
+     */
+    static <S, R> ThrowableEffect<S, R> of(R value) {
         return (state, message, context) -> 
             Trampoline.done(EffectResult.success(state, value));
     }
     
-    static <S, E> Effect<S, E, S> state() {
+    /**
+     * Creates an effect that returns the current state as the result.
+     */
+    static <S> ThrowableEffect<S, S> state() {
         return (state, message, context) -> 
             Trampoline.done(EffectResult.success(state, state));
     }
     
-    static <S, E> Effect<S, E, Void> modify(Function<S, S> f) {
+    /**
+     * Creates an effect that modifies the state.
+     */
+    static <S> ThrowableEffect<S, Void> modify(Function<S, S> f) {
         return (state, message, context) -> 
             Trampoline.done(EffectResult.noResult(f.apply(state)));
     }
     
-    static <S, E> Effect<S, E, Void> setState(S newState) {
+    /**
+     * Creates an effect that sets the state to a specific value.
+     */
+    static <S> ThrowableEffect<S, Void> setState(S newState) {
         return (state, message, context) -> 
             Trampoline.done(EffectResult.noResult(newState));
     }
     
-    static <S, E> Effect<S, E, Void> identity() {
+    /**
+     * Creates an effect that keeps the state unchanged (identity function).
+     */
+    static <S> ThrowableEffect<S, Void> identity() {
         return (state, message, context) -> 
             Trampoline.done(EffectResult.noResult(state));
     }
     
-    static <S, E> Effect<S, E, Void> none() {
-        return identity();
-    }
-    
-    static <S, E, R> Effect<S, E, R> fail(E error) {
+    /**
+     * Creates an effect that fails with the given error.
+     */
+    static <S, R> ThrowableEffect<S, R> fail(Throwable error) {
         return (state, message, context) -> 
-            Trampoline.done(EffectResult.failure(state, (Throwable) error));
-    }
-    
-    @SuppressWarnings("unchecked")
-    static <S, E, M> Effect<S, E, Void> fromTransition(
-            java.util.function.BiFunction<S, M, S> transition) {
-        return (state, message, context) -> {
-            try {
-                S newState = transition.apply(state, (M) message);
-                return Trampoline.done(EffectResult.noResult(newState));
-            } catch (Exception e) {
-                return Trampoline.done(EffectResult.failure(state, e));
-            }
-        };
-    }
-    
-    static <S, E> Effect<S, E, Void> log(String message) {
-        return (state, msg, context) -> {
-            context.getLogger().info(message);
-            return Trampoline.done(EffectResult.noResult(state));
-        };
-    }
-    
-    static <S, E> Effect<S, E, Void> logError(String message) {
-        return (state, msg, context) -> {
-            context.getLogger().error(message);
-            return Trampoline.done(EffectResult.noResult(state));
-        };
-    }
-    
-    static <S, E> Effect<S, E, Void> logError(String message, Throwable error) {
-        return (state, msg, context) -> {
-            context.getLogger().error(message, error);
-            return Trampoline.done(EffectResult.noResult(state));
-        };
-    }
-    
-    static <S, E> Effect<S, E, Void> logState(java.util.function.Function<S, String> formatter) {
-        return (state, msg, context) -> {
-            context.getLogger().info(formatter.apply(state));
-            return Trampoline.done(EffectResult.noResult(state));
-        };
-    }
-    
-    static <S, E, M> Effect<S, E, Void> tell(Pid target, M message) {
-        return (state, msg, context) -> {
-            target.tell(message);
-            return Trampoline.done(EffectResult.noResult(state));
-        };
-    }
-    
-    static <S, E, M> Effect<S, E, Void> tellSelf(M message) {
-        return (state, msg, context) -> {
-            context.self().tell(message);
-            return Trampoline.done(EffectResult.noResult(state));
-        };
+            Trampoline.done(EffectResult.failure(state, error));
     }
     
     // ============================================================================
     // Monadic Operations - Stack-Safe
     // ============================================================================
     
-    default <R2> Effect<S, E, R2> map(Function<R, R2> f) {
+    /**
+     * Maps the result value. Stack-safe via trampoline.
+     */
+    default <R2> ThrowableEffect<S, R2> map(Function<R, R2> f) {
         return (state, message, context) -> 
             runT(state, message, context).map(result -> result.map(f));
     }
     
-    default <R2> Effect<S, E, R2> flatMap(Function<R, Effect<S, E, R2>> f) {
+    /**
+     * FlatMaps the result value. Stack-safe via trampoline.
+     */
+    default <R2> ThrowableEffect<S, R2> flatMap(Function<R, ThrowableEffect<S, R2>> f) {
         return (state, message, context) -> 
             runT(state, message, context).flatMap(result -> 
                 result.value()
@@ -160,7 +136,11 @@ public interface Effect<S, E, R> {
             );
     }
     
-    default <R2> Effect<S, E, R2> andThen(Effect<S, E, R2> next) {
+    /**
+     * Sequences two effects, running this one first then the other.
+     * Stack-safe via trampoline.
+     */
+    default <R2> ThrowableEffect<S, R2> andThen(ThrowableEffect<S, R2> next) {
         return (state, message, context) -> 
             runT(state, message, context).flatMap(result -> 
                 next.runT(result.state(), message, context)
@@ -168,10 +148,13 @@ public interface Effect<S, E, R> {
     }
     
     // ============================================================================
-    // Error Channel
+    // Error Channel - Built-in Throwable Handling
     // ============================================================================
     
-    default Effect<S, E, R> attempt() {
+    /**
+     * Catches any exceptions thrown by this effect and converts them to failures.
+     */
+    default ThrowableEffect<S, R> attempt() {
         return (state, message, context) -> {
             try {
                 return runT(state, message, context);
@@ -181,8 +164,11 @@ public interface Effect<S, E, R> {
         };
     }
     
-    default Effect<S, E, R> handleErrorWith(
-            QuadFunction<Throwable, S, Object, ActorContext, Effect<S, E, R>> handler) {
+    /**
+     * Handles errors by providing a recovery effect.
+     */
+    default ThrowableEffect<S, R> handleErrorWith(
+            QuadFunction<Throwable, S, Object, ActorContext, ThrowableEffect<S, R>> handler) {
         return (state, message, context) -> 
             runT(state, message, context).flatMap(result -> {
                 if (result instanceof EffectResult.Failure<S, R> failure) {
@@ -193,14 +179,20 @@ public interface Effect<S, E, R> {
             });
     }
     
-    default Effect<S, E, R> handleError(
+    /**
+     * Handles errors by recovering the state.
+     */
+    default ThrowableEffect<S, R> handleError(
             QuadFunction<Throwable, S, Object, ActorContext, S> handler) {
         return handleErrorWith((err, s, m, c) -> 
             (st, ms, ct) -> Trampoline.done(EffectResult.noResult(handler.apply(err, s, m, c)))
         );
     }
     
-    default Effect<S, E, R> tapError(Consumer<Throwable> action) {
+    /**
+     * Performs a side effect when an error occurs, without changing the result.
+     */
+    default ThrowableEffect<S, R> tapError(Consumer<Throwable> action) {
         return (state, message, context) -> 
             runT(state, message, context).map(result -> {
                 if (result instanceof EffectResult.Failure<S, R> failure) {
@@ -210,75 +202,19 @@ public interface Effect<S, E, R> {
             });
     }
     
-    default Effect<S, E, R> orElse(Effect<S, E, R> fallback) {
-        return (state, message, context) -> 
-            runT(state, message, context).flatMap(result -> {
-                if (result instanceof EffectResult.Failure<S, R>) {
-                    return fallback.runT(state, message, context);
-                }
-                return Trampoline.done(result);
-            });
-    }
-    
-    default Effect<S, E, R> recover(Function<Throwable, R> recovery) {
-        return (state, message, context) -> 
-            runT(state, message, context).map(result -> {
-                if (result instanceof EffectResult.Failure<S, R> failure) {
-                    try {
-                        R recovered = recovery.apply(failure.errorValue());
-                        return EffectResult.success(failure.state(), recovered);
-                    } catch (Exception e) {
-                        return EffectResult.failure(failure.state(), e);
-                    }
-                }
-                return result;
-            });
-    }
-    
-    default Effect<S, E, R> recoverWith(Function<Throwable, Effect<S, E, R>> recovery) {
-        return handleErrorWith((err, s, m, c) -> recovery.apply(err));
-    }
-    
-    default Effect<S, E, R> onError(Consumer<Throwable> action) {
-        return tapError(action);
-    }
-    
-    default <R2, R3> Effect<S, E, R3> zip(
-            Effect<S, E, R2> other,
-            BiFunction<R, R2, R3> combiner) {
-        return (state, message, context) -> 
-            runT(state, message, context).flatMap(result1 -> {
-                if (result1 instanceof EffectResult.Failure<S, R> f) {
-                    return Trampoline.done(EffectResult.failure(f.state(), f.errorValue()));
-                }
-                
-                return other.runT(result1.state(), message, context).map(result2 -> {
-                    if (result2 instanceof EffectResult.Failure<S, R2> f) {
-                        return EffectResult.failure(f.state(), f.errorValue());
-                    }
-                    
-                    java.util.Optional<R> val1 = result1.value();
-                    java.util.Optional<R2> val2 = result2.value();
-                    
-                    if (val1.isPresent() && val2.isPresent()) {
-                        R3 combined = combiner.apply(val1.get(), val2.get());
-                        return EffectResult.success(result2.state(), combined);
-                    }
-                    
-                    return EffectResult.noResult(result2.state());
-                });
-            });
-    }
-    
     // ============================================================================
     // Validation
     // ============================================================================
     
-    default Effect<S, E, R> filterOrElse(
+    /**
+     * Validates the state with a predicate, providing a custom fallback effect.
+     */
+    default ThrowableEffect<S, R> filterOrElse(
             Predicate<S> predicate,
-            Effect<S, E, R> fallback) {
+            ThrowableEffect<S, R> fallback) {
         return (state, message, context) -> 
             runT(state, message, context).flatMap(result -> {
+                // Check predicate for both Success and NoResult
                 if (result instanceof EffectResult.Success<S, R> success) {
                     if (predicate.test(success.state())) {
                         return Trampoline.done(result);
@@ -292,6 +228,7 @@ public interface Effect<S, E, R> {
                         return fallback.runT(noResult.state(), message, context);
                     }
                 }
+                // Failure - pass through
                 return Trampoline.done(result);
             });
     }
@@ -300,7 +237,10 @@ public interface Effect<S, E, R> {
     // Side Effects
     // ============================================================================
     
-    default Effect<S, E, R> tap(Consumer<R> action) {
+    /**
+     * Performs a side effect with the result value.
+     */
+    default ThrowableEffect<S, R> tap(Consumer<R> action) {
         return (state, message, context) -> 
             runT(state, message, context).map(result -> {
                 result.value().ifPresent(action);
@@ -308,7 +248,10 @@ public interface Effect<S, E, R> {
             });
     }
     
-    default Effect<S, E, R> tapState(Consumer<S> action) {
+    /**
+     * Performs a side effect with the state.
+     */
+    default ThrowableEffect<S, R> tapState(Consumer<S> action) {
         return (state, message, context) -> 
             runT(state, message, context).map(result -> {
                 action.accept(result.state());
@@ -320,8 +263,11 @@ public interface Effect<S, E, R> {
     // Parallel Execution - Stack-Safe
     // ============================================================================
     
-    default <R2, R3> Effect<S, E, R3> parZip(
-            Effect<S, E, R2> other,
+    /**
+     * Runs two effects in parallel and combines their results.
+     */
+    default <R2, R3> ThrowableEffect<S, R3> parZip(
+            ThrowableEffect<S, R2> other,
             BiFunction<R, R2, R3> combiner) {
         return (state, message, context) -> Trampoline.delay(() -> {
             java.util.concurrent.CompletableFuture<EffectResult<S, R>> future1 = 
@@ -360,8 +306,11 @@ public interface Effect<S, E, R> {
         });
     }
     
-    static <S, E, R> Effect<S, E, java.util.List<R>> parSequence(
-            java.util.List<Effect<S, E, R>> effects) {
+    /**
+     * Runs a list of effects in parallel and collects all results.
+     */
+    static <S, R> ThrowableEffect<S, java.util.List<R>> parSequence(
+            java.util.List<ThrowableEffect<S, R>> effects) {
         return (state, message, context) -> Trampoline.delay(() -> {
             java.util.List<java.util.concurrent.CompletableFuture<EffectResult<S, R>>> futures = 
                 effects.stream()
@@ -396,13 +345,28 @@ public interface Effect<S, E, R> {
         });
     }
     
-    static <S, E, R> Effect<S, E, java.util.List<R>> sequence(
-            java.util.List<Effect<S, E, R>> effects) {
+    /**
+     * Runs a list of effects sequentially, threading state through each.
+     */
+    static <S, R> ThrowableEffect<S, java.util.List<R>> sequence(
+            java.util.List<ThrowableEffect<S, R>> effects) {
         return (state, message, context) -> {
+            java.util.List<Trampoline<EffectResult<S, R>>> trampolines = 
+                new java.util.ArrayList<>();
+            
+            S currentState = state;
+            for (ThrowableEffect<S, R> effect : effects) {
+                final S capturedState = currentState;
+                trampolines.add(effect.runT(capturedState, message, context));
+                // Note: We need to evaluate each to get the next state
+                // This is done in the flatMap chain below
+            }
+            
+            // Build a chain of trampolines that threads state through
             Trampoline<EffectResult<S, java.util.List<R>>> result = 
                 Trampoline.done(EffectResult.success(state, new java.util.ArrayList<R>()));
             
-            for (Effect<S, E, R> effect : effects) {
+            for (ThrowableEffect<S, R> effect : effects) {
                 result = result.flatMap(listResult -> 
                     effect.runT(listResult.state(), message, context).map(itemResult -> {
                         if (itemResult instanceof EffectResult.Failure<S, R> failure) {
@@ -421,52 +385,15 @@ public interface Effect<S, E, R> {
     }
     
     // ============================================================================
-    // Race and Timeout
-    // ============================================================================
-    
-    default Effect<S, E, R> race(Effect<S, E, R> other) {
-        return (state, message, context) -> Trampoline.delay(() -> {
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future1 = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    this.run(state, message, context)
-                );
-            
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future2 = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    other.run(state, message, context)
-                );
-            
-            try {
-                return (EffectResult<S, R>) java.util.concurrent.CompletableFuture.anyOf(future1, future2).get();
-            } catch (Exception e) {
-                return EffectResult.failure(state, e);
-            }
-        });
-    }
-    
-    default Effect<S, E, R> withTimeout(Duration timeout) {
-        return (state, message, context) -> Trampoline.delay(() -> {
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    this.run(state, message, context)
-                );
-            
-            try {
-                return future.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
-            } catch (java.util.concurrent.TimeoutException e) {
-                return EffectResult.failure(state, e);
-            } catch (Exception e) {
-                return EffectResult.failure(state, e);
-            }
-        });
-    }
-    
-    // ============================================================================
     // Match Builder
     // ============================================================================
     
-    static <S, E, R, M> EffectMatchBuilder<S, E, R, M> match() {
-        return new EffectMatchBuilder<>();
+    /**
+     * Creates a match builder for pattern matching on message types.
+     * This is where the Message type constraint is applied.
+     */
+    static <S> ThrowableEffectMatchBuilder<S> match() {
+        return new ThrowableEffectMatchBuilder<>();
     }
     
     /**

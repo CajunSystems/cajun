@@ -718,20 +718,21 @@ record Increment(int amount) implements CounterMsg {}
 record Decrement(int amount) implements CounterMsg {}
 record GetCount(Pid replyTo) implements CounterMsg {}
 
-// Build behavior using effects
-Effect<Integer, CounterMsg, Void> counterBehavior = Effect.match()
-    .when(Increment.class, (state, msg, ctx) -> 
-        Effect.modify(s -> s + msg.amount())
-            .andThen(Effect.logState(s -> "Count: " + s)))
-    
-    .when(Decrement.class, (state, msg, ctx) ->
-        Effect.modify(s -> s - msg.amount())
-            .andThen(Effect.logState(s -> "Count: " + s)))
-    
-    .when(GetCount.class, (state, msg, ctx) ->
-        Effect.tell(msg.replyTo(), state))
-    
-    .build();
+// Build behavior using effects - Note: Message type is at match level
+Effect<Integer, Throwable, Void> counterBehavior = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) -> 
+            Effect.modify(s -> s + msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+        
+        .when(Decrement.class, (state, msg, ctx) ->
+            Effect.modify(s -> s - msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+        
+        .when(GetCount.class, (state, msg, ctx) ->
+            Effect.tell(msg.replyTo(), state))
+        
+        .build();
 
 // Create actor from effect
 Pid counter = fromEffect(system, counterBehavior, 0)
@@ -745,9 +746,15 @@ counter.tell(new Increment(5));
 #### Why Use Effects?
 
 - **Composable**: Build complex behaviors from simple building blocks
-- **Type-safe**: Compile-time checking of state and message types
+- **Stack-Safe**: Uses Trampoline pattern to prevent stack overflow on deep compositions
+- **🚀 Blocking is Safe**: Cajun runs on Java 21+ Virtual Threads - write normal blocking code without fear!
+  - No `CompletableFuture` chains or async/await complexity
+  - Database calls, HTTP requests, file I/O - just write them naturally
+  - Virtual threads handle suspension efficiently - you never block an OS thread
+- **Type-safe**: Compile-time checking of state and error types
 - **Testable**: Pure functions that are easy to test without spawning actors
-- **Error handling**: Explicit error recovery with `.recover()` and `.orElse()`
+- **Error handling**: Explicit error recovery with `.recover()`, `.orElse()`, and rich error combinators
+- **Parallel Execution**: Built-in support for `parZip`, `parSequence`, `race`, and `withTimeout`
 - **Readable**: Declarative style makes intent clear
 
 #### Common Effect Patterns
@@ -779,10 +786,22 @@ Effect.attempt(() -> riskyOperation())
     .orElse(Effect.of(fallbackValue))
 ```
 
+**Blocking I/O (Safe with Virtual Threads!):**
+```java
+// Write natural blocking code - Virtual Threads make it efficient!
+Effect.attempt(() -> {
+    var user = database.findUser(userId);           // Blocking - totally fine!
+    var profile = httpClient.get("/api/profile");   // Also blocking - great!
+    return new UserData(user, profile);
+})
+.recover(error -> UserData.empty());
+```
+
 #### Learn More
 
 - **[Effect Monad Guide](docs/effect_monad_guide.md)** - Beginner-friendly introduction with examples
 - **[Effect API Reference](docs/effect_monad_api.md)** - Complete API documentation
+- **[Effect Refactoring Guide](docs/effect_refactoring_guide.md)** - Migration guide for the new stack-safe API
 - **[Functional Actor Evolution](docs/functional_actor_evolution.md)** - Advanced patterns and migration guide
 
 ### Using the Actor System
