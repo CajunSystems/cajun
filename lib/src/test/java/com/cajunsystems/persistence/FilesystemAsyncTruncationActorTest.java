@@ -8,8 +8,10 @@ import com.cajunsystems.StatefulActor;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.persistence.filesystem.FileSystemCleanupDaemon;
 import com.cajunsystems.persistence.impl.FileSystemPersistenceProvider;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * journals bounded while preserving correct recovery semantics for a
  * real stateful actor.
  */
+@ExtendWith(TempPersistenceExtension.class)
 class FilesystemAsyncTruncationActorTest {
 
     private ActorSystem system;

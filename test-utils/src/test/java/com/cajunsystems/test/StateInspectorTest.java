@@ -4,6 +4,7 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.StatefulHandler;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.Serializable;
 import java.time.Duration;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Tests for StateInspector functionality.
  */
+@ExtendWith(TempPersistenceExtension.class)
 class StateInspectorTest {
     
     // Messages

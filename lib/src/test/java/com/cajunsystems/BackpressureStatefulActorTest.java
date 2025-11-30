@@ -2,7 +2,9 @@ package com.cajunsystems;
 
 import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.persistence.*;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.Serializable;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +22,7 @@ import static org.mockito.Mockito.*;
  * Unit tests for StatefulActor with backpressure capabilities.
  * These tests focus on verifying the backpressure mechanisms and retry logic.
  */
+@ExtendWith(TempPersistenceExtension.class)
 public class BackpressureStatefulActorTest {
 
     private ActorSystem actorSystem;

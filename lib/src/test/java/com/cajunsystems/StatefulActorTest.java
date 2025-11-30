@@ -2,7 +2,9 @@ package com.cajunsystems;
 
 import com.cajunsystems.persistence.*;
 import com.cajunsystems.test.AsyncAssertion;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -26,6 +28,7 @@ import java.util.function.Consumer;
  * 4. Error handling (during initialization, message processing)
  * 5. Advanced scenarios (concurrent operations, timing-dependent behavior)
  */
+@ExtendWith(TempPersistenceExtension.class)
 public class StatefulActorTest {
 
     /**

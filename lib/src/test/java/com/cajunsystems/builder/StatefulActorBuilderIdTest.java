@@ -5,9 +5,11 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.Serializable;
 import java.util.UUID;
@@ -19,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Integration tests for StatefulActorBuilder ID generation.
  * Tests ID priority hierarchy, hierarchical actor relationships, and persistence integration for stateful actors.
  */
+@ExtendWith(TempPersistenceExtension.class)
 class StatefulActorBuilderIdTest {
 
     private ActorSystem system;

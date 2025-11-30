@@ -5,6 +5,7 @@ import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.Serializable;
 import java.time.Duration;
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Example tests demonstrating TestKit usage patterns.
  * These serve as both tests and documentation.
  */
+@ExtendWith(TempPersistenceExtension.class)
 class TestKitExampleTest {
     
     // Message types (Serializable for stateful actors)

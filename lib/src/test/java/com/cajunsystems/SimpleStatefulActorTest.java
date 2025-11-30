@@ -22,15 +22,17 @@ import com.cajunsystems.mocks.MockActorSystem;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
+import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Simple tests for StatefulActor that focus on basic functionality.
  * Uses mocks for better isolation and more focused testing.
  */
+@ExtendWith(TempPersistenceExtension.class)
 class SimpleStatefulActorTest {
 
     private MockActorSystem mockActorSystem;
