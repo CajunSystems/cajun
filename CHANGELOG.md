@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Flexible Actor ID Management System**: Comprehensive ID control with multiple strategies and priority system
+  - **4-Tier Priority System**: Explicit IDs → Templates → Strategies → System Default (UUID)
+  - **Explicit IDs**: Manually specify exact IDs with `withId("my-actor")`
+    - Support for Unicode characters and special symbols
+    - Best for singletons and well-known services
+  - **ID Templates**: Dynamic ID generation using placeholders with `withIdTemplate("pattern")`
+    - **8 Placeholders**: `{seq}`, `{template-seq}`, `{uuid}`, `{short-uuid}`, `{timestamp}`, `{nano}`, `{class}`, `{parent}`
+    - Auto-incrementing counters per template prefix
+    - Flexible composition: `"user-{seq}"`, `"{class}-{seq}-{short-uuid}"`, `"session-{timestamp}-{seq}"`
+  - **Predefined ID Strategies**: Consistent ID generation with `withIdStrategy(IdStrategy.*)`
+    - `UUID`: Random UUID (default fallback)
+    - `CLASS_BASED_UUID`: `{class}:{uuid}` format
+    - `CLASS_BASED_SEQUENTIAL`: `{class}:{seq}` format (most readable)
+    - `SEQUENTIAL`: Simple counter
+  - **Hierarchical IDs**: Automatic parent/child ID prefixing
+    - Children automatically prefixed with parent ID: `"parent/child"`
+    - Works with all ID methods (explicit, templates, strategies)
+    - Supports deep hierarchies: `"grandparent/parent/child"`
+  - **Builder Pattern Integration**: Seamless integration with `ActorBuilder` and `StatefulActorBuilder`
+  - **Documentation**: Complete guide with examples, best practices, and use cases
+
 - **Effect Monad for Functional Actors**: Complete functional programming API for actor behaviors
   - **Stack-Safe**: Uses Trampoline for unbounded effect composition without stack overflow
   - **Type-Safe Error Handling**: `Effect<State, Error, Result>` with explicit error channel
@@ -51,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Error type is now explicit (typically `Throwable` or custom exception types)
 
 ### Documentation
+- Added **Actor ID Strategies Guide** (`docs/actor_id_strategies.md`) - Comprehensive guide to actor ID management
+  - Complete reference for all 8 template placeholders
+  - Detailed examples for each ID strategy
+  - Best practices and use cases
+  - Hierarchical ID patterns
+  - Multi-tenant and microservice architecture examples
+- Updated **README.md** with Actor ID Strategies section
+  - Quick reference for all ID methods
+  - Priority system explanation
+  - Strategy comparison table
+  - Link to detailed guide
 - Added **Effect Monad Guide** (`docs/effect_monad_guide.md`) - Beginner-friendly introduction
 - Added **Effect API Reference** (`docs/effect_monad_api.md`) - Complete API documentation
 - Added **Functional Actor Evolution** (`docs/functional_actor_evolution.md`) - Advanced patterns

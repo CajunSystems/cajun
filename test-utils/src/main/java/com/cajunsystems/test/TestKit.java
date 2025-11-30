@@ -2,6 +2,7 @@ package com.cajunsystems.test;
 
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
+import com.cajunsystems.builder.IdStrategy;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 
@@ -116,6 +117,8 @@ public class TestKit implements AutoCloseable {
     
     /**
      * Spawns a stateful actor with test instrumentation.
+     * Uses UUID-based ID strategy to ensure unique IDs across test runs and prevent
+     * state persistence issues that could occur with deterministic IDs like CLASS_BASED_SEQUENTIAL.
      * 
      * @param handlerClass the stateful handler class to instantiate
      * @param initialState the initial state
@@ -126,7 +129,9 @@ public class TestKit implements AutoCloseable {
     public <S, T> TestPid<T> spawnStateful(
             Class<? extends StatefulHandler<S, T>> handlerClass, 
             S initialState) {
-        Pid pid = system.statefulActorOf(handlerClass, initialState).spawn();
+        Pid pid = system.statefulActorOf(handlerClass, initialState)
+                .withIdStrategy(IdStrategy.UUID)
+                .spawn();
         return new TestPid<>(pid, system);
     }
     
@@ -142,7 +147,9 @@ public class TestKit implements AutoCloseable {
     public <S, T> TestPid<T> spawnStateful(
             StatefulHandler<S, T> handler, 
             S initialState) {
-        Pid pid = system.statefulActorOf(handler, initialState).spawn();
+        Pid pid = system.statefulActorOf(handler, initialState)
+                .withIdStrategy(com.cajunsystems.builder.IdStrategy.UUID)
+                .spawn();
         return new TestPid<>(pid, system);
     }
     

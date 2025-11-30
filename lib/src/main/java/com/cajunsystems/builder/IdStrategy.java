@@ -2,7 +2,7 @@ package com.cajunsystems.builder;
 
 import com.cajunsystems.ActorSystem;
 
-import java.util.UUID;
+import static java.util.UUID.randomUUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -73,7 +73,7 @@ public interface IdStrategy {
             String baseName = extractBaseName(ctx.handlerClass());
             long seq = counters.computeIfAbsent(baseName, k -> new AtomicLong(0))
                               .incrementAndGet();
-            return baseName + ":" + seq;
+            return STR."\{baseName}:\{seq}";
         }
 
         /**
@@ -113,7 +113,7 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_UUID = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        return baseName + ":" + java.util.UUID.randomUUID().toString();
+        return STR."\{baseName}:\{randomUUID()}";
     };
 
     /**
@@ -123,8 +123,8 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_SHORT_UUID = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        String shortId = java.util.UUID.randomUUID().toString().substring(0, 8);
-        return baseName + ":" + shortId;
+        String shortId = randomUUID().toString().substring(0, 8);
+        return STR."\{baseName}:\{shortId}";
     };
 
     /**
@@ -134,7 +134,7 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_TIMESTAMP = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        return baseName + ":" + System.currentTimeMillis();
+        return STR."\{baseName}:\{System.currentTimeMillis()}";
     };
 
     /**
@@ -144,7 +144,7 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_NANO = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        return baseName + ":" + System.nanoTime();
+        return STR."\{baseName}:\{System.nanoTime()}";
     };
 
     /**
