@@ -10,6 +10,7 @@ import java.util.function.Consumer;
 
 import com.cajunsystems.backpressure.*;
 import com.cajunsystems.builder.ActorBuilder;
+import com.cajunsystems.builder.IdStrategy;
 import com.cajunsystems.builder.StatefulActorBuilder;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
@@ -17,6 +18,7 @@ import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.persistence.PersistenceProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -140,7 +142,9 @@ public class ActorSystem {
     private final MailboxConfig mailboxConfig;
     private final MailboxProvider<?> mailboxProvider;
     private final SystemBackpressureMonitor backpressureMonitor;
-    
+    private PersistenceProvider persistenceProvider;
+    private IdStrategy defaultIdStrategy = IdStrategy.CLASS_BASED_SEQUENTIAL;
+
     // Keep-alive mechanism for virtual threads
     private final Thread keepAliveThread;
     private final CountDownLatch shutdownLatch;
@@ -539,21 +543,26 @@ public class ActorSystem {
     public <Message> ActorBuilder<Message> actorOf(Class<? extends Handler<Message>> handlerClass) {
         try {
             Handler<Message> handler = handlerClass.getDeclaredConstructor().newInstance();
-            return new ActorBuilder<Message>(this, handler);
+            return new ActorBuilder<Message>(this, handler, handlerClass);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
         }
     }
-    
+
     /**
      * Creates a builder for a new actor with the specified handler instance.
-     * 
+     * Note: When using this method, the handler class will be inferred from the instance,
+     * which may not work correctly for anonymous classes or lambdas. Prefer using
+     * {@link #actorOf(Class)} when possible.
+     *
      * @param <Message> The type of messages the actor will handle
      * @param handler The handler instance to use
      * @return A builder for configuring and creating the actor
      */
+    @SuppressWarnings("unchecked")
     public <Message> ActorBuilder<Message> actorOf(Handler<Message> handler) {
-        return new ActorBuilder<Message>(this, handler);
+        Class<? extends Handler<Message>> handlerClass = (Class<? extends Handler<Message>>) handler.getClass();
+        return new ActorBuilder<Message>(this, handler, handlerClass);
     }
     
     /**
@@ -571,25 +580,31 @@ public class ActorSystem {
             State initialState) {
         try {
             StatefulHandler<State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
-            return new StatefulActorBuilder<State, Message>(this, handler, initialState);
+            return new StatefulActorBuilder<State, Message>(this, handler, handlerClass, initialState);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
         }
     }
-    
+
     /**
      * Creates a builder for a new stateful actor with the specified handler instance and initial state.
-     * 
+     * Note: When using this method, the handler class will be inferred from the instance,
+     * which may not work correctly for anonymous classes or lambdas. Prefer using
+     * {@link #statefulActorOf(Class, Object)} when possible.
+     *
      * @param <State> The type of the actor's state
      * @param <Message> The type of messages the actor will handle
      * @param handler The handler instance to use
      * @param initialState The initial state for the actor
      * @return A builder for configuring and creating the stateful actor
      */
+    @SuppressWarnings("unchecked")
     public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
-            StatefulHandler<State, Message> handler, 
+            StatefulHandler<State, Message> handler,
             State initialState) {
-        return new StatefulActorBuilder<State, Message>(this, handler, initialState);
+        Class<? extends StatefulHandler<State, Message>> handlerClass =
+            (Class<? extends StatefulHandler<State, Message>>) handler.getClass();
+        return new StatefulActorBuilder<State, Message>(this, handler, handlerClass, initialState);
     }
     
     /**
@@ -656,11 +671,49 @@ public class ActorSystem {
     /**
      * Gets the backpressure monitor for this actor system.
      * The monitor provides centralized access to actor backpressure functionality.
-     * 
+     *
      * @return The system backpressure monitor
      */
     public SystemBackpressureMonitor getBackpressureMonitor() {
         return backpressureMonitor;
+    }
+
+    /**
+     * Gets the persistence provider for this actor system.
+     *
+     * @return The persistence provider, or null if not configured
+     */
+    public PersistenceProvider getPersistenceProvider() {
+        return persistenceProvider;
+    }
+
+    /**
+     * Sets the persistence provider for this actor system.
+     *
+     * @param persistenceProvider The persistence provider
+     */
+    public void setPersistenceProvider(PersistenceProvider persistenceProvider) {
+        this.persistenceProvider = persistenceProvider;
+    }
+
+    /**
+     * Gets the default ID strategy for this actor system.
+     *
+     * @return The default ID strategy
+     */
+    public IdStrategy getDefaultIdStrategy() {
+        return defaultIdStrategy;
+    }
+
+    /**
+     * Sets the default ID strategy for this actor system.
+     * This strategy will be used for all actors that don't have an explicit ID,
+     * template, or strategy configured.
+     *
+     * @param defaultIdStrategy The default ID strategy
+     */
+    public void setDefaultIdStrategy(IdStrategy defaultIdStrategy) {
+        this.defaultIdStrategy = defaultIdStrategy;
     }
     
     /**

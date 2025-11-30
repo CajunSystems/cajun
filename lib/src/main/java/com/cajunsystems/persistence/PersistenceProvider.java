@@ -78,8 +78,25 @@ public interface PersistenceProvider {
     
     /**
      * Checks if the persistence provider is healthy and operational.
-     * 
+     *
      * @return true if the provider is healthy, false otherwise
      */
     boolean isHealthy();
+
+    /**
+     * List all actor IDs that have persisted state (snapshots or journals).
+     * This method scans the persistence storage and returns actor IDs based on
+     * file/directory names, WITHOUT loading the actual state data.
+     * <p>
+     * This is used for ID counter initialization to prevent collisions with
+     * existing persisted actors.
+     * <p>
+     * Default implementation returns an empty list (for providers that don't support
+     * this operation or don't have persistence).
+     *
+     * @return List of actor IDs that have persisted data
+     */
+    default java.util.List<String> listPersistedActors() {
+        return java.util.Collections.emptyList();
+    }
 }
