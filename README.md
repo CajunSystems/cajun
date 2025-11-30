@@ -21,6 +21,11 @@
   - [Stateful Actors](#stateful-actors-with-statefulhandler-interface)
   - [Functional Actors with Effects](#functional-actors-with-effects)
   - [Actor Hierarchies](#creating-actor-hierarchies)
+- [Actor ID Strategies](#actor-id-strategies)
+  - [Explicit IDs](#explicit-ids)
+  - [ID Templates](#id-templates)
+  - [ID Strategies](#predefined-id-strategies)
+  - [Hierarchical IDs](#hierarchical-ids)
 - [Actor Communication](#actor-communication)
   - [Sending Messages (tell)](#sending-messages-to-self)
   - [Request-Response (ask)](#request-response-with-ask-pattern)
@@ -548,6 +553,201 @@ public class SupervisedParentHandler implements Handler<ParentMessage> {
     }
 }
 ```
+
+## Actor ID Strategies
+
+Every actor in Cajun has a unique identifier (ID) used for message routing, logging, persistence, and hierarchical organization. Cajun provides four flexible ways to control actor IDs with a clear priority system.
+
+### ID Priority System
+
+When multiple ID configurations are specified, Cajun uses this priority order:
+
+1. **Explicit IDs** (Highest) - Manually specified exact IDs
+2. **ID Templates** - Generated IDs using placeholders
+3. **ID Strategies** - Predefined generation strategies  
+4. **System Default** (Lowest) - Falls back to UUID
+
+```java
+// Priority 1: Explicit ID wins
+Pid actor = system.actorOf(Handler.class)
+    .withId("my-actor")           // ← This is used
+    .withIdTemplate("user-{seq}") // ← Ignored
+    .withIdStrategy(IdStrategy.UUID) // ← Ignored
+    .spawn();
+// Result: "my-actor"
+```
+
+**Important**: Each `withId()`, `withIdTemplate()`, and `withIdStrategy()` call replaces any previous ID configuration. Only the last one in the chain is effective.
+
+### Explicit IDs
+
+Manually specify exact IDs for actors. Best for singletons and well-known services:
+
+```java
+// Simple explicit ID
+Pid userService = system.actorOf(UserServiceHandler.class)
+    .withId("user-service")
+    .spawn();
+
+// Unicode characters supported
+Pid actor = system.actorOf(MyHandler.class)
+    .withId("actor-测试-🎭")
+    .spawn();
+```
+
+**Pros:** Predictable, easy to debug, can be looked up by name  
+**Cons:** Must ensure uniqueness manually, not suitable for dynamic creation
+
+### ID Templates
+
+Generate IDs dynamically using placeholders. Best for creating multiple actors with consistent naming:
+
+```java
+// Simple sequence
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdTemplate("user-{seq}")
+    .spawn();
+// Result: "user-1", "user-2", "user-3", ...
+
+// Multiple placeholders
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdTemplate("{class}-{seq}-{short-uuid}")
+    .spawn();
+// Result: "myhandler-1-a1b2c3d4"
+
+// With timestamp
+Pid session = system.actorOf(SessionHandler.class)
+    .withIdTemplate("session-{timestamp}-{seq}")
+    .spawn();
+// Result: "session-1732956789123-1"
+```
+
+**Available Placeholders:**
+- `{seq}` - Auto-incrementing sequence number
+- `{template-seq}` - Sequence per template pattern
+- `{uuid}` - Full UUID
+- `{short-uuid}` - First 8 characters of UUID
+- `{timestamp}` - Current timestamp (milliseconds)
+- `{nano}` - Current nanosecond time
+- `{class}` - Simplified class name (lowercase)
+- `{parent}` - Parent actor ID (if hierarchical)
+
+**Pros:** Readable, automatic uniqueness, flexible composition  
+**Cons:** Counters not persistent across restarts
+
+### Predefined ID Strategies
+
+Use predefined strategies for consistent ID generation:
+
+```java
+// UUID (Default)
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.UUID)
+    .spawn();
+// Result: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+// CLASS_BASED_UUID: {class}:{uuid}
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.CLASS_BASED_UUID)
+    .spawn();
+// Result: "myhandler:a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+// CLASS_BASED_SEQUENTIAL: {class}:{seq}
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .spawn();
+// Result: "myhandler:1", "myhandler:2", "myhandler:3", ...
+
+// SEQUENTIAL: Simple counter
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.SEQUENTIAL)
+    .spawn();
+// Result: "1", "2", "3", ...
+```
+
+**Strategy Comparison:**
+
+| Strategy | Example | Readability | Uniqueness | Use Case |
+|----------|---------|-------------|------------|----------|
+| UUID | `a1b2...` | ⭐ | ⭐⭐⭐⭐⭐ | Distributed systems |
+| CLASS_BASED_UUID | `handler:a1b2...` | ⭐⭐ | ⭐⭐⭐⭐⭐ | Multi-class systems |
+| CLASS_BASED_SEQUENTIAL | `handler:1` | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Single-node apps |
+| SEQUENTIAL | `1` | ⭐⭐⭐ | ⭐⭐⭐ | Simple testing |
+
+### Hierarchical IDs
+
+Create parent-child relationships with automatic ID prefixing:
+
+```java
+// Create parent
+Pid parent = system.actorOf(ParentHandler.class)
+    .withId("parent")
+    .spawn();
+
+// Create child - ID is automatically prefixed
+Pid child = system.actorOf(ChildHandler.class)
+    .withId("child")
+    .withParent(system.getActor(parent))
+    .spawn();
+// Result: "parent/child"
+
+// Children with templates
+Pid child1 = system.actorOf(ChildHandler.class)
+    .withIdTemplate("child-{seq}")
+    .withParent(system.getActor(parent))
+    .spawn();
+// Result: "parent/child-1"
+
+// Deep hierarchies
+Pid grandchild = system.actorOf(Handler.class)
+    .withId("grandchild")
+    .withParent(system.getActor(child))
+    .spawn();
+// Result: "parent/child/grandchild"
+```
+
+### Best Practices
+
+**Choose the right approach:**
+```java
+// ✅ Good: Explicit IDs for singletons
+Pid service = system.actorOf(ServiceHandler.class)
+    .withId("user-service")
+    .spawn();
+
+// ✅ Good: Templates for dynamic actors
+Pid session = system.actorOf(SessionHandler.class)
+    .withIdTemplate("session-{seq}")
+    .spawn();
+
+// ✅ Good: Strategies for consistency
+Pid worker = system.actorOf(WorkerHandler.class)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .spawn();
+```
+
+**Use meaningful names:**
+```java
+// ✅ Good: Descriptive IDs
+.withIdTemplate("user-session-{seq}")
+.withIdTemplate("{class}-worker-{seq}")
+
+// ❌ Bad: Generic IDs
+.withIdTemplate("actor-{seq}")
+```
+
+**Consider persistence:**
+```java
+// ✅ Good: Stable IDs for stateful actors
+Pid counter = system.statefulActorOf(CounterHandler.class, 0)
+    .withId("global-counter")  // Same ID after restart
+    .withPersistence(...)
+    .spawn();
+```
+
+**📖 Complete Documentation:** See [Actor ID Strategies Guide](docs/actor_id_strategies.md) for comprehensive examples, all placeholders, and advanced patterns.
+
+---
 
 ## Actor Communication
 
