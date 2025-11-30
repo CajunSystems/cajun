@@ -91,15 +91,19 @@ public class IdTemplateProcessor {
      * Ensure counters are initialized from persisted state on first use.
      */
     private void ensureCountersInitialized() {
+        logger.debug("ensureCountersInitialized called, countersInitialized={}", countersInitialized);
         if (countersInitialized) {
+            logger.debug("Counters already initialized, skipping");
             return;
         }
 
         synchronized (initLock) {
             if (countersInitialized) {
+                logger.debug("Counters already initialized (double-check), skipping");
                 return;
             }
 
+            logger.info("Initializing counters for the first time");
             // Initialize counters from persisted state
             initializeCountersFromPersistedState();
             countersInitialized = true;
@@ -126,10 +130,12 @@ public class IdTemplateProcessor {
                 return;
             }
 
-            logger.info("Initializing ID counters from {} persisted actors", persistedActorIds.size());
+            logger.info("Initializing ID counters from {} persisted actors: {}", 
+                persistedActorIds.size(), persistedActorIds);
 
             // Parse IDs and update counters
             for (String actorId : persistedActorIds) {
+                logger.debug("Processing persisted actor ID: {}", actorId);
                 updateCounterFromActorId(actorId);
             }
 
@@ -154,32 +160,43 @@ public class IdTemplateProcessor {
             ? actorId.substring(actorId.lastIndexOf('/') + 1)
             : actorId;
 
+        logger.debug("Base ID after hierarchical processing: {}", baseId);
+
         // Parse pattern: "prefix:number"
         int colonIndex = baseId.lastIndexOf(':');
         if (colonIndex == -1) {
+            logger.debug("No colon found in ID: {}, skipping", baseId);
             return; // Not a sequential ID pattern
         }
 
         String prefix = baseId.substring(0, colonIndex);
         String suffix = baseId.substring(colonIndex + 1);
 
+        logger.debug("Parsed prefix: '{}', suffix: '{}'", prefix, suffix);
+
         try {
             long sequenceNumber = Long.parseLong(suffix);
+            logger.debug("Parsed sequence number: {}", sequenceNumber);
 
             // Update counter to max of current and found
             classCounters.compute(prefix, (k, current) -> {
                 if (current == null) {
+                    logger.info("Setting counter for '{}' to {}", k, sequenceNumber);
                     return new AtomicLong(sequenceNumber);
                 }
                 // Update to max
                 long currentVal = current.get();
                 if (sequenceNumber > currentVal) {
+                    logger.info("Updating counter for '{}' from {} to {}", k, currentVal, sequenceNumber);
                     current.set(sequenceNumber);
+                } else {
+                    logger.debug("Counter for '{}' already at {}, not updating", k, currentVal);
                 }
                 return current;
             });
 
         } catch (NumberFormatException e) {
+            logger.debug("Suffix '{}' is not a number, skipping", suffix);
             // Suffix not a number - skip (e.g., "user:admin")
         }
     }
@@ -257,5 +274,34 @@ public class IdTemplateProcessor {
     public static long getCurrentCounter(String baseName) {
         AtomicLong counter = classCounters.get(baseName);
         return counter != null ? counter.get() : 0;
+    }
+    
+    /**
+     * Get or create a class counter (for use by IdStrategy implementations).
+     * This allows strategies to share the same counter map for persistence recovery.
+     */
+    public static AtomicLong getOrCreateClassCounter(String baseName) {
+        return classCounters.computeIfAbsent(baseName, k -> new AtomicLong(0));
+    }
+    
+    /**
+     * Ensure counters are initialized for a given actor system (for use by IdStrategy implementations).
+     * This is called by strategies that need counter recovery support.
+     */
+    public static void ensureCountersInitializedForSystem(ActorSystem system) {
+        if (countersInitialized) {
+            return;
+        }
+        
+        synchronized (initLock) {
+            if (countersInitialized) {
+                return;
+            }
+            
+            // Create a temporary processor just to initialize counters
+            IdTemplateProcessor temp = new IdTemplateProcessor(system, Object.class, null);
+            temp.initializeCountersFromPersistedState();
+            countersInitialized = true;
+        }
     }
 }

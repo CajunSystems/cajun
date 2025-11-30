@@ -60,49 +60,25 @@ public interface IdStrategy {
     IdStrategy UUID = ctx -> java.util.UUID.randomUUID().toString();
 
     /**
-     * Class name + sequential counter.
-     * Counter is per-class globally (survives across different ActorSystem instances).
+     * Class-based sequential strategy: {@code {class}:{seq}}
+     * <p>
+     * Combines the handler class name with an auto-incrementing counter.
+     * Each class has its own counter starting from 1.
      * <p>
      * Examples: {@code "user:1"}, {@code "user:2"}, {@code "order:1"}, {@code "order:2"}
+     * <p>
+     * Note: This strategy uses the same counter map as IdTemplateProcessor to enable
+     * counter recovery from persisted actors.
      */
     IdStrategy CLASS_BASED_SEQUENTIAL = new IdStrategy() {
-        private final ConcurrentHashMap<String, AtomicLong> counters = new ConcurrentHashMap<>();
-
         @Override
         public String generateId(IdGenerationContext ctx) {
+            // Ensure counters are initialized from persisted state
+            IdTemplateProcessor.ensureCountersInitializedForSystem(ctx.system());
+            
             String baseName = extractBaseName(ctx.handlerClass());
-            long seq = counters.computeIfAbsent(baseName, k -> new AtomicLong(0))
-                              .incrementAndGet();
+            long seq = IdTemplateProcessor.getOrCreateClassCounter(baseName).incrementAndGet();
             return STR."\{baseName}:\{seq}";
-        }
-
-        /**
-         * Get current counter value for a class (for testing/debugging).
-         */
-        public long getCurrentCounter(String baseName) {
-            AtomicLong counter = counters.get(baseName);
-            return counter != null ? counter.get() : 0;
-        }
-
-        /**
-         * Set counter value for a class (for counter recovery).
-         */
-        public void setCounter(String baseName, long value) {
-            counters.computeIfAbsent(baseName, k -> new AtomicLong(0)).set(value);
-        }
-
-        /**
-         * Update counter to max of current and provided value.
-         */
-        public void updateCounter(String baseName, long value) {
-            AtomicLong counter = counters.computeIfAbsent(baseName, k -> new AtomicLong(0));
-            long current;
-            do {
-                current = counter.get();
-                if (value <= current) {
-                    return; // Current is already higher
-                }
-            } while (!counter.compareAndSet(current, value));
         }
     };
 

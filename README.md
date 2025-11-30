@@ -633,7 +633,45 @@ Pid session = system.actorOf(SessionHandler.class)
 - `{parent}` - Parent actor ID (if hierarchical)
 
 **Pros:** Readable, automatic uniqueness, flexible composition  
-**Cons:** Counters not persistent across restarts
+**Cons:** Counters reset on restart (unless using persistence - see below)
+
+**🔄 Persistence Integration:** When using sequence-based naming with stateful actors, Cajun automatically scans persisted actors on startup and initializes counters to prevent ID collisions:
+
+```java
+// First run: Create stateful actors with sequential IDs
+Pid user1 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(journal, snapshot)
+    .spawn();
+// Result: "userhandler:1"
+
+Pid user2 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(journal, snapshot)
+    .spawn();
+// Result: "userhandler:2"
+
+// After restart: Counters resume from persisted state
+Pid user3 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(journal, snapshot)
+    .spawn();
+// Result: "userhandler:3" (not "userhandler:1"!)
+// Existing actors "userhandler:1" and "userhandler:2" are restored
+```
+
+This ensures that:
+- ✅ Persisted actors are restored with their original IDs
+- ✅ New actors continue the sequence without collisions
+- ✅ ID uniqueness is maintained across restarts
+- ✅ Works with `CLASS_BASED_SEQUENTIAL` strategy and templates using colon separators
+
+**⚠️ Important:** Counter recovery only works with the `prefix:number` pattern (colon separator):
+- ✅ `CLASS_BASED_SEQUENTIAL` → `"userhandler:1"` (works)
+- ✅ `"user:{seq}"` → `"user:1"` (works)
+- ❌ `"user-{seq}"` → `"user-1"` (does NOT work)
+
+For persistence with templates, use colons: `"user:{seq}"` instead of `"user-{seq}"`
 
 ### Predefined ID Strategies
 

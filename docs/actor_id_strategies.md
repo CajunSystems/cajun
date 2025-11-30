@@ -174,6 +174,147 @@ Pid user2 = system.actorOf(Handler.class)
     .spawn(); // "user-2"
 ```
 
+### Persistence Integration
+
+**🔄 Automatic Counter Recovery:** When using sequence-based naming with stateful actors, Cajun automatically scans persisted actors on startup using `PersistenceProvider.listPersistedActors()` and initializes counters to prevent ID collisions.
+
+```java
+// Setup: Register persistence provider
+PersistenceProvider provider = new FileSystemPersistenceProvider(dataPath);
+
+// First run: Create stateful actors with sequential IDs
+// The system automatically generates IDs and creates persistence stores
+Pid user1 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(provider)  // System uses generated ID for persistence
+    .spawn();
+// Result: "userhandler:1"
+// Persistence created: journal and snapshot for "userhandler:1"
+
+Pid user2 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(provider)  // System uses generated ID for persistence
+    .spawn();
+// Result: "userhandler:2"
+// Persistence created: journal and snapshot for "userhandler:2"
+
+// ============================================================
+// Application restarts...
+// ============================================================
+
+// On startup, Cajun automatically:
+// 1. Calls provider.listPersistedActors()
+// 2. Finds: ["userhandler:1", "userhandler:2"]
+// 3. Parses IDs and sets counter to 2
+// 4. New actors will start from 3
+
+// Create new actor after restart - counter resumes automatically!
+Pid user3 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(provider)  // Same simple call
+    .spawn();
+// Result: "userhandler:3" (not "userhandler:1"!)
+// No collision with existing persisted actors
+```
+
+**Key Point:** You don't need to manually specify actor IDs in the persistence calls. The system:
+1. Generates the ID using your strategy (e.g., `CLASS_BASED_SEQUENTIAL`)
+2. Automatically creates journal and snapshot stores using that ID
+3. On restart, scans all persisted actors and resumes counters
+4. Ensures new actors never collide with existing ones
+
+**How It Works:**
+
+1. **On Startup:** `IdTemplateProcessor` calls `persistenceProvider.listPersistedActors()`
+2. **Parse IDs:** Scans all persisted actor IDs for sequential patterns (e.g., `prefix:number`)
+3. **Initialize Counters:** Sets each counter to the maximum found sequence number
+4. **Resume Sequence:** New actors continue from the next available number
+
+**Supported Patterns:**
+
+The counter recovery works with IDs that follow the `prefix:number` pattern (with a colon):
+
+```java
+// ✅ CLASS_BASED_SEQUENTIAL strategy (uses colon)
+"userhandler:1", "userhandler:2", "userhandler:3"
+// Counter initialized to 3
+
+// ✅ Custom templates with colon separator
+.withIdTemplate("user:{seq}")  // Generates: "user:1", "user:2"
+// Counter initialized to max found
+
+// ✅ Hierarchical IDs with colon
+"parent/child:1", "parent/child:2"
+// Counter initialized to 2 (uses base ID after last '/')
+
+// ❌ Templates with other separators NOT supported
+.withIdTemplate("user-{seq}")  // Generates: "user-1", "user-2"
+// Counter recovery WILL NOT WORK - use explicit IDs or colon separator
+```
+
+**Important:** If you use templates with separators other than colons (e.g., `"user-{seq}"`, `"session_{seq}"`), the counter recovery will not work. For persistence with templates, use:
+- `"user:{seq}"` instead of `"user-{seq}"` ✅
+- `"session:{seq}"` instead of `"session-{seq}"` ✅
+- Or use `CLASS_BASED_SEQUENTIAL` strategy ✅
+
+**Benefits:**
+
+- ✅ **No ID Collisions:** New actors never reuse IDs of persisted actors
+- ✅ **Automatic Recovery:** No manual counter management required
+- ✅ **Seamless Restarts:** Actors can be stopped and restarted without ID conflicts
+- ✅ **Predictable Behavior:** Sequence continues naturally across restarts
+- ✅ **Works with Hierarchies:** Handles parent/child relationships correctly
+
+**Example: User Session Management**
+
+```java
+public class SessionManager {
+    private final ActorSystem system;
+    private final PersistenceProvider persistence;
+    
+    public Pid createSession(String userId) {
+        // The ID template generates the actor ID automatically
+        // No need to manually track sequence numbers!
+        var builder = system.statefulActorOf(SessionHandler.class, new SessionState(userId))
+            .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL);
+        
+        // Get the generated ID to use for persistence
+        Pid pid = builder.spawn();
+        String actorId = pid.id();
+        
+        // Now configure persistence with the actual ID
+        return system.statefulActorOf(SessionHandler.class, new SessionState(userId))
+            .withId(actorId)  // Use the same ID
+            .withPersistence(
+                persistence.createMessageJournal(actorId),
+                persistence.createSnapshotStore(actorId)
+            )
+            .spawn();
+    }
+}
+
+// Better approach: Let the builder handle everything
+public class SessionManager {
+    private final ActorSystem system;
+    private final PersistenceProvider persistence;
+    
+    public Pid createSession(String userId) {
+        return system.statefulActorOf(SessionHandler.class, new SessionState(userId))
+            .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+            .withPersistence(persistence)  // Provider creates journal/snapshot using actor ID
+            .spawn();
+    }
+}
+
+// First run:
+// sessionhandler:1, sessionhandler:2, sessionhandler:3 created
+
+// After restart:
+// Cajun scans and finds: sessionhandler:1, sessionhandler:2, sessionhandler:3
+// Counter initialized to 3
+// Next session will be: sessionhandler:4
+```
+
 ### Pros and Cons
 
 **Pros:**
@@ -181,10 +322,12 @@ Pid user2 = system.actorOf(Handler.class)
 - ✅ Automatic uniqueness via counters
 - ✅ Flexible composition of information
 - ✅ Great for debugging and logging
+- ✅ **Counters resume from persisted state (with persistence)**
 
 **Cons:**
-- ⚠️ Counters are not persistent across restarts
+- ⚠️ Counters reset on restart for stateless actors
 - ⚠️ Slightly more overhead than strategies
+- ⚠️ Requires persistence provider for counter recovery
 
 ## ID Strategies
 
@@ -251,10 +394,13 @@ Pid actor = system.actorOf(MyHandler.class)
 - ✅ Short IDs
 - ✅ Easy to track actor count
 - ✅ Great for debugging
+- ✅ **Counters resume from persisted state (with persistence)**
 
 **Cons:**
-- ⚠️ Counters not persistent
-- ⚠️ Not suitable for distributed systems
+- ⚠️ Counters reset on restart for stateless actors
+- ⚠️ Not suitable for distributed systems without coordination
+
+**💡 Tip:** When using with stateful actors and persistence, counters automatically resume from the last persisted sequence number. See [Persistence Integration](#persistence-integration) for details.
 
 #### 4. SEQUENTIAL
 
@@ -417,17 +563,27 @@ Pid actor = system.actorOf(Handler.class)
 ### 3. Consider Persistence
 
 ```java
-// ✅ Good: For stateful actors, use stable IDs
+// ✅ Good: Explicit IDs for singleton stateful actors
 Pid counter = system.statefulActorOf(CounterHandler.class, 0)
     .withId("global-counter")  // Same ID after restart
     .withPersistence(...)
     .spawn();
 
-// ⚠️ Caution: Sequential IDs reset on restart
+// ✅ Good: Sequential IDs with persistence (counters auto-resume)
+Pid user = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(...)
+    .spawn();
+// Result: "userhandler:1", "userhandler:2", ...
+// After restart: counters resume, no collisions!
+
+// ⚠️ Caution: Sequential IDs reset for stateless actors
 Pid temp = system.actorOf(TempHandler.class)
-    .withIdTemplate("temp-{seq}")  // Counter resets!
+    .withIdTemplate("temp-{seq}")  // Counter resets on restart!
     .spawn();
 ```
+
+**Key Point:** Sequential IDs (`{seq}`, `CLASS_BASED_SEQUENTIAL`) work seamlessly with persistence. Cajun automatically scans persisted actors on startup and resumes counters, preventing ID collisions. See [Persistence Integration](#persistence-integration) for details.
 
 ### 4. Hierarchies for Organization
 
