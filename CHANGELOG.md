@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Checked Exception Support**: `Effect.attempt(() -> ...)` with `ThrowingSupplier` interface
   - **Pattern Matching**: `Effect.match()` with type-safe message routing at match level
   - **Parallel Execution**: `parSequence`, `parZip`, `parTraverse`, `race`, `withTimeout` for concurrent operations
+    - **Structured Concurrency**: Uses Java 21's `StructuredTaskScope` for parallel operations
+    - **Fail-Fast**: `ShutdownOnFailure` cancels remaining tasks on first error
+    - **Race Conditions**: `ShutdownOnSuccess` for first-to-complete semantics
+    - **Automatic Cleanup**: Structured scopes ensure proper resource management
+  - **Interruption-Based Cancellation**: Virtual thread-native cancellation support
+    - **`onInterrupt(Effect)`**: Register cleanup effects for graceful cancellation
+    - **`onInterrupt(Runnable)`**: Simple action-based interrupt handling
+    - **`checkInterrupted()`**: Check for interruption in long-running computations
+    - **Zombie Prevention**: Ensures resources are cleaned up when actors are stopped
+    - **Thread.interrupt() Integration**: Preserves interruption status for virtual threads
+    - **Example**: `Effect.attempt(() -> db.query()).onInterrupt(() -> db.rollback())`
   - **Conditional Logic**: `Effect.when(predicate, effect, fallback)` for conditional execution
   - **Resource Management**: `bracket` for safe acquire/use/release patterns
   - **Retry Logic**: `retry(maxAttempts, initialDelay)` with exponential backoff

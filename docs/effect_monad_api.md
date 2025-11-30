@@ -12,7 +12,8 @@ The Effect monad provides a composable, type-safe, **stack-safe** way to build a
 - **Composable** - Build complex behaviors from simple building blocks
 - **Type-safe** - State transitions and error types are compile-time checked
 - **Rich Error Handling** - Explicit error recovery with `.recover()`, `.orElse()`, `.attempt()`, and more
-- **Parallel Execution** - Built-in `parZip`, `parSequence`, `race`, and `withTimeout`
+- **Interruption Handling** - Virtual thread-native cancellation with `onInterrupt()` and `checkInterrupted()`
+- **Parallel Execution** - Built-in `parZip`, `parSequence`, `race`, and `withTimeout` using Structured Concurrency
 - **Testable** - Pure functions that are easy to test without spawning actors
 - **Stream-compatible** - Works with Java's Stream API and reactive libraries
 
@@ -325,6 +326,98 @@ Effect<Integer, Throwable, String> robust =
 Effect<Integer, Throwable, Integer> safe = 
     Effect.attempt(() -> riskyOperation());
 ```
+
+## Interruption Handling (Virtual Thread Cancellation)
+
+Effects in Cajun support proper interruption handling for virtual thread environments. When an actor is stopped or a parent effect cancels a child, the virtual thread is interrupted via `Thread.interrupt()`. These operators allow you to handle that interruption gracefully.
+
+### onInterrupt(Effect) - Register Cleanup Effect
+
+Registers a cleanup effect to run when this effect is interrupted. This is crucial for preventing "zombie" tasks and ensuring resources are cleaned up properly.
+
+```java
+// Database cleanup example
+Effect<State, Throwable, ResultSet> queryEffect = 
+    Effect.attempt(() -> database.longRunningQuery())
+        .onInterrupt(Effect.attempt(() -> {
+            database.rollback();
+            connectionPool.returnConnection(conn);
+        }).andThen(Effect.log("Query cancelled, connection returned")));
+
+// HTTP request with cancellation
+Effect<State, Throwable, Response> httpEffect = 
+    Effect.attempt(() -> httpClient.get(url))
+        .onInterrupt(Effect.log("HTTP request cancelled"));
+```
+
+**Key Features:**
+- Cleanup effect runs when the virtual thread is interrupted
+- Preserves interruption status for proper propagation
+- Errors in cleanup are logged but don't mask the interruption
+- Can chain multiple cleanup effects
+
+### onInterrupt(Runnable) - Simple Cleanup Action
+
+Convenience method for simple cleanup actions without state management.
+
+```java
+Effect<State, Throwable, Data> fileEffect = 
+    Effect.attempt(() -> processFile(inputStream))
+        .onInterrupt(() -> {
+            inputStream.close();
+            Files.deleteIfExists(tempFile);
+        });
+
+// With logging
+Effect<State, Throwable, String> effect = 
+    Effect.attempt(() -> database.query())
+        .onInterrupt(() -> logger.info("Query interrupted"));
+```
+
+### checkInterrupted() - Cooperative Cancellation
+
+Checks if the current thread has been interrupted and fails the effect if so. This is useful for long-running computations that should be cancellable.
+
+```java
+// Long-running computation with cancellation points
+Effect<State, Throwable, List<Result>> effect = 
+    Effect.attempt(() -> {
+        List<Result> results = new ArrayList<>();
+        for (Item item : largeDataset) {
+            // Check for interruption periodically
+            if (Thread.interrupted()) {
+                throw new InterruptedException("Processing cancelled");
+            }
+            results.add(processItem(item));
+        }
+        return results;
+    });
+
+// Or use checkInterrupted() effect
+Effect<State, Throwable, List<Result>> effect2 = 
+    Effect.of(largeDataset)
+        .flatMap(items -> {
+            List<Result> results = new ArrayList<>();
+            for (Item item : items) {
+                Effect.checkInterrupted().run(state, null, ctx);
+                results.add(processItem(item));
+            }
+            return Effect.of(results);
+        });
+```
+
+**Use Cases:**
+- **Database Operations** - Rollback transactions and return connections on cancellation
+- **File Processing** - Close streams and delete temporary files
+- **HTTP Requests** - Cancel pending requests and clean up resources
+- **Long Computations** - Enable cooperative cancellation in CPU-bound work
+- **Actor Shutdown** - Graceful cleanup when actors are stopped by supervisors
+
+**Benefits:**
+- **No Zombie Tasks** - Prevents orphaned tasks consuming resources
+- **Resource Safety** - Ensures database connections, file handles, and network sockets are released
+- **Virtual Thread Native** - Uses `Thread.interrupt()` as designed for virtual threads
+- **Composable** - Works seamlessly with all other Effect combinators
 
 ## Filtering and Validation
 

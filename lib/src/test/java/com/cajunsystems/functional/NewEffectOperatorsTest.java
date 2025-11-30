@@ -1,6 +1,7 @@
 package com.cajunsystems.functional;
 
 import com.cajunsystems.ActorContext;
+import com.cajunsystems.functional.internal.Trampoline;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -11,7 +12,6 @@ import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 /**
  * Tests for new Effect operators: identity, filterOrElse, error channel, and parallel execution.

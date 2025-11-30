@@ -1,5 +1,6 @@
 package com.cajunsystems.functional;
 
+import com.cajunsystems.functional.internal.Trampoline;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

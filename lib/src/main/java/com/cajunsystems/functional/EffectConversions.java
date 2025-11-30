@@ -1,5 +1,6 @@
 package com.cajunsystems.functional;
 
+import com.cajunsystems.functional.internal.Trampoline;
 import com.cajunsystems.handler.StatefulHandler;
 
 import java.util.function.BiConsumer;

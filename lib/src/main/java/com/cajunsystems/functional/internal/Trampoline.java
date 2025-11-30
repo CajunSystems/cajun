@@ -1,4 +1,4 @@
-package com.cajunsystems.functional;
+package com.cajunsystems.functional.internal;
 
 import java.util.function.Function;
 import java.util.function.Supplier;

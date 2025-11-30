@@ -2,8 +2,10 @@ package com.cajunsystems.functional;
 
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.Pid;
+import com.cajunsystems.functional.internal.Trampoline;
 
 import java.time.Duration;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -108,6 +110,10 @@ public interface Effect<S, E, R> {
             try {
                 R result = supplier.get();
                 return Trampoline.done(EffectResult.success(state, result));
+            } catch (InterruptedException e) {
+                // Preserve interruption status for virtual thread
+                Thread.currentThread().interrupt();
+                return Trampoline.done(EffectResult.failure(state, e));
             } catch (Throwable t) {
                 return Trampoline.done(EffectResult.failure(state, t));
             }
@@ -537,6 +543,107 @@ public interface Effect<S, E, R> {
         return tapError(action);
     }
     
+    // ============================================================================
+    // Interruption Handling (Virtual Thread Cancellation)
+    // ============================================================================
+    
+    /**
+     * Registers a cleanup effect to run when this effect is interrupted.
+     * This is crucial for preventing "zombie" tasks in virtual thread environments.
+     * 
+     * <p>When an actor is stopped or a parent effect cancels a child, the virtual
+     * thread is interrupted. This combinator allows you to handle that interruption
+     * gracefully, ensuring resources are cleaned up properly.
+     * 
+     * <p>Example with database cleanup:
+     * <pre>{@code
+     * Effect.attempt(() -> database.longRunningQuery())
+     *     .onInterrupt(Effect.attempt(() -> {
+     *         database.rollback();
+     *         connectionPool.returnConnection(conn);
+     *     }).andThen(Effect.log("Query cancelled, connection returned")));
+     * }</pre>
+     * 
+     * <p>Example with HTTP request:
+     * <pre>{@code
+     * Effect.attempt(() -> httpClient.get(url))
+     *     .onInterrupt(Effect.log("HTTP request cancelled"));
+     * }</pre>
+     * 
+     * @param cleanup the effect to run on interruption
+     * @return an effect that handles interruption gracefully
+     */
+    default Effect<S, E, R> onInterrupt(Effect<S, E, ?> cleanup) {
+        return (state, message, context) -> Trampoline.delay(() -> {
+            try {
+                return this.run(state, message, context);
+            } catch (Exception e) {
+                if (Thread.currentThread().isInterrupted() || e instanceof InterruptedException) {
+                    // Run cleanup effect
+                    try {
+                        cleanup.run(state, message, context);
+                    } catch (Exception cleanupError) {
+                        context.getLogger().error("Error during interrupt cleanup", cleanupError);
+                    }
+                    // Preserve interruption status
+                    Thread.currentThread().interrupt();
+                }
+                throw e;
+            }
+        });
+    }
+    
+    /**
+     * Registers a simple action to run when this effect is interrupted.
+     * Convenience method for {@link #onInterrupt(Effect)} when you just need
+     * to execute a side effect without state management.
+     * 
+     * <p>Example:
+     * <pre>{@code
+     * Effect.attempt(() -> database.query())
+     *     .onInterrupt(() -> logger.info("Query interrupted"));
+     * }</pre>
+     * 
+     * @param action the action to run on interruption
+     * @return an effect that handles interruption gracefully
+     */
+    default Effect<S, E, R> onInterrupt(Runnable action) {
+        return onInterrupt(Effect.attempt(() -> {
+            action.run();
+            return null;
+        }));
+    }
+    
+    /**
+     * Checks if the current thread has been interrupted and fails the effect if so.
+     * This is useful for long-running computations that should be cancellable.
+     * 
+     * <p>Example:
+     * <pre>{@code
+     * Effect.<State, Throwable, List<Result>>attempt(() -> {
+     *     List<Result> results = new ArrayList<>();
+     *     for (Item item : largeDataset) {
+     *         if (Thread.interrupted()) {
+     *             throw new InterruptedException("Processing cancelled");
+     *         }
+     *         results.add(processItem(item));
+     *     }
+     *     return results;
+     * });
+     * }</pre>
+     * 
+     * @return an effect that fails with InterruptedException if interrupted
+     */
+    static <S, E> Effect<S, E, Void> checkInterrupted() {
+        return (state, message, context) -> {
+            if (Thread.currentThread().isInterrupted()) {
+                return Trampoline.done(EffectResult.failure(state, 
+                    new InterruptedException("Effect interrupted")));
+            }
+            return Trampoline.done(EffectResult.noResult(state));
+        };
+    }
+    
     default <R2, R3> Effect<S, E, R3> zip(
             Effect<S, E, R2> other,
             BiFunction<R, R2, R3> combiner) {
@@ -670,20 +777,20 @@ public interface Effect<S, E, R> {
             Effect<S, E, R2> other,
             BiFunction<R, R2, R3> combiner) {
         return (state, message, context) -> Trampoline.delay(() -> {
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future1 = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    this.run(state, message, context)
-                );
-            
-            java.util.concurrent.CompletableFuture<EffectResult<S, R2>> future2 = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    other.run(state, message, context)
-                );
-            
-            try {
-                EffectResult<S, R> result1 = future1.get();
-                EffectResult<S, R2> result2 = future2.get();
+            try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+                // Fork both effects on Virtual Threads
+                var task1 = scope.fork(() -> this.run(state, message, context));
+                var task2 = scope.fork(() -> other.run(state, message, context));
                 
+                // Wait for both, or fail if ONE fails
+                scope.join();
+                scope.throwIfFailed();
+                
+                // Get results
+                EffectResult<S, R> result1 = task1.get();
+                EffectResult<S, R2> result2 = task2.get();
+                
+                // Check for failures
                 if (result1 instanceof EffectResult.Failure<S, R> f1) {
                     return EffectResult.failure(f1.state(), f1.errorValue());
                 }
@@ -691,6 +798,7 @@ public interface Effect<S, E, R> {
                     return EffectResult.failure(f2.state(), f2.errorValue());
                 }
                 
+                // Combine successful results
                 java.util.Optional<R> val1 = result1.value();
                 java.util.Optional<R2> val2 = result2.value();
                 
@@ -709,23 +817,22 @@ public interface Effect<S, E, R> {
     static <S, E, R> Effect<S, E, java.util.List<R>> parSequence(
             java.util.List<Effect<S, E, R>> effects) {
         return (state, message, context) -> Trampoline.delay(() -> {
-            java.util.List<java.util.concurrent.CompletableFuture<EffectResult<S, R>>> futures = 
-                effects.stream()
-                    .map(effect -> java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                        effect.run(state, message, context)
-                    ))
+            try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+                // Fork all effects on Virtual Threads
+                var tasks = effects.stream()
+                    .map(effect -> scope.fork(() -> effect.run(state, message, context)))
                     .toList();
-            
-            try {
-                java.util.concurrent.CompletableFuture.allOf(
-                    futures.toArray(new java.util.concurrent.CompletableFuture[0])
-                ).get();
                 
+                // Wait for all, or fail if ONE fails
+                scope.join();
+                scope.throwIfFailed();
+                
+                // Collect results
                 java.util.List<R> results = new java.util.ArrayList<>();
                 S finalState = state;
                 
-                for (java.util.concurrent.CompletableFuture<EffectResult<S, R>> future : futures) {
-                    EffectResult<S, R> result = future.get();
+                for (var task : tasks) {
+                    EffectResult<S, R> result = task.get();
                     
                     if (result instanceof EffectResult.Failure<S, R> failure) {
                         return EffectResult.failure(failure.state(), failure.errorValue());
@@ -772,18 +879,15 @@ public interface Effect<S, E, R> {
     
     default Effect<S, E, R> race(Effect<S, E, R> other) {
         return (state, message, context) -> Trampoline.delay(() -> {
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future1 = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    this.run(state, message, context)
-                );
-            
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future2 = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    other.run(state, message, context)
-                );
-            
-            try {
-                return (EffectResult<S, R>) java.util.concurrent.CompletableFuture.anyOf(future1, future2).get();
+            try (var scope = new StructuredTaskScope.ShutdownOnSuccess<EffectResult<S, R>>()) {
+                // Fork both effects - first to complete wins
+                scope.fork(() -> this.run(state, message, context));
+                scope.fork(() -> other.run(state, message, context));
+                
+                // Wait for first success
+                scope.join();
+                
+                return scope.result();
             } catch (Exception e) {
                 return EffectResult.failure(state, e);
             }
@@ -792,13 +896,15 @@ public interface Effect<S, E, R> {
     
     default Effect<S, E, R> withTimeout(Duration timeout) {
         return (state, message, context) -> Trampoline.delay(() -> {
-            java.util.concurrent.CompletableFuture<EffectResult<S, R>> future = 
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> 
-                    this.run(state, message, context)
-                );
-            
-            try {
-                return future.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            try (var scope = new StructuredTaskScope.ShutdownOnSuccess<EffectResult<S, R>>()) {
+                // Fork the effect with a deadline
+                scope.fork(() -> this.run(state, message, context));
+                
+                // Wait with timeout
+                scope.joinUntil(java.time.Instant.now().plus(timeout));
+                
+                // Return result or timeout
+                return scope.result();
             } catch (java.util.concurrent.TimeoutException e) {
                 return EffectResult.failure(state, e);
             } catch (Exception e) {

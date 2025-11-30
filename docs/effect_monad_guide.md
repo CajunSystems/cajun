@@ -660,6 +660,113 @@ Effect.attempt(() -> operation())
 - May cause actor restart depending on supervisor strategy
 - Should be fixed in code, not caught and recovered
 
+## Handling Interruptions and Cancellation
+
+When an actor is stopped (either by a supervisor or explicitly), its virtual thread is interrupted. Effects provide operators to handle this gracefully and prevent "zombie" tasks.
+
+### Why Interruption Handling Matters
+
+Without proper interruption handling, long-running effects can:
+- Continue consuming resources after the actor is stopped
+- Hold database connections, file handles, or network sockets
+- Prevent clean shutdown of your application
+
+### onInterrupt() - Cleanup on Cancellation
+
+Use `onInterrupt()` to register cleanup code that runs when the effect is interrupted:
+
+```java
+// Database query with cleanup
+Effect.attempt(() -> database.longRunningQuery())
+    .onInterrupt(() -> {
+        database.rollback();
+        connectionPool.returnConnection(conn);
+        logger.info("Query cancelled, connection returned");
+    });
+
+// File processing with cleanup
+Effect.attempt(() -> processLargeFile(inputStream))
+    .onInterrupt(() -> {
+        inputStream.close();
+        Files.deleteIfExists(tempFile);
+    });
+```
+
+### Cooperative Cancellation with checkInterrupted()
+
+For long-running computations, check for interruption periodically:
+
+```java
+Effect.attempt(() -> {
+    List<Result> results = new ArrayList<>();
+    for (Item item : largeDataset) {
+        // Check if actor was stopped
+        if (Thread.interrupted()) {
+            throw new InterruptedException("Processing cancelled");
+        }
+        results.add(processItem(item));
+    }
+    return results;
+});
+```
+
+### Real-World Example: HTTP Client with Timeout
+
+```java
+.when(FetchData.class, (state, msg, ctx) -> {
+    return Effect.attempt(() -> {
+        // This might take a long time
+        return httpClient.get(msg.url());
+    })
+    .withTimeout(Duration.ofSeconds(30))  // Cancel after 30s
+    .onInterrupt(() -> {
+        httpClient.cancel();  // Cancel the HTTP request
+        metrics.recordCancellation("http_fetch");
+    })
+    .recover(error -> {
+        if (error instanceof TimeoutException) {
+            ctx.getLogger().warn("Request timed out: {}", msg.url());
+            return CachedData.get(msg.url());
+        }
+        throw error;
+    });
+})
+```
+
+### Integration with Actor Lifecycle
+
+When an actor is stopped:
+1. The actor's virtual thread is interrupted
+2. Any running effect catches `InterruptedException`
+3. `onInterrupt()` cleanup effects execute
+4. Resources are properly released
+5. The actor terminates cleanly
+
+```java
+// Actor with long-running effect
+Pid worker = fromEffect(system, behavior, initialState)
+    .withId("worker")
+    .spawn();
+
+// Later, when stopping the actor
+system.stopActor(worker);
+// The running effect will be interrupted and cleanup will run
+```
+
+### Best Practices
+
+**✅ DO:**
+- Use `onInterrupt()` for database connections, file handles, and network resources
+- Check `Thread.interrupted()` in long-running loops
+- Keep cleanup code simple and fast
+- Log interruptions for debugging
+
+**❌ DON'T:**
+- Ignore `InterruptedException` - always handle it
+- Perform long operations in cleanup code
+- Swallow interruption status without re-throwing
+- Assume effects will always complete
+
 ## Effects in Supervision Trees
 
 Understanding how effects interact with actor supervision is crucial for building fault-tolerant systems.

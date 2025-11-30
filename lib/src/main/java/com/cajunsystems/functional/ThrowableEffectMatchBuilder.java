@@ -1,6 +1,7 @@
 package com.cajunsystems.functional;
 
 import com.cajunsystems.ActorContext;
+import com.cajunsystems.functional.internal.Trampoline;
 
 import java.util.HashMap;
 import java.util.Map;
