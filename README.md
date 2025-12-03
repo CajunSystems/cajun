@@ -986,7 +986,7 @@ counter.tell(new Increment(5));
 #### Why Use Effects?
 
 - **Composable**: Build complex behaviors from simple building blocks
-- **Stack-Safe**: Uses Trampoline pattern to prevent stack overflow on deep compositions
+- **Stack-Safe**: Prevents stack overflow on deep compositions (chain thousands of operations safely)
 - **🚀 Blocking is Safe**: Cajun runs on Java 21+ Virtual Threads - write normal blocking code without fear!
   - No `CompletableFuture` chains or async/await complexity
   - Database calls, HTTP requests, file I/O - just write them naturally

@@ -105,10 +105,9 @@ counter.tell(new Increment(5));
 
 1. **Message Queued**: The message enters the actor's mailbox (a queue)
 2. **Actor Wakes Up**: The actor's virtual thread picks up the message
-3. **Effect Executes**: The effect's runT() method is called with current state, message, and context
-4. **Trampoline Runs**: The effect returns a Trampoline which is immediately evaluated
-5. **State Updated**: If successful, the actor's state is updated
-6. **Next Message**: The actor processes the next message in the mailbox
+3. **Effect Executes**: The effect runs with current state, message, and context
+4. **State Updated**: If successful, the actor's state is updated
+5. **Next Message**: The actor processes the next message in the mailbox
 
 ### Key Insights
 
@@ -1062,7 +1061,7 @@ Effect<Int, Throwable, String> effect =
 // When the actor runs the effect, it executes immediately
 EffectResult<Int, String> result = effect.run(state, message, context);
 
-// The trampoline ensures stack safety, but execution is eager:
+// Execution is eager and stack-safe:
 // 1. modify runs
 // 2. log runs
 // 3. map runs
@@ -1074,7 +1073,7 @@ EffectResult<Int, String> result = effect.run(state, message, context);
 1. **Effects are values** - You can store them, pass them around, compose them
 2. **Composition is lazy** - Chaining effects doesn't execute them
 3. **Execution is eager** - Once `run()` is called, the effect runs to completion
-4. **Trampolining is transparent** - Stack safety doesn't change eager semantics
+4. **Stack safety is transparent** - You can chain thousands of operations without worry
 
 ### Suspended Computations
 

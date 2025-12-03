@@ -2,12 +2,12 @@
 
 ## Overview
 
-`ThrowableEffect<State, Result>` is a simplified, stack-safe alternative to `Effect<State, Message, Result>`. It removes the Message type parameter, making the API less verbose while maintaining full functionality through the use of a `Trampoline` for stack safety.
+`ThrowableEffect<State, Result>` is a simplified, stack-safe alternative to `Effect<State, Message, Result>`. It removes the Message type parameter, making the API less verbose while maintaining full stack-safe functionality.
 
 ## Key Features
 
 - **Less Verbose** - Only 2 type parameters instead of 3
-- **Stack-Safe** - Uses `Trampoline` to prevent StackOverflowError on deep compositions
+- **Stack-Safe** - Prevents StackOverflowError on deep compositions (chain thousands of operations safely)
 - **Built-in Error Channel** - Throwable handling is part of the type
 - **Message Type at Match** - Type constraint only where needed
 - **Fully Compatible** - All operators from Effect are available
@@ -64,10 +64,10 @@ ThrowableEffect<Integer, String> effect = ThrowableEffect.fail(new RuntimeExcept
 
 ## Stack Safety
 
-The key innovation of `ThrowableEffect` is its use of `Trampoline` for stack-safe evaluation:
+`ThrowableEffect` is designed to handle deep effect compositions without stack overflow:
 
 ```java
-// This would cause StackOverflowError with regular Effect
+// Chain thousands of operations safely
 ThrowableEffect<Integer, Integer> effect = ThrowableEffect.of(0);
 
 for (int i = 0; i < 10000; i++) {
@@ -78,22 +78,7 @@ for (int i = 0; i < 10000; i++) {
 EffectResult<Integer, Integer> result = effect.run(0, msg, context);
 ```
 
-### How It Works
-
-Instead of eagerly evaluating compositions, `ThrowableEffect` returns a `Trampoline` that describes the computation:
-
-```java
-@FunctionalInterface
-public interface ThrowableEffect<S, R> {
-    // Returns a Trampoline for lazy, stack-safe evaluation
-    Trampoline<EffectResult<S, R>> runT(S state, Object message, ActorContext context);
-    
-    // Convenience method that runs the trampoline
-    default EffectResult<S, R> run(S state, Object message, ActorContext context) {
-        return runT(state, message, context).run();
-    }
-}
-```
+This means you can build complex effect pipelines by composing many operations together without worrying about stack depth limitations.
 
 ## Monadic Operations
 
@@ -201,39 +186,10 @@ ThrowableEffect<Integer, Void> counter = ThrowableEffect.<Integer>match()
     .when(Decrement.class, (state, msg, ctx) -> 
         ThrowableEffect.modify(s -> s - msg.amount())
     )
-    .when(GetCount.class, (state, msg, ctx) -> 
-        ThrowableEffect.<Integer, Void>state()
-            .andThen((state2, msg2, ctx2) -> {
-                msg.replyTo().tell(state2);
-                return Trampoline.done(EffectResult.noResult(state2));
-            })
+    .when(GetCount.class, (state, msg, ctx) ->
+        ThrowableEffect.tell(msg.replyTo(), state)
     )
     .build();
-```
-
-## Trampoline API
-
-The `Trampoline` data structure enables stack-safe recursion:
-
-```java
-// Create a completed trampoline
-Trampoline<Integer> done = Trampoline.done(42);
-
-// Suspend a computation
-Trampoline<Integer> suspended = Trampoline.more(() -> 
-    Trampoline.done(42)
-);
-
-// Delay a computation
-Trampoline<Integer> delayed = Trampoline.delay(() -> expensiveComputation());
-
-// Map and flatMap are stack-safe
-Trampoline<Integer> result = trampoline
-    .map(x -> x * 2)
-    .flatMap(x -> Trampoline.done(x + 10));
-
-// Run the trampoline
-Integer value = result.run();  // Iterative evaluation - no stack growth
 ```
 
 ## When to Use ThrowableEffect vs Effect
@@ -266,7 +222,7 @@ ThrowableEffect<State, Result> newEffect = ...;
 ## Performance
 
 - **Stack Safety**: Prevents StackOverflowError for deep compositions
-- **Overhead**: Minimal - trampoline adds one level of indirection
+- **Overhead**: Minimal - negligible performance cost for stack safety
 - **Parallel Operations**: Same performance as Effect (uses CompletableFuture)
 - **Memory**: Slightly lower than Effect (one less type parameter)
 
@@ -281,21 +237,12 @@ ThrowableEffect<State, Result> newEffect = ...;
    ThrowableEffect.modify(s -> s)
    ```
 
-2. **Prefer `filterOrElse()` over manual validation**
+2. **Use `filterOrElse()` for conditional validation**
    ```java
-   // Good
    effect.filterOrElse(
        s -> s.isValid(),
        fallbackEffect
    )
-   
-   // Manual
-   effect.andThen((s, m, c) -> {
-       if (!s.isValid()) {
-           return fallbackEffect.runT(s, m, c);
-       }
-       return Trampoline.done(EffectResult.noResult(s));
-   })
    ```
 
 3. **Use `attempt()` for exception-prone operations**
@@ -316,4 +263,4 @@ ThrowableEffect<State, Result> newEffect = ...;
 
 ## Summary
 
-`ThrowableEffect` provides a cleaner, stack-safe API for building functional actors in Cajun. Its simplified type signature and built-in trampoline make it ideal for complex effect compositions while maintaining full compatibility with the existing Effect ecosystem.
+`ThrowableEffect` provides a cleaner, stack-safe API for building functional actors in Cajun. Its simplified type signature makes it ideal for complex effect compositions while maintaining full compatibility with the existing Effect ecosystem.
