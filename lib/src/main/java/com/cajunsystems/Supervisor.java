@@ -29,11 +29,16 @@ public final class Supervisor {
             }
             case RESTART -> {
                 logger.info("Restarting actor {}", actor.getActorId());
-                actor.stop();
-                actor.start();
-                if (shouldReprocess) {
-                    actor.tell(message);
-                }
+                // Request restart to happen after current batch completes
+                // This avoids ConcurrentModificationException during batch processing
+                // Preserve mailbox messages during restart (no message loss)
+                actor.requestRestart(() -> {
+                    actor.stopForRestart();
+                    actor.start();
+                    if (shouldReprocess) {
+                        actor.tell(message);
+                    }
+                });
             }
             case STOP -> {
                 logger.info("Stopping actor {} due to error", actor.getActorId());

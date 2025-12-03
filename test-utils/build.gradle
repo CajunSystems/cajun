@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.cajunsystems'
-version = project.findProperty('cajunVersion') ?: '0.1.4'
+version = project.findProperty('cajunVersion') ?: '0.4.0'
 
 java {
     withJavadocJar()

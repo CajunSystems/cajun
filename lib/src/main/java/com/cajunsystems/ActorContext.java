@@ -1,5 +1,7 @@
 package com.cajunsystems;
 
+import com.cajunsystems.builder.ActorBuilder;
+import com.cajunsystems.handler.Handler;
 import org.slf4j.Logger;
 
 import java.util.Map;
@@ -63,6 +65,17 @@ public interface ActorContext {
      */
     <T> void tellSelf(T message);
     
+    /**
+     * Creates a builder for configuring a child actor using the fluent API.
+     * The returned builder automatically sets the parent reference so callers
+     * can customize supervision strategy, mailbox, etc., before spawning.
+     *
+     * @param <Message> The type of messages the child actor processes
+     * @param handlerClass The handler implementation for the child
+     * @return A builder preconfigured with the current actor as parent
+     */
+    <Message> ActorBuilder<Message> childBuilder(Class<? extends Handler<Message>> handlerClass);
+
     /**
      * Creates a child actor of the specified class.
      *

@@ -5,7 +5,111 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2025-12-03
+
+### Added
+- **Flexible Actor ID Management System**: Comprehensive ID control with multiple strategies and priority system
+  - **4-Tier Priority System**: Explicit IDs → Templates → Strategies → System Default (UUID)
+  - **Explicit IDs**: Manually specify exact IDs with `withId("my-actor")`
+    - Support for Unicode characters and special symbols
+    - Best for singletons and well-known services
+  - **ID Templates**: Dynamic ID generation using placeholders with `withIdTemplate("pattern")`
+    - **8 Placeholders**: `{seq}`, `{template-seq}`, `{uuid}`, `{short-uuid}`, `{timestamp}`, `{nano}`, `{class}`, `{parent}`
+    - Auto-incrementing counters per template prefix
+    - Flexible composition: `"user-{seq}"`, `"{class}-{seq}-{short-uuid}"`, `"session-{timestamp}-{seq}"`
+  - **Predefined ID Strategies**: Consistent ID generation with `withIdStrategy(IdStrategy.*)`
+    - `UUID`: Random UUID (default fallback)
+    - `CLASS_BASED_UUID`: `{class}:{uuid}` format
+    - `CLASS_BASED_SEQUENTIAL`: `{class}:{seq}` format (most readable)
+    - `SEQUENTIAL`: Simple counter
+  - **Hierarchical IDs**: Automatic parent/child ID prefixing
+    - Children automatically prefixed with parent ID: `"parent/child"`
+    - Works with all ID methods (explicit, templates, strategies)
+    - Supports deep hierarchies: `"grandparent/parent/child"`
+  - **Builder Pattern Integration**: Seamless integration with `ActorBuilder` and `StatefulActorBuilder`
+  - **Documentation**: Complete guide with examples, best practices, and use cases
+
+- **Effect Monad for Functional Actors**: Complete functional programming API for actor behaviors
+  - **Stack-Safe**: Uses Trampoline for unbounded effect composition without stack overflow
+  - **Type-Safe Error Handling**: `Effect<State, Error, Result>` with explicit error channel
+  - **Composable Operations**: `map`, `flatMap`, `andThen`, `filter`, `recover`, `zip`, `parZip`
+  - **Request-Response Pattern**: `Effect.ask(pid, message, timeout)` for actor communication
+  - **Checked Exception Support**: `Effect.attempt(() -> ...)` with `ThrowingSupplier` interface
+  - **Pattern Matching**: `Effect.match()` with type-safe message routing at match level
+  - **Parallel Execution**: `parSequence`, `parZip`, `parTraverse`, `race`, `withTimeout` for concurrent operations
+    - **Structured Concurrency**: Uses Java 21's `StructuredTaskScope` for parallel operations
+    - **Fail-Fast**: `ShutdownOnFailure` cancels remaining tasks on first error
+    - **Race Conditions**: `ShutdownOnSuccess` for first-to-complete semantics
+    - **Automatic Cleanup**: Structured scopes ensure proper resource management
+  - **Interruption-Based Cancellation**: Virtual thread-native cancellation support
+    - **`onInterrupt(Effect)`**: Register cleanup effects for graceful cancellation
+    - **`onInterrupt(Runnable)`**: Simple action-based interrupt handling
+    - **`checkInterrupted()`**: Check for interruption in long-running computations
+    - **Zombie Prevention**: Ensures resources are cleaned up when actors are stopped
+    - **Thread.interrupt() Integration**: Preserves interruption status for virtual threads
+    - **Example**: `Effect.attempt(() -> db.query()).onInterrupt(() -> db.rollback())`
+  - **Conditional Logic**: `Effect.when(predicate, effect, fallback)` for conditional execution
+  - **Resource Management**: `bracket` for safe acquire/use/release patterns
+  - **Retry Logic**: `retry(maxAttempts, initialDelay)` with exponential backoff
+  - **Lazy Evaluation**: `suspend` for deferred computations
+  - **Time Control**: `delay(duration)` for suspending execution
+  - **Future Integration**: `fromFuture` for CompletableFuture interop
+  - **Guaranteed Cleanup**: `ensure` for finalizers that always run
+  - **Virtual Thread Optimized**: Natural blocking code without CompletableFuture complexity
+  - **Factory Methods**: `of`, `pure`, `state`, `modify`, `setState`, `identity`, `fail`, `attempt`, `suspend`, `delay`
+  - **Messaging**: `tell`, `tellSelf`, `ask` for actor communication
+  - **Logging**: `log`, `logError`, `logState` for debugging
+  - **Documentation**: Comprehensive guides with failure semantics, cancellation semantics, and evaluation strategy
+
+- **3-Tier Ask Pattern**: Flexible request-response API with multiple access patterns
+  - **Tier 1 - Direct Future**: `CompletableFuture<Response> future = system.ask(pid, request, timeout)`
+    - Raw CompletableFuture for maximum flexibility
+    - Compose with other futures using standard Java API
+  - **Tier 2 - Reply Wrapper**: `Reply<Response> reply = pid.ask(request, timeout)`
+    - Convenience methods: `get()`, `getOrElse(default)`, `getOrThrow()`
+    - Functional operations: `map()`, `flatMap()`, `filter()`, `recover()`
+    - Wraps CompletableFuture with ergonomic API
+  - **Tier 3 - Effect Integration**: `Effect.ask(pid, request, timeout)`
+    - Seamless integration with Effect monad
+    - Automatic error handling and state threading
+    - Suspension point for virtual threads
+  - All tiers share the same underlying promise-based implementation
+  - Choose the right abstraction level for your use case
+
+### Changed
+- **Effect Type Signature**: Simplified from `Effect<State, Message, Result>` to `Effect<State, Error, Result>`
+  - Message type moved to match level: `Effect.<S, E, R, Message>match()`
+  - Cleaner type signatures for effect composition
+  - Error type is now explicit (typically `Throwable` or custom exception types)
+
+### Deprecated
+- **Legacy Mailbox Configuration Classes**: Deprecated mailbox-related classes in `com.cajunsystems.config` package
+  - `MailboxConfig` → moved to `com.cajunsystems.mailbox.config.MailboxConfig`
+  - `ResizableMailboxConfig` → moved to `com.cajunsystems.mailbox.config.ResizableMailboxConfig`
+  - `MailboxProvider` → moved to `com.cajunsystems.mailbox.config.MailboxProvider`
+  - `DefaultMailboxProvider` → moved to `com.cajunsystems.mailbox.config.DefaultMailboxProvider`
+  - These classes have been moved as part of the modularization effort
+  - The old classes will be removed in v0.5.0
+  - Migration: Update imports from `com.cajunsystems.config.*` to `com.cajunsystems.mailbox.config.*`
+  - Both old and new classes are functionally identical during the deprecation period
+
+### Documentation
+- Added **Actor ID Strategies Guide** (`docs/actor_id_strategies.md`) - Comprehensive guide to actor ID management
+  - Complete reference for all 8 template placeholders
+  - Detailed examples for each ID strategy
+  - Best practices and use cases
+  - Hierarchical ID patterns
+  - Multi-tenant and microservice architecture examples
+- Updated **README.md** with Actor ID Strategies section
+  - Quick reference for all ID methods
+  - Priority system explanation
+  - Strategy comparison table
+  - Link to detailed guide
+- Added **Effect Monad Guide** (`docs/effect_monad_guide.md`) - Beginner-friendly introduction
+- Added **Effect API Reference** (`docs/effect_monad_api.md`) - Complete API documentation
+- Added **Functional Actor Evolution** (`docs/functional_actor_evolution.md`) - Advanced patterns
+- Updated **README.md** with Effect examples and Virtual Threads advantages
+- Added Mermaid diagrams for effect pipeline visualization
 
 ## [0.3.1] - 2025-11-24
 

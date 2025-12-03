@@ -2,9 +2,11 @@ package com.cajunsystems;
 
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.test.AsyncAssertion;
+import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.Serializable;
 import java.time.Duration;
@@ -21,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Test to verify that the ask pattern works correctly with stateful actors.
  * Demonstrates proper use of test-utils library for async actor testing.
  */
+@ExtendWith(TempPersistenceExtension.class)
 public class StatefulActorAskPatternTest {
 
     private ActorSystem system;

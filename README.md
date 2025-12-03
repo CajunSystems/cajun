@@ -6,6 +6,8 @@
     <img src="docs/logo.png" alt="Alt Text" style="width:50%; height:auto;">
 </div>
 
+📚 **[Full Documentation](https://cajunsystems.github.io)** | 🚀 [Quick Start](#quick-start-5-minutes) | 📦 [Installation](#installation)
+
 ## Table of Contents
 
 ### Getting Started
@@ -19,7 +21,13 @@
 - [Creating Your First Actors](#creating-your-first-actors)
   - [Stateless Actors](#stateless-actors-with-handler-interface)
   - [Stateful Actors](#stateful-actors-with-statefulhandler-interface)
+  - [Functional Actors with Effects](#functional-actors-with-effects)
   - [Actor Hierarchies](#creating-actor-hierarchies)
+- [Actor ID Strategies](#actor-id-strategies)
+  - [Explicit IDs](#explicit-ids)
+  - [ID Templates](#id-templates)
+  - [ID Strategies](#predefined-id-strategies)
+  - [Hierarchical IDs](#hierarchical-ids)
 - [Actor Communication](#actor-communication)
   - [Sending Messages (tell)](#sending-messages-to-self)
   - [Request-Response (ask)](#request-response-with-ask-pattern)
@@ -156,7 +164,7 @@ Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.3.0'
+    implementation 'com.cajunsystems:cajun:0.4.0'
 }
 ```
 
@@ -166,7 +174,7 @@ Or with Maven:
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun</artifactId>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -530,7 +538,256 @@ public class ParentHandler implements Handler<ParentMessage> {
         }
     }
 }
+
+// Need advanced configuration (e.g., supervision) when creating children?
+// Use the new childBuilder() API exposed on ActorContext.
+public class SupervisedParentHandler implements Handler<ParentMessage> {
+    @Override
+    public void receive(ParentMessage message, ActorContext context) {
+        if (message instanceof CreateChild) {
+            Pid childPid = context.childBuilder(ChildHandler.class)
+                .withSupervisionStrategy(SupervisionStrategy.RESTART)
+                .withId("supervised-child")
+                .spawn();
+
+            context.tell(childPid, new ChildMessage());
+        }
+    }
+}
 ```
+
+## Actor ID Strategies
+
+Every actor in Cajun has a unique identifier (ID) used for message routing, logging, persistence, and hierarchical organization. Cajun provides four flexible ways to control actor IDs with a clear priority system.
+
+### ID Priority System
+
+When multiple ID configurations are specified, Cajun uses this priority order:
+
+1. **Explicit IDs** (Highest) - Manually specified exact IDs
+2. **ID Templates** - Generated IDs using placeholders
+3. **ID Strategies** - Predefined generation strategies  
+4. **System Default** (Lowest) - Falls back to UUID
+
+```java
+// Priority 1: Explicit ID wins
+Pid actor = system.actorOf(Handler.class)
+    .withId("my-actor")           // ← This is used
+    .withIdTemplate("user-{seq}") // ← Ignored
+    .withIdStrategy(IdStrategy.UUID) // ← Ignored
+    .spawn();
+// Result: "my-actor"
+```
+
+**Important**: Each `withId()`, `withIdTemplate()`, and `withIdStrategy()` call replaces any previous ID configuration. Only the last one in the chain is effective.
+
+### Explicit IDs
+
+Manually specify exact IDs for actors. Best for singletons and well-known services:
+
+```java
+// Simple explicit ID
+Pid userService = system.actorOf(UserServiceHandler.class)
+    .withId("user-service")
+    .spawn();
+
+// Unicode characters supported
+Pid actor = system.actorOf(MyHandler.class)
+    .withId("actor-测试-🎭")
+    .spawn();
+```
+
+**Pros:** Predictable, easy to debug, can be looked up by name  
+**Cons:** Must ensure uniqueness manually, not suitable for dynamic creation
+
+### ID Templates
+
+Generate IDs dynamically using placeholders. Best for creating multiple actors with consistent naming:
+
+```java
+// Simple sequence
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdTemplate("user-{seq}")
+    .spawn();
+// Result: "user-1", "user-2", "user-3", ...
+
+// Multiple placeholders
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdTemplate("{class}-{seq}-{short-uuid}")
+    .spawn();
+// Result: "myhandler-1-a1b2c3d4"
+
+// With timestamp
+Pid session = system.actorOf(SessionHandler.class)
+    .withIdTemplate("session-{timestamp}-{seq}")
+    .spawn();
+// Result: "session-1732956789123-1"
+```
+
+**Available Placeholders:**
+- `{seq}` - Auto-incrementing sequence number
+- `{template-seq}` - Sequence per template pattern
+- `{uuid}` - Full UUID
+- `{short-uuid}` - First 8 characters of UUID
+- `{timestamp}` - Current timestamp (milliseconds)
+- `{nano}` - Current nanosecond time
+- `{class}` - Simplified class name (lowercase)
+- `{parent}` - Parent actor ID (if hierarchical)
+
+**Pros:** Readable, automatic uniqueness, flexible composition  
+**Cons:** Counters reset on restart (unless using persistence - see below)
+
+**🔄 Persistence Integration:** When using sequence-based naming with stateful actors, Cajun automatically scans persisted actors on startup and initializes counters to prevent ID collisions:
+
+```java
+// First run: Create stateful actors with sequential IDs
+Pid user1 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(journal, snapshot)
+    .spawn();
+// Result: "userhandler:1"
+
+Pid user2 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(journal, snapshot)
+    .spawn();
+// Result: "userhandler:2"
+
+// After restart: Counters resume from persisted state
+Pid user3 = system.statefulActorOf(UserHandler.class, initialState)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .withPersistence(journal, snapshot)
+    .spawn();
+// Result: "userhandler:3" (not "userhandler:1"!)
+// Existing actors "userhandler:1" and "userhandler:2" are restored
+```
+
+This ensures that:
+- ✅ Persisted actors are restored with their original IDs
+- ✅ New actors continue the sequence without collisions
+- ✅ ID uniqueness is maintained across restarts
+- ✅ Works with `CLASS_BASED_SEQUENTIAL` strategy and templates using colon separators
+
+**⚠️ Important:** Counter recovery only works with the `prefix:number` pattern (colon separator):
+- ✅ `CLASS_BASED_SEQUENTIAL` → `"userhandler:1"` (works)
+- ✅ `"user:{seq}"` → `"user:1"` (works)
+- ❌ `"user-{seq}"` → `"user-1"` (does NOT work)
+
+For persistence with templates, use colons: `"user:{seq}"` instead of `"user-{seq}"`
+
+### Predefined ID Strategies
+
+Use predefined strategies for consistent ID generation:
+
+```java
+// UUID (Default)
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.UUID)
+    .spawn();
+// Result: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+// CLASS_BASED_UUID: {class}:{uuid}
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.CLASS_BASED_UUID)
+    .spawn();
+// Result: "myhandler:a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+// CLASS_BASED_SEQUENTIAL: {class}:{seq}
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .spawn();
+// Result: "myhandler:1", "myhandler:2", "myhandler:3", ...
+
+// SEQUENTIAL: Simple counter
+Pid actor = system.actorOf(MyHandler.class)
+    .withIdStrategy(IdStrategy.SEQUENTIAL)
+    .spawn();
+// Result: "1", "2", "3", ...
+```
+
+**Strategy Comparison:**
+
+| Strategy | Example | Readability | Uniqueness | Use Case |
+|----------|---------|-------------|------------|----------|
+| UUID | `a1b2...` | ⭐ | ⭐⭐⭐⭐⭐ | Distributed systems |
+| CLASS_BASED_UUID | `handler:a1b2...` | ⭐⭐ | ⭐⭐⭐⭐⭐ | Multi-class systems |
+| CLASS_BASED_SEQUENTIAL | `handler:1` | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Single-node apps |
+| SEQUENTIAL | `1` | ⭐⭐⭐ | ⭐⭐⭐ | Simple testing |
+
+### Hierarchical IDs
+
+Create parent-child relationships with automatic ID prefixing:
+
+```java
+// Create parent
+Pid parent = system.actorOf(ParentHandler.class)
+    .withId("parent")
+    .spawn();
+
+// Create child - ID is automatically prefixed
+Pid child = system.actorOf(ChildHandler.class)
+    .withId("child")
+    .withParent(system.getActor(parent))
+    .spawn();
+// Result: "parent/child"
+
+// Children with templates
+Pid child1 = system.actorOf(ChildHandler.class)
+    .withIdTemplate("child-{seq}")
+    .withParent(system.getActor(parent))
+    .spawn();
+// Result: "parent/child-1"
+
+// Deep hierarchies
+Pid grandchild = system.actorOf(Handler.class)
+    .withId("grandchild")
+    .withParent(system.getActor(child))
+    .spawn();
+// Result: "parent/child/grandchild"
+```
+
+### Best Practices
+
+**Choose the right approach:**
+```java
+// ✅ Good: Explicit IDs for singletons
+Pid service = system.actorOf(ServiceHandler.class)
+    .withId("user-service")
+    .spawn();
+
+// ✅ Good: Templates for dynamic actors
+Pid session = system.actorOf(SessionHandler.class)
+    .withIdTemplate("session-{seq}")
+    .spawn();
+
+// ✅ Good: Strategies for consistency
+Pid worker = system.actorOf(WorkerHandler.class)
+    .withIdStrategy(IdStrategy.CLASS_BASED_SEQUENTIAL)
+    .spawn();
+```
+
+**Use meaningful names:**
+```java
+// ✅ Good: Descriptive IDs
+.withIdTemplate("user-session-{seq}")
+.withIdTemplate("{class}-worker-{seq}")
+
+// ❌ Bad: Generic IDs
+.withIdTemplate("actor-{seq}")
+```
+
+**Consider persistence:**
+```java
+// ✅ Good: Stable IDs for stateful actors
+Pid counter = system.statefulActorOf(CounterHandler.class, 0)
+    .withId("global-counter")  // Same ID after restart
+    .withPersistence(...)
+    .spawn();
+```
+
+**📖 Complete Documentation:** See [Actor ID Strategies Guide](docs/actor_id_strategies.md) for comprehensive examples, all placeholders, and advanced patterns.
+
+---
 
 ## Actor Communication
 
@@ -684,9 +941,111 @@ The `StatefulHandler` interface provides lifecycle methods:
 - `postStop(State state, ActorContext context)`: Called when the actor stops
 - `onError(Message message, State state, Throwable exception, ActorContext context)`: Called when message processing fails
 
+### Functional Actors with Effects
+
+**New in Cajun**: Build actors using composable Effects for a more functional programming style.
+
+Effects provide a powerful way to build actor behaviors by composing simple operations into complex workflows. Think of Effects as recipes that describe what your actor should do.
+
+#### Quick Example
+
+```java
+import static com.cajunsystems.functional.ActorSystemEffectExtensions.*;
+
+// Define messages
+sealed interface CounterMsg {}
+record Increment(int amount) implements CounterMsg {}
+record Decrement(int amount) implements CounterMsg {}
+record GetCount(Pid replyTo) implements CounterMsg {}
+
+// Build behavior using effects - Note: Message type is at match level
+Effect<Integer, Throwable, Void> counterBehavior = 
+    Effect.<Integer, Throwable, Void, CounterMsg>match()
+        .when(Increment.class, (state, msg, ctx) -> 
+            Effect.modify(s -> s + msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+        
+        .when(Decrement.class, (state, msg, ctx) ->
+            Effect.modify(s -> s - msg.amount())
+                .andThen(Effect.logState(s -> "Count: " + s)))
+        
+        .when(GetCount.class, (state, msg, ctx) ->
+            Effect.tell(msg.replyTo(), state))
+        
+        .build();
+
+// Create actor from effect
+Pid counter = fromEffect(system, counterBehavior, 0)
+    .withId("counter")
+    .spawn();
+
+// Use like any actor
+counter.tell(new Increment(5));
+```
+
+#### Why Use Effects?
+
+- **Composable**: Build complex behaviors from simple building blocks
+- **Stack-Safe**: Uses Trampoline pattern to prevent stack overflow on deep compositions
+- **🚀 Blocking is Safe**: Cajun runs on Java 21+ Virtual Threads - write normal blocking code without fear!
+  - No `CompletableFuture` chains or async/await complexity
+  - Database calls, HTTP requests, file I/O - just write them naturally
+  - Virtual threads handle suspension efficiently - you never block an OS thread
+- **Type-safe**: Compile-time checking of state and error types
+- **Testable**: Pure functions that are easy to test without spawning actors
+- **Error handling**: Explicit error recovery with `.recover()`, `.orElse()`, and rich error combinators
+- **Parallel Execution**: Built-in support for `parZip`, `parSequence`, `race`, and `withTimeout`
+- **Readable**: Declarative style makes intent clear
+
+#### Common Effect Patterns
+
+**State Modification:**
+```java
+Effect.modify(count -> count + 1)              // Update state
+Effect.setState(0)                             // Set to specific value
+```
+
+**Messaging:**
+```java
+Effect.tell(otherActor, message)               // Send to another actor
+Effect.tellSelf(message)                       // Send to self
+Effect.ask(actor, request, Duration.ofSeconds(5))  // Request-response
+```
+
+**Composition:**
+```java
+Effect.modify(s -> s + 1)
+    .andThen(Effect.logState(s -> "New state: " + s))
+    .andThen(Effect.tell(monitor, new StateUpdate(s)))
+```
+
+**Error Handling:**
+```java
+Effect.attempt(() -> riskyOperation())
+    .recover(error -> defaultValue)
+    .orElse(Effect.of(fallbackValue))
+```
+
+**Blocking I/O (Safe with Virtual Threads!):**
+```java
+// Write natural blocking code - Virtual Threads make it efficient!
+Effect.attempt(() -> {
+    var user = database.findUser(userId);           // Blocking - totally fine!
+    var profile = httpClient.get("/api/profile");   // Also blocking - great!
+    return new UserData(user, profile);
+})
+.recover(error -> UserData.empty());
+```
+
+#### Learn More
+
+- **[Effect Monad Guide](docs/effect_monad_guide.md)** - Beginner-friendly introduction with examples
+- **[Effect API Reference](docs/effect_monad_api.md)** - Complete API documentation
+- **[Functional Actor Evolution](docs/functional_actor_evolution.md)** - Advanced patterns and best practices
+
 ### Using the Actor System
 
-After creating your handlers, use the actor system to spawn actors and send messages:
+After creating your handlers or effects, use the actor system to spawn actors and send messages:
 
 ```java
 public class CountResultHandler implements Handler<HelloCount> {
@@ -805,6 +1164,7 @@ jbang lib/src/test/java/examples/BackpressureActorExample.java
 - `BackpressureStatefulActorExample.java` - Stateful actor with backpressure
 - `ActorVsThreadsExample.java` - Performance comparison
 - `FunctionalWorkflowExample.java` - Functional programming style
+- `KVEffectExample.java` - **NEW**: LSM Tree Key-Value store using Effects
 - `SenderPropagationExample.java` - Sender context propagation
 - `StatefulShoppingCartExample.java` - Shopping cart with persistence
 - `ClusterWorkflowExample.java` - Distributed actor example
@@ -1111,9 +1471,37 @@ Pid actor = system.actorOf(MyHandler.class)
 
 While actors typically communicate through one-way asynchronous messages, Cajun provides an "ask pattern" for request-response interactions where you need to wait for a reply.
 
-### Basic Usage
+### The Reply Pattern (Recommended)
 
-The ask pattern allows you to send a message to an actor and receive a response as a `CompletableFuture`:
+Cajun provides a streamlined **3-tier Reply API** that wraps `CompletableFuture` with a more ergonomic interface:
+
+```java
+// Tier 1: Simple - just get the value
+String name = userActor.ask(new GetName(), Duration.ofSeconds(5)).get();
+
+// Tier 2: Safe - pattern matching with Result
+switch (userActor.ask(new GetProfile(), Duration.ofSeconds(5)).await()) {
+    case Result.Success(var profile) -> handleSuccess(profile);
+    case Result.Failure(var error) -> handleError(error);
+}
+
+// Tier 3: Advanced - full CompletableFuture power
+CompletableFuture<Combined> result = userReply.future()
+    .thenCombine(ordersReply.future(), (user, orders) -> combine(user, orders));
+```
+
+**Key Benefits:**
+- **Tier 1 (Simple)**: Clean blocking API with automatic exception handling
+- **Tier 2 (Safe)**: Pattern matching for explicit error handling without exceptions
+- **Tier 3 (Advanced)**: Direct `CompletableFuture` access for complex async composition
+- **Monadic operations**: `map()`, `flatMap()`, `recover()`, `recoverWith()`
+- **Callbacks**: `onSuccess()`, `onFailure()`, `onComplete()` for non-blocking workflows
+
+📖 **See [Reply Pattern Usage Guide](docs/reply_pattern_usage.md) for complete documentation with examples.**
+
+### Basic Usage (CompletableFuture)
+
+You can also use the traditional `CompletableFuture` approach directly:
 
 ```java
 // Send a request to an actor and get a future response
@@ -1286,9 +1674,10 @@ public class ProcessorHandler implements Handler<Request> {
 ```
 
 **Key Points:**
-- `getSender()` returns `Optional<Pid>` - use `ifPresent()`, `map()`, or `orElse()` for clean handling
-- Returns `Optional.empty()` for regular `tell()` messages
-- Returns the sender's PID for `ask()` messages
+- `getSender()` returns `Optional<Pid>` – use `ifPresent()`, `map()`, or `orElse()` for clean handling
+- When another actor calls `tell()` (or `forward()`), the sender PID is propagated automatically, so `getSender()` is present and you can reply immediately
+- When the system, an external thread, or test code without an actor context calls `tell()`, the sender is unknown and you’ll see `Optional.empty()`
+- For the ask pattern, the temporary request ID is exposed as the sender, so `context.tell(getSender().get(), response)` completes the `CompletableFuture`
 - Sender context is automatically cleared after message processing
 
 ### Message Forwarding with `forward()`

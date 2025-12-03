@@ -2,7 +2,12 @@ package com.cajunsystems.config;
 
 /**
  * Configuration for actor mailbox settings.
+ * 
+ * @deprecated This class has been moved to {@link com.cajunsystems.mailbox.config.MailboxConfig}
+ *             as part of the modularization effort. Please migrate to the new package.
+ *             This class will be removed in v0.5.0.
  */
+@Deprecated(since = "0.4.0", forRemoval = true)
 public class MailboxConfig {
     // Default values for mailbox configuration
     public static final int DEFAULT_INITIAL_CAPACITY = 64;

@@ -94,4 +94,3 @@ public class TempPersistenceExtension implements BeforeAllCallback, AfterAllCall
         return (Path) context.getStore(ExtensionContext.Namespace.GLOBAL).get(TEMP_DIR_KEY);
     }
 }
-
