@@ -6,7 +6,7 @@ The Effect monad provides a composable, type-safe, **stack-safe** way to build a
 
 ## Key Features
 
-- **Stack-Safe** - Uses Trampoline pattern to prevent stack overflow on deep compositions
+- **Stack-Safe** - Prevents stack overflow on deep compositions (chain thousands of operations safely)
 - **Simplified Type Signature** - `Effect<State, Error, Result>` with Message type at match level
 - **Idiomatic Java naming** - Uses `.of()` instead of `.pure()`, familiar to Java developers
 - **Composable** - Build complex behaviors from simple building blocks
@@ -56,11 +56,10 @@ An `Effect` represents a **stack-safe** computation that:
 - May produce a **result** value
 - May perform **side effects** (logging, sending messages, etc.)
 - May **fail** with an **error** of type `Error` (typically `Throwable`)
-- Returns a `Trampoline<EffectResult<State, Result>>` for stack safety
 
 **Key Changes from Previous Version:**
 - Message type moved from interface to `match()` method
-- All operations return `Trampoline` for stack-safe execution
+- Stack-safe execution for deep compositions
 - Explicit `Error` type parameter for better type safety
 
 ### EffectResult<State, Result>

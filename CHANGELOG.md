@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Documentation**: Complete guide with examples, best practices, and use cases
 
 - **Effect Monad for Functional Actors**: Complete functional programming API for actor behaviors
-  - **Stack-Safe**: Uses Trampoline for unbounded effect composition without stack overflow
+  - **Stack-Safe**: Unbounded effect composition without stack overflow (chain thousands of operations)
   - **Type-Safe Error Handling**: `Effect<State, Error, Result>` with explicit error channel
   - **Composable Operations**: `map`, `flatMap`, `andThen`, `filter`, `recover`, `zip`, `parZip`
   - **Request-Response Pattern**: `Effect.ask(pid, message, timeout)` for actor communication
