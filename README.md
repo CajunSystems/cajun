@@ -6,6 +6,8 @@
     <img src="docs/logo.png" alt="Alt Text" style="width:50%; height:auto;">
 </div>
 
+📚 **[Full Documentation](https://cajunsystems.github.io)** | 🚀 [Quick Start](#quick-start-5-minutes) | 📦 [Installation](#installation)
+
 ## Table of Contents
 
 ### Getting Started
