@@ -1,10 +1,13 @@
 package com.cajunsystems.functional;
 
+import com.cajunsystems.ActorContext;
 import com.cajunsystems.functional.internal.Trampoline;
 import com.cajunsystems.handler.StatefulHandler;
 
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Utility class for converting between different actor programming styles.
@@ -122,7 +125,7 @@ public final class EffectConversions {
     ) {
         return new StatefulHandler<State, Message>() {
             @Override
-            public State receive(Message message, State state, com.cajunsystems.ActorContext context) {
+            public State receive(Message message, State state, ActorContext context) {
                 EffectResult<State, Result> result = effect.run(state, message, context);
                 
                 // Log failures
@@ -150,7 +153,7 @@ public final class EffectConversions {
     ) {
         return new StatefulHandler<State, Message>() {
             @Override
-            public State receive(Message message, State state, com.cajunsystems.ActorContext context) {
+            public State receive(Message message, State state, ActorContext context) {
                 EffectResult<State, Result> result = effect.run(state, message, context);
                 
                 // Handle failures
@@ -203,7 +206,7 @@ public final class EffectConversions {
      * @return An Effect that applies the function
      */
     public static <State, Message> Effect<State, Message, Void> liftStateFunction(
-        java.util.function.Function<State, State> f
+        Function<State, State> f
     ) {
         return Effect.modify(f);
     }
@@ -226,7 +229,7 @@ public final class EffectConversions {
      * @return An Effect that performs the side effect
      */
     public static <State, E> Effect<State, E, Void> liftSideEffect(
-        java.util.function.Consumer<State> sideEffect
+        Consumer<State> sideEffect
     ) {
         return (state, message, context) -> {
             sideEffect.accept(state);

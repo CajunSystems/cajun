@@ -1,6 +1,7 @@
 package com.cajunsystems.functional;
 
 import com.cajunsystems.ActorSystem;
+import com.cajunsystems.Pid;
 
 /**
  * Extension methods for ActorSystem to support Effect-based actors.
@@ -50,7 +51,7 @@ public final class ActorSystemEffectExtensions {
      * @param initialState The initial state of the actor
      * @return The PID of the spawned actor
      */
-    public static <State, Message, Result> com.cajunsystems.Pid spawnFromEffect(
+    public static <State, Message, Result> Pid spawnFromEffect(
         ActorSystem system,
         Effect<State, Message, Result> effect,
         State initialState
@@ -67,7 +68,7 @@ public final class ActorSystemEffectExtensions {
      * @param actorId The ID for the actor
      * @return The PID of the spawned actor
      */
-    public static <State, Message, Result> com.cajunsystems.Pid spawnFromEffect(
+    public static <State, Message, Result> Pid spawnFromEffect(
         ActorSystem system,
         Effect<State, Message, Result> effect,
         State initialState,

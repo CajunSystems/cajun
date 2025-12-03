@@ -21,6 +21,7 @@ import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import com.cajunsystems.persistence.PersistenceTruncationConfig;
 import com.cajunsystems.persistence.PersistenceTruncationMode;
+import com.cajunsystems.persistence.PidRehydrator;
 import com.cajunsystems.persistence.filesystem.FileSystemTruncationDaemon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -892,7 +893,7 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
                         State recoveredState = snapshot.getState();
                         
                         // Rehydrate any Pid references in the state with the current ActorSystem
-                        recoveredState = com.cajunsystems.persistence.PidRehydrator.rehydrate(recoveredState, getSystem());
+                        recoveredState = PidRehydrator.rehydrate(recoveredState, getSystem());
                         
                         currentState.set(recoveredState);
                         lastProcessedSequence.set(snapshotSequence);

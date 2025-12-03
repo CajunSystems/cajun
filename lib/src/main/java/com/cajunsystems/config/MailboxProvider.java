@@ -9,7 +9,11 @@ import com.cajunsystems.config.ThreadPoolFactory.WorkloadType;
  * and configuring mailboxes based on configuration and workload hints.
  *
  * @param <M> The type of messages the mailbox will hold.
+ * @deprecated This interface has been moved to {@link com.cajunsystems.mailbox.config.MailboxProvider}
+ *             as part of the modularization effort. Please migrate to the new package.
+ *             This interface will be removed in v0.5.0.
  */
+@Deprecated(since = "0.4.0", forRemoval = true)
 public interface MailboxProvider<M> {
 
     /**

@@ -5,7 +5,7 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2025-12-02
+## [0.4.0] - 2025-12-03
 
 ### Added
 - **Flexible Actor ID Management System**: Comprehensive ID control with multiple strategies and priority system
@@ -81,6 +81,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Message type moved to match level: `Effect.<S, E, R, Message>match()`
   - Cleaner type signatures for effect composition
   - Error type is now explicit (typically `Throwable` or custom exception types)
+
+### Deprecated
+- **Legacy Mailbox Configuration Classes**: Deprecated mailbox-related classes in `com.cajunsystems.config` package
+  - `MailboxConfig` → moved to `com.cajunsystems.mailbox.config.MailboxConfig`
+  - `ResizableMailboxConfig` → moved to `com.cajunsystems.mailbox.config.ResizableMailboxConfig`
+  - `MailboxProvider` → moved to `com.cajunsystems.mailbox.config.MailboxProvider`
+  - `DefaultMailboxProvider` → moved to `com.cajunsystems.mailbox.config.DefaultMailboxProvider`
+  - These classes have been moved as part of the modularization effort
+  - The old classes will be removed in v0.5.0
+  - Migration: Update imports from `com.cajunsystems.config.*` to `com.cajunsystems.mailbox.config.*`
+  - Both old and new classes are functionally identical during the deprecation period
 
 ### Documentation
 - Added **Actor ID Strategies Guide** (`docs/actor_id_strategies.md`) - Comprehensive guide to actor ID management

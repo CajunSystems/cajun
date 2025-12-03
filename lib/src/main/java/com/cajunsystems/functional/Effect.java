@@ -132,7 +132,7 @@ public interface Effect<S, E, R> {
     
     @SuppressWarnings("unchecked")
     static <S, E, M> Effect<S, E, Void> fromTransition(
-            java.util.function.BiFunction<S, M, S> transition) {
+            BiFunction<S, M, S> transition) {
         return (state, message, context) -> {
             try {
                 S newState = transition.apply(state, (M) message);
@@ -164,7 +164,7 @@ public interface Effect<S, E, R> {
         };
     }
     
-    static <S, E> Effect<S, E, Void> logState(java.util.function.Function<S, String> formatter) {
+    static <S, E> Effect<S, E, Void> logState(Function<S, String> formatter) {
         return (state, msg, context) -> {
             context.getLogger().info(formatter.apply(state));
             return Trampoline.done(EffectResult.noResult(state));
