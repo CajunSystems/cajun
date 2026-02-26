@@ -1,17 +1,17 @@
 # Project State
 
 ## Current Status
-**Phase**: 3 — Remove Old Effect Machinery
+**Phase**: 4 — Migrate Capabilities
 **Status**: Active
 **Branch**: `feature/roux-effect-integration`
 **Last Updated**: 2026-02-26
 
 ## Active Phase
-**Phase 3: Remove Old Effect Machinery**
+**Phase 4: Migrate Capabilities**
 
-Goal: Every line of the old Cajun effect system is gone. Build still compiles.
+Goal: Cajun's `LogCapability` and `ConsoleLogHandler` work through Roux's `Capability<R>` / `CapabilityHandler` model.
 
-Next action: `/gsd:plan-phase 3`
+Next action: `/gsd:plan-phase 4`
 
 ## Phase Progress
 
@@ -19,7 +19,7 @@ Next action: `/gsd:plan-phase 3`
 |-------|------|--------|
 | 1 | Dependency Setup & Build Verification | ✅ Complete |
 | 2 | ActorEffectRuntime | ✅ Complete |
-| 3 | Remove Old Effect Machinery | ⬜ Not started |
+| 3 | Remove Old Effect Machinery | ✅ Complete |
 | 4 | Migrate Capabilities | ⬜ Not started |
 | 5 | Rewrite Effect Builders | ⬜ Not started |
 | 6 | Tests, Examples & Validation | ⬜ Not started |

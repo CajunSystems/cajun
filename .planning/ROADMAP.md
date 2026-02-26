@@ -34,7 +34,7 @@ Plans:
 
 ---
 
-## Phase 3: Remove Old Effect Machinery
+## ~~Phase 3: Remove Old Effect Machinery~~ ✅
 **Goal**: Every line of the old Cajun effect system is gone. Build still compiles.
 
 Hard cut: `Effect<State,Error,Result>`, `Trampoline`, `EffectGenerator`, `GeneratorContext`,
