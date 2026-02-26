@@ -1,17 +1,17 @@
 # Project State
 
 ## Current Status
-**Phase**: 4 — Migrate Capabilities
+**Phase**: 5 — Rewrite Effect Builders
 **Status**: Active
 **Branch**: `feature/roux-effect-integration`
 **Last Updated**: 2026-02-26
 
 ## Active Phase
-**Phase 4: Migrate Capabilities**
+**Phase 5: Rewrite Effect Builders**
 
-Goal: Cajun's `LogCapability` and `ConsoleLogHandler` work through Roux's `Capability<R>` / `CapabilityHandler` model.
+Goal: `EffectActorBuilder` and `ActorSystemEffectExtensions` expose a clean Roux-native API.
 
-Next action: `/gsd:plan-phase 4`
+Next action: `/gsd:plan-phase 5`
 
 ## Phase Progress
 
@@ -20,7 +20,7 @@ Next action: `/gsd:plan-phase 4`
 | 1 | Dependency Setup & Build Verification | ✅ Complete |
 | 2 | ActorEffectRuntime | ✅ Complete |
 | 3 | Remove Old Effect Machinery | ✅ Complete |
-| 4 | Migrate Capabilities | ⬜ Not started |
+| 4 | Migrate Capabilities | ✅ Complete |
 | 5 | Rewrite Effect Builders | ⬜ Not started |
 | 6 | Tests, Examples & Validation | ⬜ Not started |
 

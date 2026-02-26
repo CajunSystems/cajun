@@ -48,7 +48,7 @@ Plans:
 
 ---
 
-## Phase 4: Migrate Capabilities
+## ~~Phase 4: Migrate Capabilities~~ ✅
 **Goal**: Cajun's `LogCapability` and `ConsoleLogHandler` work through Roux's `Capability<R>` / `CapabilityHandler` model.
 
 Cajun's own `Capability.java` and `CapabilityHandler.java` are deleted — Roux's versions are used directly.
