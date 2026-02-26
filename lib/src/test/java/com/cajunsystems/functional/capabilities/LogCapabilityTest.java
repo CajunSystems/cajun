@@ -39,7 +39,7 @@ class LogCapabilityTest {
             Effect<RuntimeException, Unit> effect =
                     Effect.<RuntimeException, Unit>from(new LogCapability.Info("hello-info"));
             Unit result = runtime.unsafeRunWithHandler(effect, handler.widen());
-            assertEquals(Unit.INSTANCE, result);
+            assertEquals(Unit.unit(), result);
         } finally {
             System.setOut(oldOut);
         }
@@ -123,7 +123,7 @@ class LogCapabilityTest {
                         ctx.perform(new LogCapability.Info("gen-info"));
                         ctx.perform(new LogCapability.Debug("gen-debug"));
                         ctx.perform(new LogCapability.Warn("gen-warn"));
-                        return Unit.INSTANCE;
+                        return Unit.unit();
                     },
                     handler.widen()
             );

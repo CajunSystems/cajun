@@ -26,22 +26,22 @@ public class ConsoleLogHandler implements CapabilityHandler<LogCapability> {
         return switch (capability) {
             case LogCapability.Info info -> {
                 System.out.println("[INFO]  " + info.message());
-                yield (R) Unit.INSTANCE;
+                yield (R) Unit.unit();
             }
             case LogCapability.Debug debug -> {
                 System.out.println("[DEBUG] " + debug.message());
-                yield (R) Unit.INSTANCE;
+                yield (R) Unit.unit();
             }
             case LogCapability.Warn warn -> {
                 System.out.println("[WARN]  " + warn.message());
-                yield (R) Unit.INSTANCE;
+                yield (R) Unit.unit();
             }
             case LogCapability.Error error -> {
                 System.err.println("[ERROR] " + error.message());
                 if (error.cause() != null) {
                     error.cause().printStackTrace(System.err);
                 }
-                yield (R) Unit.INSTANCE;
+                yield (R) Unit.unit();
             }
         };
     }

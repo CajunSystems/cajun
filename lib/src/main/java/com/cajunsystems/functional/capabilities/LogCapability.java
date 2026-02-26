@@ -21,7 +21,7 @@ import com.cajunsystems.roux.data.Unit;
  *     ctx -> {
  *         ctx.perform(new LogCapability.Info("step 1"));
  *         ctx.perform(new LogCapability.Warn("step 2"));
- *         return Unit.INSTANCE;
+ *         return Unit.unit();
  *     },
  *     new ConsoleLogHandler().widen()
  * );
