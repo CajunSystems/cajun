@@ -1,23 +1,23 @@
 # Project State
 
 ## Current Status
-**Phase**: 1 — Dependency Setup & Build Verification
+**Phase**: 2 — ActorEffectRuntime
 **Status**: Not started
 **Branch**: `feature/roux-effect-integration`
 **Last Updated**: 2026-02-26
 
 ## Active Phase
-**Phase 1: Dependency Setup & Build Verification**
+**Phase 2: Implement ActorEffectRuntime**
 
-Goal: Add `com.cajunsystems:roux:0.1.0` to Cajun's build and confirm everything compiles.
+Goal: Implement actor-backed EffectRuntime that dispatches Roux effects through the actor system's executor.
 
-Next action: `/gsd:plan-phase 1`
+Next action: `/gsd:plan-phase 2`
 
 ## Phase Progress
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Dependency Setup & Build Verification | ⬜ Not started |
+| 1 | Dependency Setup & Build Verification | ✅ Complete |
 | 2 | ActorEffectRuntime | ⬜ Not started |
 | 3 | Remove Old Effect Machinery | ⬜ Not started |
 | 4 | Migrate Capabilities | ⬜ Not started |

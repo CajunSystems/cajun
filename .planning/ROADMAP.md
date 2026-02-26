@@ -9,7 +9,7 @@ execution rather than virtual threads.
 
 ---
 
-## Phase 1: Dependency Setup & Build Verification
+## ~~Phase 1: Dependency Setup & Build Verification~~ ✅
 **Goal**: Roux is on the classpath and the build compiles cleanly with both systems present.
 
 No code deleted yet — establish the foundation before the hard cut.
