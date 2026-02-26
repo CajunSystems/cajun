@@ -21,7 +21,7 @@ Plans:
 
 ---
 
-## Phase 2: Implement ActorEffectRuntime
+## ~~Phase 2: Implement ActorEffectRuntime~~ ✅
 **Goal**: A working `ActorEffectRuntime` that dispatches Roux effects through the actor system's executor, not a virtual-thread pool.
 
 This is the core deliverable — the thing that makes Cajun's integration unique.

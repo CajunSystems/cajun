@@ -1,24 +1,24 @@
 # Project State
 
 ## Current Status
-**Phase**: 2 — ActorEffectRuntime
-**Status**: Not started
+**Phase**: 3 — Remove Old Effect Machinery
+**Status**: Active
 **Branch**: `feature/roux-effect-integration`
 **Last Updated**: 2026-02-26
 
 ## Active Phase
-**Phase 2: Implement ActorEffectRuntime**
+**Phase 3: Remove Old Effect Machinery**
 
-Goal: Implement actor-backed EffectRuntime that dispatches Roux effects through the actor system's executor.
+Goal: Every line of the old Cajun effect system is gone. Build still compiles.
 
-Next action: `/gsd:plan-phase 2`
+Next action: `/gsd:plan-phase 3`
 
 ## Phase Progress
 
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | Dependency Setup & Build Verification | ✅ Complete |
-| 2 | ActorEffectRuntime | ⬜ Not started |
+| 2 | ActorEffectRuntime | ✅ Complete |
 | 3 | Remove Old Effect Machinery | ⬜ Not started |
 | 4 | Migrate Capabilities | ⬜ Not started |
 | 5 | Rewrite Effect Builders | ⬜ Not started |
