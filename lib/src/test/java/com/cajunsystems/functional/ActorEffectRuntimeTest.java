@@ -82,11 +82,13 @@ class ActorEffectRuntimeTest {
     }
 
     @Test
-    void fiberForkAndJoinReturnsResult() throws Exception {
-        // fork() returns Effect<Throwable, Fiber<E,A>> (error type is widened to Throwable)
+    void fiberForkAndJoinReturnsResult() throws Throwable {
+        // fork() returns Effect<Throwable, Fiber<E,A>> (error type is widened to Throwable).
+        // join() returns Effect<E,A> (e.g. Effect<RuntimeException,String>) which must be
+        // widened to Effect<Throwable,String> so it matches the outer flatMap's error type.
         Effect<Throwable, Fiber<RuntimeException, String>> forked =
                 Effect.<RuntimeException, String>succeed("from-fiber").fork();
-        Effect<Throwable, String> workflow = forked.flatMap(Fiber::join);
+        Effect<Throwable, String> workflow = forked.flatMap(fiber -> fiber.join().widen());
 
         assertEquals("from-fiber", runtime.unsafeRun(workflow));
     }
@@ -103,7 +105,7 @@ class ActorEffectRuntimeTest {
         );
         try {
             ActorEffectRuntime sharedRuntime = new ActorEffectRuntime(sharedSystem);
-            assertEquals("shared", sharedRuntime.unsafeRun(Effect.succeed("shared")));
+            assertEquals("shared", sharedRuntime.unsafeRun(Effect.<RuntimeException, String>succeed("shared")));
         } finally {
             sharedSystem.shutdown();
         }
@@ -116,7 +118,7 @@ class ActorEffectRuntimeTest {
         );
         try {
             ActorEffectRuntime dedicatedRuntime = new ActorEffectRuntime(noSharedSystem);
-            assertEquals("dedicated", dedicatedRuntime.unsafeRun(Effect.succeed("dedicated")));
+            assertEquals("dedicated", dedicatedRuntime.unsafeRun(Effect.<RuntimeException, String>succeed("dedicated")));
         } finally {
             noSharedSystem.shutdown();
         }
