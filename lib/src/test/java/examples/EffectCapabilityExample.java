@@ -76,9 +76,9 @@ class EffectCapabilityExample {
         @Override
         @SuppressWarnings("unchecked")
         public <R> R handle(ValidationCapability capability) {
-            return (R) switch (capability) {
-                case ValidationCapability.IsNonEmpty v  -> !v.value().isEmpty();
-                case ValidationCapability.HasMinLength v -> v.value().length() >= v.min();
+            return switch (capability) {
+                case ValidationCapability.IsNonEmpty v  -> (R) (Boolean) !v.value().isEmpty();
+                case ValidationCapability.HasMinLength v -> (R) (Boolean) (v.value().length() >= v.min());
             };
         }
     }
@@ -96,15 +96,15 @@ class EffectCapabilityExample {
         @Override
         @SuppressWarnings("unchecked")
         public <R> R handle(MetricsCapability capability) {
-            return (R) switch (capability) {
+            return switch (capability) {
                 case MetricsCapability.Increment inc -> {
                     counters.computeIfAbsent(inc.counter(), k -> new AtomicInteger(0))
                             .incrementAndGet();
-                    yield Unit.unit();
+                    yield (R) Unit.unit();
                 }
                 case MetricsCapability.Record rec -> {
                     gauges.put(rec.metric(), rec.value());
-                    yield Unit.unit();
+                    yield (R) Unit.unit();
                 }
             };
         }
@@ -165,7 +165,7 @@ class EffectCapabilityExample {
                         new ValidationCapability.HasMinLength(req.text(), 5));
                 req.replyTo().tell(new ValidationResult(req.text(), nonEmpty && hasMin));
                 return Unit.unit();
-            }, new ValidationHandler())
+            }, new ValidationHandler().widen())
         ).withId("validator").spawn();
 
         validator.tell(new ValidateRequest("hello world", collector)); // 11 chars → true
@@ -202,7 +202,7 @@ class EffectCapabilityExample {
                         "last.key.length", (double) item.key().length()));
                 latch.countDown();
                 return Unit.unit();
-            }, mh)
+            }, mh.widen())
         ).withId("metrics-actor").spawn();
 
         actor.tell(new ProcessItem("alpha"));   // 5 chars
