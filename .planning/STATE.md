@@ -2,7 +2,7 @@
 
 ## Current Status
 **Milestone**: 2 — Effect Actor Examples & Documentation
-**Phase**: 9 (next to plan/execute)
+**Phase**: 9 (plan 9-1 complete, 9-2 next)
 **Status**: In Progress
 **Branch**: `main` (merge feature/roux-effect-integration first, then new branch per phase)
 **Last Updated**: 2026-02-27
@@ -34,6 +34,9 @@
 - Use UUID-based actor IDs in tests with StatefulHandler to avoid cross-run journal accumulation
 - EffectActorBuilder actors don't expose ActorContext — use embedded `Pid replyTo` in request for replies
 - `system.statefulActorOf(handlerInstance, initialState)` required when handler has constructor args
+- EffectActorBuilder pipeline wiring: build sink-first, capture downstream Pid in upstream lambda closure
+- EffectActorBuilder message types do NOT need Serializable (no message journaling unlike StatefulActor)
+- ClusterModeTest.testRemoteActorCommunication fails intermittently (requires etcd) — pre-existing, not our issue
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)
