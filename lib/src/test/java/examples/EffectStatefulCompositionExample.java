@@ -13,9 +13,11 @@ import com.cajunsystems.roux.capability.CapabilityHandler;
 import com.cajunsystems.roux.data.Unit;
 import org.junit.jupiter.api.*;
 
+import java.io.Serializable;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -41,9 +43,9 @@ class EffectStatefulCompositionExample {
 
     // --- Domain model ---
 
-    record CartItem(String name, double price) {}
+    record CartItem(String name, double price) implements Serializable {}
 
-    record CartState(List<CartItem> items) {
+    record CartState(List<CartItem> items) implements Serializable {
         CartState { items = List.copyOf(items); }
 
         static CartState empty() { return new CartState(List.of()); }
@@ -59,14 +61,15 @@ class EffectStatefulCompositionExample {
 
     // --- Cart messages ---
 
-    sealed interface CartMessage permits CartMessage.AddItem, CartMessage.GetTotal {
+    sealed interface CartMessage extends Serializable
+            permits CartMessage.AddItem, CartMessage.GetTotal {
         record AddItem(String name, double price) implements CartMessage {}
         record GetTotal() implements CartMessage {}
     }
 
     // --- Audit messages (sent to the effect actor) ---
 
-    sealed interface AuditMessage permits AuditMessage.ItemAdded {
+    sealed interface AuditMessage extends Serializable permits AuditMessage.ItemAdded {
         record ItemAdded(String name, double price, double runningTotal) implements AuditMessage {}
     }
 
@@ -112,6 +115,7 @@ class EffectStatefulCompositionExample {
      */
     @Test
     void shoppingCartWithEffectAuditActor() throws Exception {
+        String id = UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch auditLatch = new CountDownLatch(3);
         CapabilityHandler<Capability<?>> logHandler = new ConsoleLogHandler().widen();
 
@@ -131,11 +135,11 @@ class EffectStatefulCompositionExample {
                 }
                 return Effect.succeed(Unit.unit());
             }
-        ).withId("audit-actor").spawn();
+        ).withId("audit-" + id).spawn();
 
         // Stateful cart actor — passes the audit Pid via constructor
         Pid cartPid = system.statefulActorOf(new CartHandler(auditPid), CartState.empty())
-                .withId("shopping-cart")
+                .withId("cart-" + id)
                 .spawn();
 
         // Mutate cart
@@ -160,6 +164,7 @@ class EffectStatefulCompositionExample {
      */
     @Test
     void cartStateAccumulatesCorrectlyWithEffectAuditLogging() throws Exception {
+        String id = UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch auditLatch = new CountDownLatch(2);
         CapabilityHandler<Capability<?>> logHandler = new ConsoleLogHandler().widen();
 
@@ -172,10 +177,10 @@ class EffectStatefulCompositionExample {
                 auditLatch.countDown();
                 return Unit.unit();
             }, logHandler)
-        ).withId("audit-actor-b").spawn();
+        ).withId("audit-b-" + id).spawn();
 
         Pid cartPid = system.statefulActorOf(new CartHandler(auditPid), CartState.empty())
-                .withId("cart-b")
+                .withId("cart-b-" + id)
                 .spawn();
 
         cartPid.tell(new CartMessage.AddItem("Alpha", 10.00));
