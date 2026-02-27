@@ -180,6 +180,8 @@ Plans:
 - 11.3 Write `docs/effect-actors/patterns.md` — error handling, pipeline, stateful composition
 - 11.4 Update `docs/effect_monad_guide.md` — remove old API references, link to new guides
 
+**Plans created**: 2 (`11-1-PLAN.md`, `11-2-PLAN.md`)
+
 ---
 
 ## Summary — Milestone 2
