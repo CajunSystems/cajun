@@ -15,7 +15,7 @@
 | 8 | Stateful Actor + Effect Actor Composition | ✅ Complete |
 | 9 | Multi-Stage Effect Pipeline | ✅ Complete |
 | 10 | Custom Domain Capabilities | ✅ Complete |
-| 11 | Effect Actor Documentation | 🔄 Planned |
+| 11 | Effect Actor Documentation | 🔄 In Progress (11-1 done) |
 
 ## Key Context
 - Roux: `com.cajunsystems:roux:0.1.0` (Maven Central)
