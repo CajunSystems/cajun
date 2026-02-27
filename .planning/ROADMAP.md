@@ -113,7 +113,7 @@ Cajun's Roux-native effect actor API. Targets Cajun library users learning the A
 
 ---
 
-## Phase 7: Error Handling & Recovery Patterns
+## ~~Phase 7: Error Handling & Recovery Patterns~~ ✅
 **Goal**: Demonstrate `Effect.fail`, `mapError`, and recovery composing inside effect actors.
 
 Show Cajun users how to express validation, typed errors, and graceful degradation — the
