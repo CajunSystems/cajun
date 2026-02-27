@@ -46,3 +46,6 @@ cajun_persistence/
 cajun-test-*/
 /tmp/cajun-*
 
+# Java profiler output
+*.hprof
+
