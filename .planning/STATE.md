@@ -39,6 +39,13 @@
 - ClusterModeTest.testRemoteActorCommunication fails intermittently (requires etcd) — pre-existing, not our issue
 - Use `record Batch(List<String> items)` wrapper — raw generic types as message types break EffectActorBuilder type inference
 - `AtomicInteger` cursor works safely in dispatcher lambda (actor processes one batch at a time)
+- Custom `Capability<R>`: sealed interface extending `Capability<R>` directly (not with generic type param), e.g. `sealed interface ValidationCapability extends Capability<Boolean>`
+- `@SuppressWarnings("unchecked")` lives in the handler's `handle()` implementation, not at the `ctx.perform()` call site
+- `ctx.perform(cap)` return type inferred from assignment target — `Boolean valid = ctx.perform(new ValidationCapability.IsNonEmpty(...))` works
+- `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+- `EffectActorBuilder.withCapabilityHandler(handler)` accepts `CapabilityHandler<Capability<?>>` — always call `.widen()` before passing
+- `Effect.from(cap)` + `withCapabilityHandler(h.widen())` = handler injected at spawn time (testable/swappable)
+- `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)
