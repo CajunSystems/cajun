@@ -61,7 +61,7 @@ Plans:
 
 ---
 
-## Phase 5: Rewrite Effect Actor Builders
+## ~~Phase 5: Rewrite Effect Builders~~ ✅
 **Goal**: `EffectActorBuilder` and `ActorSystemEffectExtensions` expose a clean Roux-native API.
 
 The public surface that Cajun users interact with when writing effect-based actors.

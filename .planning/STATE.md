@@ -1,17 +1,15 @@
 # Project State
 
 ## Current Status
-**Phase**: 5 — Rewrite Effect Builders
+**Phase**: 6 — Tests, Examples & Final Validation
 **Status**: Active
 **Branch**: `feature/roux-effect-integration`
-**Last Updated**: 2026-02-26
+**Last Updated**: 2026-02-27
 
 ## Active Phase
-**Phase 5: Rewrite Effect Builders**
+**Phase 6: Tests, Examples & Final Validation**
 
-Goal: `EffectActorBuilder` and `ActorSystemEffectExtensions` expose a clean Roux-native API.
-
-Next action: `/gsd:plan-phase 5`
+Goal: Test suite is green, examples updated, no traces of old Cajun effect types remain.
 
 ## Phase Progress
 
@@ -21,7 +19,7 @@ Next action: `/gsd:plan-phase 5`
 | 2 | ActorEffectRuntime | ✅ Complete |
 | 3 | Remove Old Effect Machinery | ✅ Complete |
 | 4 | Migrate Capabilities | ✅ Complete |
-| 5 | Rewrite Effect Builders | ⬜ Not started |
+| 5 | Rewrite Effect Builders | ✅ Complete |
 | 6 | Tests, Examples & Validation | ⬜ Not started |
 
 ## Key Context
