@@ -149,6 +149,8 @@ Plans:
 - 9.1 Write `EffectPipelineExample.java` — 4-stage pipeline with LogCapability at each step
 - 9.2 Write `EffectFanOutExample.java` — fork to multiple effect actors, collect results
 
+**Plans created**: 2 (`9-1-PLAN.md`, `9-2-PLAN.md`)
+
 ---
 
 ## Phase 10: Custom Domain Capabilities
