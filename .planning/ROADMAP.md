@@ -139,7 +139,7 @@ Plans:
 
 ---
 
-## Phase 9: Multi-Stage Effect Pipeline
+## ~~Phase 9: Multi-Stage Effect Pipeline~~ ✅
 **Goal**: A multi-actor processing pipeline where each stage is an effect actor.
 
 Replaces `WorkflowExample`-style imperative chains with effect-native equivalents.

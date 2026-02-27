@@ -2,7 +2,7 @@
 
 ## Current Status
 **Milestone**: 2 — Effect Actor Examples & Documentation
-**Phase**: 9 (plan 9-1 complete, 9-2 next)
+**Phase**: 10 (next to plan/execute)
 **Status**: In Progress
 **Branch**: `main` (merge feature/roux-effect-integration first, then new branch per phase)
 **Last Updated**: 2026-02-27
@@ -13,7 +13,7 @@
 |-------|------|--------|
 | 7 | Error Handling & Recovery Patterns | ✅ Complete |
 | 8 | Stateful Actor + Effect Actor Composition | ✅ Complete |
-| 9 | Multi-Stage Effect Pipeline | ⏳ Not Started |
+| 9 | Multi-Stage Effect Pipeline | ✅ Complete |
 | 10 | Custom Domain Capabilities | ⏳ Not Started |
 | 11 | Effect Actor Documentation | ⏳ Not Started |
 
@@ -37,6 +37,8 @@
 - EffectActorBuilder pipeline wiring: build sink-first, capture downstream Pid in upstream lambda closure
 - EffectActorBuilder message types do NOT need Serializable (no message journaling unlike StatefulActor)
 - ClusterModeTest.testRemoteActorCommunication fails intermittently (requires etcd) — pre-existing, not our issue
+- Use `record Batch(List<String> items)` wrapper — raw generic types as message types break EffectActorBuilder type inference
+- `AtomicInteger` cursor works safely in dispatcher lambda (actor processes one batch at a time)
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)
