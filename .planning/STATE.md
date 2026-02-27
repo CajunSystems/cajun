@@ -2,7 +2,7 @@
 
 ## Current Status
 **Milestone**: 2 — Effect Actor Examples & Documentation
-**Phase**: 10 (next to plan/execute)
+**Phase**: 10 (plan 2 next to execute)
 **Status**: In Progress
 **Branch**: `main` (merge feature/roux-effect-integration first, then new branch per phase)
 **Last Updated**: 2026-02-27
@@ -46,6 +46,8 @@
 - `EffectActorBuilder.withCapabilityHandler(handler)` accepts `CapabilityHandler<Capability<?>>` — always call `.widen()` before passing
 - `Effect.from(cap)` + `withCapabilityHandler(h.widen())` = handler injected at spawn time (testable/swappable)
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
+- `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
+- `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)

@@ -164,6 +164,8 @@ Plans:
 - 10.1 Write `EffectCapabilityExample.java` — ValidationCapability + MetricsCapability composition
 - 10.2 Write `EffectTestableCapabilityExample.java` — swappable handlers for testing vs production
 
+**Plans created**: 2 (`10-1-PLAN.md`, `10-2-PLAN.md`)
+
 ---
 
 ## Phase 11: Effect Actor Documentation
