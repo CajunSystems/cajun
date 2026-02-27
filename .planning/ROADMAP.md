@@ -73,7 +73,7 @@ Plans:
 
 ---
 
-## Phase 6: Tests, Examples & Final Validation
+## ~~Phase 6: Tests, Examples & Final Validation~~ ✅
 **Goal**: Test suite is green, examples updated, no traces of old Cajun effect types remain.
 
 Plans:
