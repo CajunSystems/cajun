@@ -126,7 +126,7 @@ Plans:
 
 ---
 
-## Phase 8: Stateful Actor + Effect Actor Composition
+## ~~Phase 8: Stateful Actor + Effect Actor Composition~~ ✅
 **Goal**: Show `StatefulHandler` and `EffectActorBuilder` actors working side-by-side via the ask pattern.
 
 Demonstrates the two models interoperating: a `StatefulActor` holds domain state (shopping cart)

@@ -2,7 +2,7 @@
 
 ## Current Status
 **Milestone**: 2 — Effect Actor Examples & Documentation
-**Phase**: 8 (next to plan/execute)
+**Phase**: 9 (next to plan/execute)
 **Status**: In Progress
 **Branch**: `main` (merge feature/roux-effect-integration first, then new branch per phase)
 **Last Updated**: 2026-02-27
@@ -12,7 +12,7 @@
 | Phase | Name | Status |
 |-------|------|--------|
 | 7 | Error Handling & Recovery Patterns | ✅ Complete |
-| 8 | Stateful Actor + Effect Actor Composition | ⏳ Not Started |
+| 8 | Stateful Actor + Effect Actor Composition | ✅ Complete |
 | 9 | Multi-Stage Effect Pipeline | ⏳ Not Started |
 | 10 | Custom Domain Capabilities | ⏳ Not Started |
 | 11 | Effect Actor Documentation | ⏳ Not Started |
@@ -30,6 +30,10 @@
 - Docs live in: `docs/` (stale `effect_monad_guide.md` references old API)
 - Target audience: Cajun library users — examples should be self-contained
 - Stateful phase: use ask-pattern composition (StatefulHandler + EffectActorBuilder side-by-side)
+- StatefulActor journals messages BEFORE processing — all message/state types MUST implement Serializable
+- Use UUID-based actor IDs in tests with StatefulHandler to avoid cross-run journal accumulation
+- EffectActorBuilder actors don't expose ActorContext — use embedded `Pid replyTo` in request for replies
+- `system.statefulActorOf(handlerInstance, initialState)` required when handler has constructor args
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)
