@@ -2,7 +2,7 @@
 
 ## Current Status
 **Milestone**: 2 — Effect Actor Examples & Documentation
-**Phase**: 10 (plan 2 next to execute)
+**Phase**: 11 (next to plan/execute)
 **Status**: In Progress
 **Branch**: `main` (merge feature/roux-effect-integration first, then new branch per phase)
 **Last Updated**: 2026-02-27
@@ -14,7 +14,7 @@
 | 7 | Error Handling & Recovery Patterns | ✅ Complete |
 | 8 | Stateful Actor + Effect Actor Composition | ✅ Complete |
 | 9 | Multi-Stage Effect Pipeline | ✅ Complete |
-| 10 | Custom Domain Capabilities | ⏳ Not Started |
+| 10 | Custom Domain Capabilities | ✅ Complete |
 | 11 | Effect Actor Documentation | ⏳ Not Started |
 
 ## Key Context

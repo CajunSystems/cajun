@@ -153,7 +153,7 @@ Plans:
 
 ---
 
-## Phase 10: Custom Domain Capabilities
+## ~~Phase 10: Custom Domain Capabilities~~ ✅
 **Goal**: Show users how to define and compose custom capabilities for realistic scenarios.
 
 Define `ValidationCapability` and `MetricsCapability` (in-memory mock), compose with
