@@ -168,7 +168,7 @@ Plans:
 
 ---
 
-## Phase 11: Effect Actor Documentation
+## ~~Phase 11: Effect Actor Documentation~~ ✅
 **Goal**: Developer-facing markdown docs covering the full Roux-native effect actor API.
 
 New `docs/effect-actors/` directory with getting-started, capability pattern, and pattern
