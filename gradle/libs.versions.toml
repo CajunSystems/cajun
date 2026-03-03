@@ -5,7 +5,7 @@
 commons-math3 = "3.6.1"
 guava = "33.3.1-jre"
 junit-jupiter = "5.11.1"
-roux = "0.1.0"
+roux = "0.2.1"
 
 [libraries]
 commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commons-math3" }
