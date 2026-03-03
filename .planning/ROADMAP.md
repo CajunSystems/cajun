@@ -133,13 +133,10 @@ Key tasks:
 
 ---
 
-## Phase 13: Bridge — Concurrency & Timeout
+## ~~Phase 13: Bridge — Concurrency & Timeout~~ ✅
 **Goal**: Verify and test `Effects.parAll()`, `Effects.race()`, `Effects.traverse()`, and `timeout(Duration)` through `ActorEffectRuntime`. Confirm v0.2.1 scoped-fork capability inheritance fix works.
 
-Key tasks:
-- 13.1 Write `ActorEffectRuntimeConcurrencyTest` — parallel effects via `Effects.parAll()` and `Effects.race()` through `ActorEffectRuntime`; verify effects run on actor threads
-- 13.2 Write timeout integration test — `effect.timeout(Duration)` inside an effect actor; verify deadline propagation
-- 13.3 Write scoped-fork capability inheritance test — fork an effect that uses a capability inside `ActorEffectRuntime`; confirm handler is inherited (v0.2.1 regression fix)
+Plans: 13.1 (complete — 9 tests added, 371 total, all green)
 
 ---
 

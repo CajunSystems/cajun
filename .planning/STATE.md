@@ -2,17 +2,17 @@
 
 ## Current Status
 **Milestone**: 3 — Roux v0.2.1 Upgrade
-**Phase**: 12 (not yet started)
-**Status**: Planning
-**Branch**: new branch per phase (merge `feature/roux-effect-integration` to main first)
-**Last Updated**: 2026-03-03
+**Phase**: 13 ✅ Complete
+**Status**: Active — 371 tests, 0 failures
+**Branch**: feature/roux-effect-integration
+**Last Updated**: 2026-03-04
 
 ## Milestone 3 Phase Progress
 
 | Phase | Name | Status |
 |-------|------|--------|
 | 12 | Upgrade & Compatibility | ✅ Complete |
-| 13 | Bridge Concurrency & Timeout | ⬜ Not started |
+| 13 | Bridge Concurrency & Timeout | ✅ Complete |
 | 14 | Modernize Retry & Error Examples | ⬜ Not started |
 | 15 | New Concurrency & Resource Examples | ⬜ Not started |
 | 16 | Documentation Update | ⬜ Not started |
@@ -31,8 +31,16 @@
 - Roux: `com.cajunsystems:roux:0.2.1` (upgraded from 0.1.0)
 - Roux v0.2.0 new API: `Effect.unit/runnable/sleep/when/unless`, `tap()`, `tapError()`, `retry(n)`, `retryWithDelay()`, `retry(RetryPolicy)`, `timeout(Duration)`, `Effects.race/sequence/traverse/parAll()`, `Resource<A>` with `make/fromCloseable/use/ensuring`
 - Roux v0.2.0: `DefaultEffectRuntime` now `AutoCloseable` — `ActorEffectRuntime.close()` overridden as no-op (executor owned by ActorSystem, not the runtime)
-- Roux v0.2.0 compose() contract: handlers used with `compose()`/`orElse()` MUST implement `CapabilityHandler<Capability<?>>` and throw `UnsupportedOperationException` for unhandled types — `widen()` is just a cast, adds NO type-checking. Use `instanceof` check + UOE or `CapabilityHandler.builder()`
-- `ConsoleLogHandler` updated to `CapabilityHandler<Capability<?>>` (was `<LogCapability>`)
+- Roux v0.2.0 compose() contract: handlers used with `compose()`/`orElse()` MUST implement `CapabilityHandler<Capability<?>>` and throw `UnsupportedOperationException` for unhandled types — `widen()` is just a cast, adds NO type-checking. **Preferred**: `CapabilityHandler.builder().on(Type.class, fn).build()` — auto-throws UOE for unregistered types
+- `ConsoleLogHandler` updated to `CapabilityHandler<Capability<?>>` (was `<LogCapability>`) using builder pattern
+- Stateless handlers: `private static final CapabilityHandler<Capability<?>> DELEGATE = CapabilityHandler.builder()...build();` — shared across instances
+- Stateful handlers (e.g. MetricsHandler): instance-level `delegate` field built in constructor (closures capture instance state)
+- **Roux TimeoutException**: `com.cajunsystems.roux.exception.TimeoutException` — NOT `java.util.concurrent.TimeoutException`; assert with `getClass().getName().contains("TimeoutException")`
+- **Local sealed interfaces**: Java 21 does NOT allow sealed interfaces inside a method body — define as static nested type in the test class
+- `Effects.parAll(List<Effect<E,A>>)` — error type widens to Throwable; test methods need `throws Throwable`
+- `Effects.race(Effect<E,A>, Effect<E,A>)` — returns whichever completes first; error type widens to Throwable
+- `Effects.traverse(List<A>, Function<A, Effect<E,B>>)` — sequential, error type stays as E (not widened)
+- `effect.timeout(Duration)` — widens error type to Throwable; throws Roux TimeoutException on deadline
 - Roux v0.2.0: `Either` gains `map/flatMap/fold/swap`; `Tuple2/Tuple3` renamed `first()/second()/third()` — Cajun does NOT use Tuple2/Tuple3, no migration needed
 - Roux v0.2.1 fix: scoped fork inherits parent `ExecutionContext` including capability handlers
 - Roux v0.2.1: `MissingCapabilityHandlerException` with concrete capability type in message
