@@ -24,11 +24,15 @@ class CapabilityIntegrationTest {
         record Echo(String value) implements EchoCapability {}
     }
 
-    static class EchoHandler implements CapabilityHandler<EchoCapability> {
+    static class EchoHandler implements CapabilityHandler<Capability<?>> {
         @Override
         @SuppressWarnings("unchecked")
-        public <R> R handle(EchoCapability capability) {
-            return switch (capability) {
+        public <R> R handle(Capability<?> capability) {
+            if (!(capability instanceof EchoCapability ec)) {
+                throw new UnsupportedOperationException(
+                        "EchoHandler cannot handle: " + capability.getClass().getName());
+            }
+            return switch (ec) {
                 case EchoCapability.Echo e -> (R) ("ECHO:" + e.value());
             };
         }
@@ -62,7 +66,7 @@ class CapabilityIntegrationTest {
     @Test
     void composedHandlerDispatchesToCorrectHandler() throws Throwable {
         CapabilityHandler<Capability<?>> composed =
-                CapabilityHandler.compose(new EchoHandler(), new ConsoleLogHandler());
+                CapabilityHandler.compose(new EchoHandler().widen(), new ConsoleLogHandler().widen());
 
         // EchoCapability → EchoHandler
         String echoResult = runtime.unsafeRunWithHandler(
@@ -80,7 +84,7 @@ class CapabilityIntegrationTest {
     @Test
     void generateWithMultipleCapabilityTypesViaComposedHandler() throws Throwable {
         CapabilityHandler<Capability<?>> composed =
-                CapabilityHandler.compose(new EchoHandler(), new ConsoleLogHandler());
+                CapabilityHandler.compose(new EchoHandler().widen(), new ConsoleLogHandler().widen());
 
         Effect<RuntimeException, String> effect = Effect.<RuntimeException, String>generate(
                 ctx -> {
@@ -102,7 +106,7 @@ class CapabilityIntegrationTest {
         AtomicReference<String> captured = new AtomicReference<>();
 
         CapabilityHandler<Capability<?>> composed =
-                CapabilityHandler.compose(new EchoHandler(), new ConsoleLogHandler());
+                CapabilityHandler.compose(new EchoHandler().widen(), new ConsoleLogHandler().widen());
 
         Pid pid = new EffectActorBuilder<>(
                 system,

@@ -72,11 +72,15 @@ class EffectCapabilityExample {
     // -------------------------------------------------------------------------
 
     /** Evaluates validation rules; returns {@code Boolean} for each variant. */
-    static class ValidationHandler implements CapabilityHandler<ValidationCapability> {
+    static class ValidationHandler implements CapabilityHandler<Capability<?>> {
         @Override
         @SuppressWarnings("unchecked")
-        public <R> R handle(ValidationCapability capability) {
-            return switch (capability) {
+        public <R> R handle(Capability<?> capability) {
+            if (!(capability instanceof ValidationCapability vc)) {
+                throw new UnsupportedOperationException(
+                        "ValidationHandler cannot handle: " + capability.getClass().getName());
+            }
+            return switch (vc) {
                 case ValidationCapability.IsNonEmpty v  -> (R) (Boolean) !v.value().isEmpty();
                 case ValidationCapability.HasMinLength v -> (R) (Boolean) (v.value().length() >= v.min());
             };
@@ -89,14 +93,18 @@ class EffectCapabilityExample {
      * <p>Holding a reference to this handler after injecting it into an actor lets
      * the test read accumulated state directly — no extra plumbing needed.
      */
-    static class MetricsHandler implements CapabilityHandler<MetricsCapability> {
+    static class MetricsHandler implements CapabilityHandler<Capability<?>> {
         final ConcurrentHashMap<String, AtomicInteger> counters = new ConcurrentHashMap<>();
         final ConcurrentHashMap<String, Double> gauges = new ConcurrentHashMap<>();
 
         @Override
         @SuppressWarnings("unchecked")
-        public <R> R handle(MetricsCapability capability) {
-            return switch (capability) {
+        public <R> R handle(Capability<?> capability) {
+            if (!(capability instanceof MetricsCapability mc)) {
+                throw new UnsupportedOperationException(
+                        "MetricsHandler cannot handle: " + capability.getClass().getName());
+            }
+            return switch (mc) {
                 case MetricsCapability.Increment inc -> {
                     counters.computeIfAbsent(inc.counter(), k -> new AtomicInteger(0))
                             .incrementAndGet();
@@ -229,7 +237,7 @@ class EffectCapabilityExample {
     void composedHandlerDispatchesThreeCapabilityTypes() throws InterruptedException {
         MetricsHandler mh = new MetricsHandler();
         CapabilityHandler<Capability<?>> composed =
-                CapabilityHandler.compose(new ValidationHandler(), mh, new ConsoleLogHandler());
+                CapabilityHandler.compose(new ValidationHandler().widen(), mh.widen(), new ConsoleLogHandler().widen());
 
         CountDownLatch latch = new CountDownLatch(2);
 

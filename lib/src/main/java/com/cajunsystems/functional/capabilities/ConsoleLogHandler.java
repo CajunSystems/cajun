@@ -1,5 +1,6 @@
 package com.cajunsystems.functional.capabilities;
 
+import com.cajunsystems.roux.capability.Capability;
 import com.cajunsystems.roux.capability.CapabilityHandler;
 import com.cajunsystems.roux.data.Unit;
 
@@ -12,18 +13,25 @@ import com.cajunsystems.roux.data.Unit;
  *   <li>{@link LogCapability.Error} &rarr; {@link System#err}; prints stack trace if cause present
  * </ul>
  *
- * <p>To pass to {@link com.cajunsystems.roux.EffectRuntime#unsafeRunWithHandler}, call
- * {@link #widen()} to obtain a {@code CapabilityHandler<Capability<?>>}:
+ * <p>Implements {@code CapabilityHandler<Capability<?>>} so it can be combined with other
+ * handlers via {@link CapabilityHandler#compose} or {@link CapabilityHandler#orElse}.
+ * Non-{@link LogCapability} capabilities are signalled with {@link UnsupportedOperationException}
+ * per the compose/orElse contract.
+ *
  * <pre>{@code
- * runtime.unsafeRunWithHandler(effect, new ConsoleLogHandler().widen());
+ * runtime.unsafeRunWithHandler(effect, new ConsoleLogHandler());
  * }</pre>
  */
-public class ConsoleLogHandler implements CapabilityHandler<LogCapability> {
+public class ConsoleLogHandler implements CapabilityHandler<Capability<?>> {
 
     @Override
     @SuppressWarnings("unchecked")
-    public <R> R handle(LogCapability capability) {
-        return switch (capability) {
+    public <R> R handle(Capability<?> capability) {
+        if (!(capability instanceof LogCapability lc)) {
+            throw new UnsupportedOperationException(
+                    "ConsoleLogHandler cannot handle: " + capability.getClass().getName());
+        }
+        return switch (lc) {
             case LogCapability.Info info -> {
                 System.out.println("[INFO]  " + info.message());
                 yield (R) Unit.unit();
