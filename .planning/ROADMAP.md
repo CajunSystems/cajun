@@ -106,3 +106,79 @@ Plans:
 ## ~~Milestone 2: Effect Actor Examples & Documentation~~ ✅ `v0.5.0`
 
 8 runnable examples + `docs/effect-actors/` (3 guides) — error handling, stateful composition, pipelines, fan-out, custom capabilities. → [Archive](.planning/milestones/v0.5.0-ROADMAP.md)
+
+---
+
+---
+
+# Milestone 3: Roux v0.2.1 Upgrade
+
+Upgrade Cajun's Roux dependency from `v0.1.0` → `v0.2.1`. Leverage the new API surface:
+`RetryPolicy`, `timeout(Duration)`, `Resource<A>`, `Effects.parAll/race/traverse`, `tap/tapError`.
+Fix bridge lifecycle (`ActorEffectRuntime.close()` must not shut down actor executor).
+New examples demonstrating concurrency and resource management patterns.
+
+**Depth**: Standard | **Mode**: Interactive
+**Phases**: 12–16
+
+---
+
+## Phase 12: Upgrade & Compatibility
+**Goal**: Bump `roux` to `0.2.1`, verify the full build compiles and all 362 tests stay green. Fix any breaking changes.
+
+Key tasks:
+- 12.1 Bump `roux = "0.2.1"` in `gradle/libs.versions.toml`; run `./gradlew build` and fix any compile errors
+- 12.2 Override `ActorEffectRuntime.close()` to be a no-op — `DefaultEffectRuntime` is now `AutoCloseable` but the executor belongs to the `ActorSystem`, not this runtime
+- 12.3 Run full test suite; confirm 362+ tests green; document any API-surface changes observed
+
+---
+
+## Phase 13: Bridge — Concurrency & Timeout
+**Goal**: Verify and test `Effects.parAll()`, `Effects.race()`, `Effects.traverse()`, and `timeout(Duration)` through `ActorEffectRuntime`. Confirm v0.2.1 scoped-fork capability inheritance fix works.
+
+Key tasks:
+- 13.1 Write `ActorEffectRuntimeConcurrencyTest` — parallel effects via `Effects.parAll()` and `Effects.race()` through `ActorEffectRuntime`; verify effects run on actor threads
+- 13.2 Write timeout integration test — `effect.timeout(Duration)` inside an effect actor; verify deadline propagation
+- 13.3 Write scoped-fork capability inheritance test — fork an effect that uses a capability inside `ActorEffectRuntime`; confirm handler is inherited (v0.2.1 regression fix)
+
+---
+
+## Phase 14: Modernize Retry & Error Examples
+**Goal**: Replace `EffectRetryExample`'s hand-rolled `withRetry(catchAll)` with Roux's built-in `RetryPolicy`. Add `tap()` / `tapError()` patterns. New timeout example.
+
+Key tasks:
+- 14.1 Rewrite `EffectRetryExample.java` — replace manual `withRetry()` helper with `effect.retry(n)`, `effect.retryWithDelay()`, and a `RetryPolicy` (exponential backoff)
+- 14.2 Update `EffectErrorHandlingExample.java` — add `tap()` for side-effect logging and `tapError()` for error-path observation without altering the value
+- 14.3 Write `EffectTimeoutExample.java` — `timeout(Duration)` on effect actors; demonstrate graceful degradation when deadline exceeded
+
+---
+
+## Phase 15: New Concurrency & Resource Examples
+**Goal**: Demonstrate `Effects.parAll()` / `Effects.race()` / `Effects.traverse()` and `Resource<A>` in idiomatic effect actor patterns.
+
+Key tasks:
+- 15.1 Write `EffectParallelExample.java` — `Effects.parAll()` to fan-out work and collect results; `Effects.race()` to return first winner; `Effects.traverse()` over a collection
+- 15.2 Write `EffectResourceExample.java` — `Resource<A>` for actors that acquire/release managed state (e.g., a connection pool mock); demonstrate guaranteed cleanup on success and failure
+
+---
+
+## Phase 16: Documentation Update
+**Goal**: Update all `docs/effect-actors/` files to cover new Roux v0.2.x API. Add v0.1.0 → v0.2.1 migration notes.
+
+Key tasks:
+- 16.1 Update `docs/effect-actors/getting-started.md` — `Effect.unit()`, `Effect.runnable()`, `tap()`, built-in retry quickstart
+- 16.2 Update `docs/effect-actors/patterns.md` — replace manual retry pattern with `RetryPolicy`; add timeout, `Effects.parAll/race/traverse`, `Resource<A>` patterns
+- 16.3 Update `docs/effect-actors/capabilities.md` — `MissingCapabilityHandlerException` diagnostics; scoped-fork capability inheritance
+- 16.4 Add v0.1.0 → v0.2.1 migration guide section (or new file `docs/effect-actors/migration.md`)
+
+---
+
+## Summary — Milestone 3
+
+| Phase | Name | Key Output |
+|-------|------|------------|
+| 12 | Upgrade & Compatibility | Roux 0.2.1, green build, AutoCloseable fix |
+| 13 | Bridge Concurrency & Timeout | parAll/race/timeout tests via ActorEffectRuntime |
+| 14 | Modernize Retry & Errors | RetryPolicy, tap/tapError, EffectTimeoutExample |
+| 15 | Concurrency & Resource Examples | EffectParallelExample, EffectResourceExample |
+| 16 | Documentation Update | All 4 docs updated + migration guide |

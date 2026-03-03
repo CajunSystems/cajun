@@ -9,8 +9,18 @@ and `ConsoleLogHandler`. 341 tests passing, clean build.
 
 ---
 
-## Milestone 2: Effect Actor Examples & Documentation
-**Phases**: 7–11 | **Status**: In Progress | **Started**: 2026-02-27
+## Milestone 2: Effect Actor Examples & Documentation ✅
+**Phases**: 7–11 | **Status**: Complete | **Completed**: 2026-02-27 | **Tagged**: v0.5.0
 
-Non-trivial, runnable examples and developer-facing documentation for Cajun's Roux-native
-effect actor API. Targeting Cajun library users learning the API.
+8 runnable examples + `docs/effect-actors/` (3 guides). Error handling, stateful composition,
+multi-stage pipeline, fan-out dispatcher, custom domain capabilities, testable handlers.
+362 tests passing, clean build.
+
+---
+
+## Milestone 3: Roux v0.2.1 Upgrade
+**Phases**: 12–16 | **Status**: In Progress | **Started**: 2026-03-03
+
+Upgrade Cajun's Roux dependency from v0.1.0 → v0.2.1. Leverage new APIs: `RetryPolicy`,
+`timeout(Duration)`, `Resource<A>`, `Effects.parAll/race/traverse`, `tap/tapError`.
+Fix bridge lifecycle (`ActorEffectRuntime.close()`). New concurrency/resource examples.

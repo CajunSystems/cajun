@@ -1,13 +1,23 @@
 # Project State
 
 ## Current Status
-**Milestone**: 2 — Effect Actor Examples & Documentation — **ARCHIVED as v0.5.0**
-**Phase**: 11 (complete — Milestone 2 done)
-**Status**: Archived
-**Branch**: `feature/roux-effect-integration` (ready to merge to main)
+**Milestone**: 3 — Roux v0.2.1 Upgrade
+**Phase**: 12 (not yet started)
+**Status**: Planning
+**Branch**: new branch per phase (merge `feature/roux-effect-integration` to main first)
 **Last Updated**: 2026-03-03
 
-## Milestone 2 Phase Progress
+## Milestone 3 Phase Progress
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 12 | Upgrade & Compatibility | ⬜ Not started |
+| 13 | Bridge Concurrency & Timeout | ⬜ Not started |
+| 14 | Modernize Retry & Error Examples | ⬜ Not started |
+| 15 | New Concurrency & Resource Examples | ⬜ Not started |
+| 16 | Documentation Update | ⬜ Not started |
+
+## Milestone 2 Phase Progress (archived — v0.5.0)
 
 | Phase | Name | Status |
 |-------|------|--------|
@@ -18,7 +28,13 @@
 | 11 | Effect Actor Documentation | ✅ Complete |
 
 ## Key Context
-- Roux: `com.cajunsystems:roux:0.1.0` (Maven Central)
+- Roux: upgrading `com.cajunsystems:roux:0.1.0` → `0.2.1` (Maven Central)
+- Roux v0.2.0 new API: `Effect.unit/runnable/sleep/when/unless`, `tap()`, `tapError()`, `retry(n)`, `retryWithDelay()`, `retry(RetryPolicy)`, `timeout(Duration)`, `Effects.race/sequence/traverse/parAll()`, `Resource<A>` with `make/fromCloseable/use/ensuring`
+- Roux v0.2.0: `DefaultEffectRuntime` now `AutoCloseable` — `ActorEffectRuntime.close()` must be overridden (no-op; executor owned by ActorSystem)
+- Roux v0.2.0: `Either` gains `map/flatMap/fold/swap`; `Tuple2/Tuple3` renamed `first()/second()/third()` — Cajun does NOT use Tuple2/Tuple3, no migration needed
+- Roux v0.2.1 fix: scoped fork inherits parent `ExecutionContext` including capability handlers
+- Roux v0.2.1: `MissingCapabilityHandlerException` with concrete capability type in message
+- Roux v0.2.1: `Fiber.join()` no longer double-wraps runtime exceptions
 - Effect actor API: `EffectActorBuilder`, `ActorSystemEffectExtensions`, `ActorEffectRuntime`
 - Capabilities: `LogCapability` (sealed, 4 variants) + `ConsoleLogHandler`
 - Examples live in: `lib/src/test/java/examples/`
