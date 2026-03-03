@@ -143,10 +143,7 @@ Plans: 13.1 (complete — 9 tests added, 371 total, all green)
 ## Phase 14: Modernize Retry & Error Examples
 **Goal**: Replace `EffectRetryExample`'s hand-rolled `withRetry(catchAll)` with Roux's built-in `RetryPolicy`. Add `tap()` / `tapError()` patterns. New timeout example.
 
-Key tasks:
-- 14.1 Rewrite `EffectRetryExample.java` — replace manual `withRetry()` helper with `effect.retry(n)`, `effect.retryWithDelay()`, and a `RetryPolicy` (exponential backoff)
-- 14.2 Update `EffectErrorHandlingExample.java` — add `tap()` for side-effect logging and `tapError()` for error-path observation without altering the value
-- 14.3 Write `EffectTimeoutExample.java` — `timeout(Duration)` on effect actors; demonstrate graceful degradation when deadline exceeded
+Plans: 14.1 (pending)
 
 ---
 
