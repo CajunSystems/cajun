@@ -4,6 +4,8 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.roux.Effect;
 import com.cajunsystems.roux.Fiber;
+import com.cajunsystems.roux.capability.Capability;
+import com.cajunsystems.roux.capability.CapabilityHandler;
 import org.junit.jupiter.api.*;
 
 import java.time.Duration;
@@ -14,6 +16,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ActorEffectRuntimeTest {
+
+    // Nested capability used by scopedForkInheritsCapabilityHandlerFromParent test.
+    // Must be a static nested type — Java 21 does not allow local sealed interfaces.
+    sealed interface TrackCapability extends Capability<String>
+            permits TrackCapability.Label {
+        record Label(String name) implements TrackCapability {}
+    }
 
     private ActorSystem system;
     private ActorEffectRuntime runtime;
@@ -146,5 +155,33 @@ class ActorEffectRuntimeTest {
         }).timeout(Duration.ofMillis(500));
 
         assertEquals("on time", runtime.unsafeRun(fast));
+    }
+
+    @Test
+    void scopedForkInheritsCapabilityHandlerFromParent() throws Throwable {
+        // Handler registered via builder — dispatches TrackCapability.Label, throws UOE for anything else
+        CapabilityHandler<Capability<?>> tracker = CapabilityHandler.builder()
+                .on(TrackCapability.Label.class, l -> "handled-" + l.name())
+                .build();
+
+        // Scoped effect: fork a child that uses the capability, join it,
+        // then use the capability again in the parent.
+        // v0.2.1 fix: forkIn() now inherits the parent ExecutionContext (including capability handlers)
+        Effect<Throwable, String> effect = Effect.scoped(scope -> {
+            Effect<Throwable, Fiber<RuntimeException, String>> forkedFiber =
+                    Effect.<RuntimeException, String>from(new TrackCapability.Label("child"))
+                          .forkIn(scope);
+
+            return forkedFiber
+                    .flatMap(fiber -> fiber.join().widen())
+                    .flatMap(childResult ->
+                        Effect.<RuntimeException, String>from(new TrackCapability.Label("parent"))
+                              .map(parentResult -> childResult + "+" + parentResult)
+                              .widen()
+                    );
+        });
+
+        String result = runtime.unsafeRunWithHandler(effect, tracker);
+        assertEquals("handled-child+handled-parent", result);
     }
 }
