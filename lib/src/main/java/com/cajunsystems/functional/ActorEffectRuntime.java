@@ -35,6 +35,18 @@ public class ActorEffectRuntime extends DefaultEffectRuntime {
         super(resolveExecutor(system), true);
     }
 
+    /**
+     * No-op override. The {@link ExecutorService} passed to this runtime is owned by
+     * the {@link ActorSystem}, not by this runtime. Shutting it down here would
+     * terminate actor execution for the entire system.
+     *
+     * <p>Lifecycle cleanup is managed by {@link ActorSystem#shutdown()}.
+     */
+    @Override
+    public void close() {
+        // Intentional no-op: executor lifecycle belongs to ActorSystem.
+    }
+
     private static ExecutorService resolveExecutor(ActorSystem system) {
         ExecutorService shared = system.getSharedExecutor();
         return shared != null
