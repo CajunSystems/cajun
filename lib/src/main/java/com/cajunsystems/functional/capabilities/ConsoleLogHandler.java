@@ -24,33 +24,30 @@ import com.cajunsystems.roux.data.Unit;
  */
 public class ConsoleLogHandler implements CapabilityHandler<Capability<?>> {
 
-    @Override
-    @SuppressWarnings("unchecked")
-    public <R> R handle(Capability<?> capability) {
-        if (!(capability instanceof LogCapability lc)) {
-            throw new UnsupportedOperationException(
-                    "ConsoleLogHandler cannot handle: " + capability.getClass().getName());
-        }
-        return switch (lc) {
-            case LogCapability.Info info -> {
+    private static final CapabilityHandler<Capability<?>> DELEGATE = CapabilityHandler.builder()
+            .on(LogCapability.Info.class, info -> {
                 System.out.println("[INFO]  " + info.message());
-                yield (R) Unit.unit();
-            }
-            case LogCapability.Debug debug -> {
+                return Unit.unit();
+            })
+            .on(LogCapability.Debug.class, debug -> {
                 System.out.println("[DEBUG] " + debug.message());
-                yield (R) Unit.unit();
-            }
-            case LogCapability.Warn warn -> {
+                return Unit.unit();
+            })
+            .on(LogCapability.Warn.class, warn -> {
                 System.out.println("[WARN]  " + warn.message());
-                yield (R) Unit.unit();
-            }
-            case LogCapability.Error error -> {
+                return Unit.unit();
+            })
+            .on(LogCapability.Error.class, error -> {
                 System.err.println("[ERROR] " + error.message());
                 if (error.cause() != null) {
                     error.cause().printStackTrace(System.err);
                 }
-                yield (R) Unit.unit();
-            }
-        };
+                return Unit.unit();
+            })
+            .build();
+
+    @Override
+    public <R> R handle(Capability<?> cap) throws Exception {
+        return DELEGATE.handle(cap);
     }
 }

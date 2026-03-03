@@ -25,16 +25,13 @@ class CapabilityIntegrationTest {
     }
 
     static class EchoHandler implements CapabilityHandler<Capability<?>> {
+        private static final CapabilityHandler<Capability<?>> DELEGATE = CapabilityHandler.builder()
+                .on(EchoCapability.Echo.class, e -> "ECHO:" + e.value())
+                .build();
+
         @Override
-        @SuppressWarnings("unchecked")
-        public <R> R handle(Capability<?> capability) {
-            if (!(capability instanceof EchoCapability ec)) {
-                throw new UnsupportedOperationException(
-                        "EchoHandler cannot handle: " + capability.getClass().getName());
-            }
-            return switch (ec) {
-                case EchoCapability.Echo e -> (R) ("ECHO:" + e.value());
-            };
+        public <R> R handle(Capability<?> cap) throws Exception {
+            return DELEGATE.handle(cap);
         }
     }
 

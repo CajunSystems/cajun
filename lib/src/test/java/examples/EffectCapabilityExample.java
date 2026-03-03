@@ -73,17 +73,14 @@ class EffectCapabilityExample {
 
     /** Evaluates validation rules; returns {@code Boolean} for each variant. */
     static class ValidationHandler implements CapabilityHandler<Capability<?>> {
+        private static final CapabilityHandler<Capability<?>> DELEGATE = CapabilityHandler.builder()
+                .on(ValidationCapability.IsNonEmpty.class, v -> !v.value().isEmpty())
+                .on(ValidationCapability.HasMinLength.class, v -> v.value().length() >= v.min())
+                .build();
+
         @Override
-        @SuppressWarnings("unchecked")
-        public <R> R handle(Capability<?> capability) {
-            if (!(capability instanceof ValidationCapability vc)) {
-                throw new UnsupportedOperationException(
-                        "ValidationHandler cannot handle: " + capability.getClass().getName());
-            }
-            return switch (vc) {
-                case ValidationCapability.IsNonEmpty v  -> (R) (Boolean) !v.value().isEmpty();
-                case ValidationCapability.HasMinLength v -> (R) (Boolean) (v.value().length() >= v.min());
-            };
+        public <R> R handle(Capability<?> cap) throws Exception {
+            return DELEGATE.handle(cap);
         }
     }
 
@@ -96,25 +93,25 @@ class EffectCapabilityExample {
     static class MetricsHandler implements CapabilityHandler<Capability<?>> {
         final ConcurrentHashMap<String, AtomicInteger> counters = new ConcurrentHashMap<>();
         final ConcurrentHashMap<String, Double> gauges = new ConcurrentHashMap<>();
+        private final CapabilityHandler<Capability<?>> delegate;
+
+        MetricsHandler() {
+            this.delegate = CapabilityHandler.builder()
+                    .on(MetricsCapability.Increment.class, inc -> {
+                        counters.computeIfAbsent(inc.counter(), k -> new AtomicInteger(0))
+                                .incrementAndGet();
+                        return Unit.unit();
+                    })
+                    .on(MetricsCapability.Record.class, rec -> {
+                        gauges.put(rec.metric(), rec.value());
+                        return Unit.unit();
+                    })
+                    .build();
+        }
 
         @Override
-        @SuppressWarnings("unchecked")
-        public <R> R handle(Capability<?> capability) {
-            if (!(capability instanceof MetricsCapability mc)) {
-                throw new UnsupportedOperationException(
-                        "MetricsHandler cannot handle: " + capability.getClass().getName());
-            }
-            return switch (mc) {
-                case MetricsCapability.Increment inc -> {
-                    counters.computeIfAbsent(inc.counter(), k -> new AtomicInteger(0))
-                            .incrementAndGet();
-                    yield (R) Unit.unit();
-                }
-                case MetricsCapability.Record rec -> {
-                    gauges.put(rec.metric(), rec.value());
-                    yield (R) Unit.unit();
-                }
-            };
+        public <R> R handle(Capability<?> cap) throws Exception {
+            return delegate.handle(cap);
         }
     }
 
