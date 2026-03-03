@@ -11,7 +11,7 @@
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 12 | Upgrade & Compatibility | ⬜ Not started |
+| 12 | Upgrade & Compatibility | ✅ Complete |
 | 13 | Bridge Concurrency & Timeout | ⬜ Not started |
 | 14 | Modernize Retry & Error Examples | ⬜ Not started |
 | 15 | New Concurrency & Resource Examples | ⬜ Not started |
@@ -28,9 +28,11 @@
 | 11 | Effect Actor Documentation | ✅ Complete |
 
 ## Key Context
-- Roux: upgrading `com.cajunsystems:roux:0.1.0` → `0.2.1` (Maven Central)
+- Roux: `com.cajunsystems:roux:0.2.1` (upgraded from 0.1.0)
 - Roux v0.2.0 new API: `Effect.unit/runnable/sleep/when/unless`, `tap()`, `tapError()`, `retry(n)`, `retryWithDelay()`, `retry(RetryPolicy)`, `timeout(Duration)`, `Effects.race/sequence/traverse/parAll()`, `Resource<A>` with `make/fromCloseable/use/ensuring`
-- Roux v0.2.0: `DefaultEffectRuntime` now `AutoCloseable` — `ActorEffectRuntime.close()` must be overridden (no-op; executor owned by ActorSystem)
+- Roux v0.2.0: `DefaultEffectRuntime` now `AutoCloseable` — `ActorEffectRuntime.close()` overridden as no-op (executor owned by ActorSystem, not the runtime)
+- Roux v0.2.0 compose() contract: handlers used with `compose()`/`orElse()` MUST implement `CapabilityHandler<Capability<?>>` and throw `UnsupportedOperationException` for unhandled types — `widen()` is just a cast, adds NO type-checking. Use `instanceof` check + UOE or `CapabilityHandler.builder()`
+- `ConsoleLogHandler` updated to `CapabilityHandler<Capability<?>>` (was `<LogCapability>`)
 - Roux v0.2.0: `Either` gains `map/flatMap/fold/swap`; `Tuple2/Tuple3` renamed `first()/second()/third()` — Cajun does NOT use Tuple2/Tuple3, no migration needed
 - Roux v0.2.1 fix: scoped fork inherits parent `ExecutionContext` including capability handlers
 - Roux v0.2.1: `MissingCapabilityHandlerException` with concrete capability type in message
