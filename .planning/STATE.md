@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Status
-**Milestone**: 2 — Effect Actor Examples & Documentation
+**Milestone**: 2 — Effect Actor Examples & Documentation — **ARCHIVED as v0.5.0**
 **Phase**: 11 (complete — Milestone 2 done)
-**Status**: Complete
-**Branch**: `main` (merge feature/roux-effect-integration first, then new branch per phase)
-**Last Updated**: 2026-02-27
+**Status**: Archived
+**Branch**: `feature/roux-effect-integration` (ready to merge to main)
+**Last Updated**: 2026-03-03
 
 ## Milestone 2 Phase Progress
 
