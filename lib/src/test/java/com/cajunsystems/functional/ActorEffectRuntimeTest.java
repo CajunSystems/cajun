@@ -6,6 +6,7 @@ import com.cajunsystems.roux.Effect;
 import com.cajunsystems.roux.Fiber;
 import org.junit.jupiter.api.*;
 
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -122,5 +123,28 @@ class ActorEffectRuntimeTest {
         } finally {
             noSharedSystem.shutdown();
         }
+    }
+
+    @Test
+    void timeoutExpiresWhenEffectExceedsDeadline() {
+        Effect<Throwable, String> slow = Effect.<RuntimeException, String>suspend(() -> {
+            Thread.sleep(500);
+            return "too late";
+        }).timeout(Duration.ofMillis(50));
+
+        // Roux uses com.cajunsystems.roux.exception.TimeoutException (not java.util.concurrent.TimeoutException)
+        Throwable thrown = assertThrows(Throwable.class, () -> runtime.unsafeRun(slow));
+        assertTrue(thrown.getClass().getName().contains("TimeoutException"),
+                "Expected TimeoutException (possibly wrapped), got: " + thrown);
+    }
+
+    @Test
+    void timeoutDoesNotTriggerForFastEffect() throws Throwable {
+        Effect<Throwable, String> fast = Effect.<RuntimeException, String>suspend(() -> {
+            Thread.sleep(10);
+            return "on time";
+        }).timeout(Duration.ofMillis(500));
+
+        assertEquals("on time", runtime.unsafeRun(fast));
     }
 }
