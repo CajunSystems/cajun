@@ -140,10 +140,10 @@ Plans: 13.1 (complete — 9 tests added, 371 total, all green)
 
 ---
 
-## Phase 14: Modernize Retry & Error Examples
+## ~~Phase 14: Modernize Retry & Error Examples~~ ✅
 **Goal**: Replace `EffectRetryExample`'s hand-rolled `withRetry(catchAll)` with Roux's built-in `RetryPolicy`. Add `tap()` / `tapError()` patterns. New timeout example.
 
-Plans: 14.1 (pending)
+Plans: 14.1 (complete — 5 tests added/rewritten, 376 total, all green)
 
 ---
 

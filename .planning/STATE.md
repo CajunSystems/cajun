@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 3 — Roux v0.2.1 Upgrade
-**Phase**: 13 ✅ Complete
-**Status**: Active — 371 tests, 0 failures
+**Phase**: 14 ✅ Complete
+**Status**: Active — 376 tests, 0 failures
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-03-04
 
@@ -13,7 +13,7 @@
 |-------|------|--------|
 | 12 | Upgrade & Compatibility | ✅ Complete |
 | 13 | Bridge Concurrency & Timeout | ✅ Complete |
-| 14 | Modernize Retry & Error Examples | ⬜ Not started |
+| 14 | Modernize Retry & Error Examples | ✅ Complete |
 | 15 | New Concurrency & Resource Examples | ⬜ Not started |
 | 16 | Documentation Update | ⬜ Not started |
 
@@ -35,7 +35,12 @@
 - `ConsoleLogHandler` updated to `CapabilityHandler<Capability<?>>` (was `<LogCapability>`) using builder pattern
 - Stateless handlers: `private static final CapabilityHandler<Capability<?>> DELEGATE = CapabilityHandler.builder()...build();` — shared across instances
 - Stateful handlers (e.g. MetricsHandler): instance-level `delegate` field built in constructor (closures capture instance state)
-- **Roux TimeoutException**: `com.cajunsystems.roux.exception.TimeoutException` — NOT `java.util.concurrent.TimeoutException`; assert with `getClass().getName().contains("TimeoutException")`
+- **Roux TimeoutException**: `com.cajunsystems.roux.exception.TimeoutException` — NOT `java.util.concurrent.TimeoutException`; assert with `getClass().getName().contains("TimeoutException")` or just use `catchAll` (no instanceof needed)
+- **`timeout().catchAll(...)` → `Effect<Throwable,...>`**: test methods must declare `throws Throwable` (not `Exception`)
+- **`retry(n)` counting**: n = ADDITIONAL attempts (not total). `retry(2)` = 3 total (1 initial + 2 retries)
+- **`retryWithDelay`/`retry(RetryPolicy)` widen to `Throwable`**: test methods need `throws Throwable`
+- **`tap()`**: fires on SUCCESS only; passes value through unchanged; does not alter error type
+- **`tapError()`**: fires on FAILURE only; re-throws original error unchanged (observe-and-rethrow, NOT recovery)
 - **Local sealed interfaces**: Java 21 does NOT allow sealed interfaces inside a method body — define as static nested type in the test class
 - `Effects.parAll(List<Effect<E,A>>)` — error type widens to Throwable; test methods need `throws Throwable`
 - `Effects.race(Effect<E,A>, Effect<E,A>)` — returns whichever completes first; error type widens to Throwable
