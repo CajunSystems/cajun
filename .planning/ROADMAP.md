@@ -154,14 +154,10 @@ Plans: 15.1 (complete — 7 tests added, 383 total, all green)
 
 ---
 
-## Phase 16: Documentation Update
+## ~~Phase 16: Documentation Update~~ ✅
 **Goal**: Update all `docs/effect-actors/` files to cover new Roux v0.2.x API. Add v0.1.0 → v0.2.1 migration notes.
 
-Key tasks:
-- 16.1 Update `docs/effect-actors/getting-started.md` — `Effect.unit()`, `Effect.runnable()`, `tap()`, built-in retry quickstart
-- 16.2 Update `docs/effect-actors/patterns.md` — replace manual retry pattern with `RetryPolicy`; add timeout, `Effects.parAll/race/traverse`, `Resource<A>` patterns
-- 16.3 Update `docs/effect-actors/capabilities.md` — `MissingCapabilityHandlerException` diagnostics; scoped-fork capability inheritance
-- 16.4 Add v0.1.0 → v0.2.1 migration guide section (or new file `docs/effect-actors/migration.md`)
+Plans: 16.1 (complete — 4 docs updated + migration.md created)
 
 ---
 

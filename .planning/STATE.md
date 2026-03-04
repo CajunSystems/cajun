@@ -2,7 +2,7 @@
 
 ## Current Status
 **Milestone**: 3 — Roux v0.2.1 Upgrade
-**Phase**: 15 ✅ Complete
+**Phase**: 16 ✅ Complete
 **Status**: Active — 383 tests, 0 failures
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-03-04
@@ -15,7 +15,7 @@
 | 13 | Bridge Concurrency & Timeout | ✅ Complete |
 | 14 | Modernize Retry & Error Examples | ✅ Complete |
 | 15 | New Concurrency & Resource Examples | ✅ Complete |
-| 16 | Documentation Update | ⬜ Not started |
+| 16 | Documentation Update | ✅ Complete |
 
 ## Milestone 2 Phase Progress (archived — v0.5.0)
 
