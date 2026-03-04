@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.cajunsystems.functional.ActorSystemEffectExtensions.spawnEffectActor;
 import static org.junit.jupiter.api.Assertions.*;
@@ -154,5 +155,47 @@ class EffectErrorHandlingExample {
         assertTrue(result instanceof Either.Right, "Expected Right for successful effect");
         Integer value = ((Either.Right<RuntimeException, Integer>) result).value();
         assertEquals(42, value);
+    }
+
+    /**
+     * {@code tap()} runs a side-effect on success and passes the original value through unchanged.
+     *
+     * <p>Use {@code tap()} for logging, metrics, or notifications that should not
+     * change the pipeline's result. The returned value is identical to the input value.
+     */
+    @Test
+    void tapObservesSuccessValueWithoutAltering() throws Exception {
+        AtomicReference<String> observed = new AtomicReference<>();
+
+        Effect<RuntimeException, String> effect =
+                Effect.<RuntimeException, String>succeed("hello")
+                      .tap(v -> observed.set("saw: " + v));
+
+        String result = runtime.unsafeRun(effect);
+
+        assertEquals("hello", result, "tap() must not change the returned value");
+        assertEquals("saw: hello", observed.get(), "tap() side-effect must have run");
+    }
+
+    /**
+     * {@code tapError()} runs a side-effect on failure and re-throws the original error unchanged.
+     *
+     * <p>Unlike {@code catchAll()}, {@code tapError()} does not recover — it only
+     * observes the error. Use it for logging or alerting without swallowing exceptions.
+     */
+    @Test
+    void tapErrorObservesFailureWithoutSuppressing() {
+        AtomicReference<String> observed = new AtomicReference<>();
+
+        Effect<RuntimeException, String> effect =
+                Effect.<RuntimeException, String>fail(new RuntimeException("boom"))
+                      .tapError(e -> observed.set("caught: " + e.getMessage()));
+
+        // tapError does NOT recover — the error still propagates
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> runtime.unsafeRun(effect));
+
+        assertEquals("boom", thrown.getMessage(), "tapError() must not swallow the error");
+        assertEquals("caught: boom", observed.get(), "tapError() side-effect must have run");
     }
 }
