@@ -136,7 +136,7 @@ Pid counter = new EffectActorBuilder<>(
 | `new LogCapability.Error("message")` | stderr |
 
 Always call `.widen()` on a handler before passing it to `Effect.generate()` or
-`withCapabilityHandler()` — this widens `CapabilityHandler<LogCapability>` to
+`withCapabilityHandler()` — this ensures the handler is typed as
 `CapabilityHandler<Capability<?>>` which the builder expects.
 
 ---
@@ -157,6 +157,17 @@ Always call `.widen()` on a handler before passing it to `Effect.generate()` or
 | `.orElse(effect)` | Fallback effect on failure |
 | `.attempt()` | Materialise errors as `Either<E,A>`; widens E to Throwable |
 | `Unit.unit()` | Return value for effects with no meaningful result |
+| `Effect.unit()` | Alias for `Effect.succeed(Unit.unit())` |
+| `Effect.runnable(() -> ...)` | Side-effect lambda; returns `Unit` automatically |
+| `effect.tap(value -> ...)` | Observe success value; result passes through unchanged |
+| `effect.tapError(err -> ...)` | Observe failure; original error re-thrown unchanged |
+| `effect.retry(n)` | Retry up to `n` additional times on failure; error type unchanged |
+| `effect.retryWithDelay(n, Duration)` | Retry `n` times with fixed delay; widens E to `Throwable` |
+| `effect.retry(RetryPolicy)` | Retry with configurable policy (backoff, jitter, cap) |
+| `effect.timeout(Duration)` | Fail with `TimeoutException` if deadline exceeded; widens E to `Throwable` |
+| `Effects.parAll(List)` | Run effects concurrently; collect results in insertion order; widens to `Throwable` |
+| `Effects.race(List)` | Return the first to complete; cancel the rest; widens to `Throwable` |
+| `Effects.traverse(List, fn)` | Apply function to each item sequentially; collect results; error stays as `E` |
 
 ---
 
