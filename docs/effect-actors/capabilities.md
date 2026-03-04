@@ -25,7 +25,7 @@ sealed interface LogCapability extends Capability<Unit>
                 LogCapability.Warn, LogCapability.Error { ... }
 ```
 
-`ConsoleLogHandler` implements `CapabilityHandler<LogCapability>` and writes to stdout/stderr.
+`ConsoleLogHandler` implements `CapabilityHandler<Capability<?>>` and writes to stdout/stderr.
 Call `.widen()` to get a `CapabilityHandler<Capability<?>>` compatible with `Effect.generate()`:
 
 ```java
@@ -119,8 +119,34 @@ sealed interface MetricsCapability extends Capability<Unit>
 
 ## Implementing a CapabilityHandler
 
-Match on each variant. The `(R)` cast and `@SuppressWarnings("unchecked")` annotation are required
-by the generic handler interface — the cast is safe because the sealed switch is exhaustive:
+### Preferred: CapabilityHandler.builder()
+
+`CapabilityHandler.builder()` registers a handler function per capability type. Unregistered
+types throw `UnsupportedOperationException` automatically — satisfying the dispatch contract
+required by `compose()` and `orElse()`:
+
+```java
+private static final CapabilityHandler<Capability<?>> VALIDATION =
+    CapabilityHandler.builder()
+        .on(ValidationCapability.IsNonEmpty.class,   v -> !v.value().isEmpty())
+        .on(ValidationCapability.HasMinLength.class, v -> v.value().length() >= v.min())
+        .build();
+
+// Wrap in a handler class (or use directly with .widen()):
+static class ValidationHandler implements CapabilityHandler<Capability<?>> {
+    @Override
+    public <R> R handle(Capability<?> cap) throws Exception {
+        return VALIDATION.handle(cap);
+    }
+}
+```
+
+The delegate is `private static final` because `ValidationHandler` has no state — sharing
+it across instances is safe and avoids allocation.
+
+### Alternative: sealed switch
+
+The switch approach still works, but requires a manual cast and `@SuppressWarnings("unchecked")`:
 
 ```java
 static class ValidationHandler implements CapabilityHandler<ValidationCapability> {
@@ -128,12 +154,15 @@ static class ValidationHandler implements CapabilityHandler<ValidationCapability
     @SuppressWarnings("unchecked")
     public <R> R handle(ValidationCapability capability) {
         return (R) switch (capability) {
-            case ValidationCapability.IsNonEmpty v  -> !v.value().isEmpty();
+            case ValidationCapability.IsNonEmpty v   -> !v.value().isEmpty();
             case ValidationCapability.HasMinLength v -> v.value().length() >= v.min();
         };
     }
 }
 ```
+
+Note: when using the switch approach with `compose()` or `orElse()`, you must also
+throw `UnsupportedOperationException` for unhandled types (the builder does this automatically).
 
 Capture the return value inside `Effect.generate()` by assigning to the correct type:
 
@@ -149,28 +178,33 @@ Effect.generate(ctx -> {
 
 ## Stateful Handlers
 
-Handlers are plain Java objects — they can hold state. Hold a reference before passing to the
-actor so you can read accumulated state from your test:
+Handlers that hold state must build their delegate in the constructor — the builder lambdas
+capture instance fields via closures:
 
 ```java
-static class MetricsHandler implements CapabilityHandler<MetricsCapability> {
+static class MetricsHandler implements CapabilityHandler<Capability<?>> {
     final ConcurrentHashMap<String, AtomicInteger> counters = new ConcurrentHashMap<>();
     final ConcurrentHashMap<String, Double> gauges = new ConcurrentHashMap<>();
 
-    @Override
-    @SuppressWarnings("unchecked")
-    public <R> R handle(MetricsCapability capability) {
-        return (R) switch (capability) {
-            case MetricsCapability.Increment inc -> {
+    private final CapabilityHandler<Capability<?>> delegate;
+
+    MetricsHandler() {
+        this.delegate = CapabilityHandler.builder()
+            .on(MetricsCapability.Increment.class, inc -> {
                 counters.computeIfAbsent(inc.counter(), k -> new AtomicInteger(0))
                         .incrementAndGet();
-                yield Unit.unit();
-            }
-            case MetricsCapability.Record rec -> {
+                return Unit.unit();
+            })
+            .on(MetricsCapability.Record.class, rec -> {
                 gauges.put(rec.metric(), rec.value());
-                yield Unit.unit();
-            }
-        };
+                return Unit.unit();
+            })
+            .build();
+    }
+
+    @Override
+    public <R> R handle(Capability<?> cap) throws Exception {
+        return delegate.handle(cap);
     }
 }
 
@@ -180,7 +214,6 @@ Pid actor = new EffectActorBuilder<>(system,
     (ProcessItem item) -> Effect.generate(ctx -> {
         ctx.perform(new MetricsCapability.Increment("items.processed"));
         ctx.perform(new MetricsCapability.Record("last.length", (double) item.key().length()));
-        // ...
         return Unit.unit();
     }, mh.widen())
 ).withId("metrics-actor").spawn();
@@ -222,6 +255,76 @@ Effect.generate(ctx -> {
 | `handler.widen()` | `CapabilityHandler<Capability<?>>` | Required before `generate()` or `withCapabilityHandler()` |
 | `handler.widen().orElse(other)` | Combined handler | Chain two handlers; first matching handles |
 | `CapabilityHandler.compose(h1, h2, ...)` | `CapabilityHandler<Capability<?>>` | Combine N handlers by capability type dispatch |
+
+---
+
+## MissingCapabilityHandlerException Diagnostics
+
+If `ctx.perform()` is called for a capability type that has no registered handler, Roux throws
+`MissingCapabilityHandlerException` with the concrete capability type in the message. Common causes:
+
+**1. Forgot `.widen()` on a typed handler:**
+```java
+// Wrong — ValidationHandler<ValidationCapability> passed where <Capability<?>> expected
+Effect.generate(ctx -> ..., new ValidationHandler())   // compile error or runtime cast failure
+
+// Correct
+Effect.generate(ctx -> ..., new ValidationHandler().widen())
+```
+
+**2. Handler not registered for that capability type:**
+```java
+// handler only covers LogCapability — MetricsCapability will throw
+CapabilityHandler<Capability<?>> h = new ConsoleLogHandler().widen();
+ctx.perform(new MetricsCapability.Increment("x"));  // → MissingCapabilityHandlerException
+
+// Fix: compose both handlers
+CapabilityHandler<Capability<?>> h = CapabilityHandler.compose(
+    new ConsoleLogHandler(), new MetricsHandler()
+);
+```
+
+**3. Using `Effect.from()` without calling `.withCapabilityHandler()` on the builder:**
+```java
+// Effect.from(cap) defers handler resolution to spawn time
+// If no handler was registered, every message execution will throw
+new EffectActorBuilder<>(system, msg -> Effect.from(new MyCap(msg)))
+    // missing: .withCapabilityHandler(myHandler.widen())
+    .spawn();
+```
+
+---
+
+## Scoped-Fork Capability Inheritance
+
+Since Roux v0.2.1, fibers forked via `Effect.scoped()` inherit the parent scope's
+`ExecutionContext`, including registered capability handlers. This means capability calls
+inside a forked fiber work without any additional configuration:
+
+```java
+CapabilityHandler<Capability<?>> tracker = CapabilityHandler.builder()
+    .on(TrackCapability.Label.class, l -> "handled-" + l.name())
+    .build();
+
+Effect<Throwable, String> effect = Effect.scoped(scope -> {
+    // Fork a fiber that performs a capability
+    Effect<Throwable, Fiber<RuntimeException, String>> forkedFiber =
+        Effect.<RuntimeException, String>from(new TrackCapability.Label("child"))
+              .forkIn(scope);
+
+    return forkedFiber
+        .flatMap(fiber -> fiber.join().widen())
+        .flatMap(childResult ->
+            Effect.<RuntimeException, String>from(new TrackCapability.Label("parent"))
+                  .map(parentResult -> childResult + "+" + parentResult).widen());
+});
+
+// Run with handler — both parent and child capability calls are handled
+String result = runtime.unsafeRunWithHandler(effect, tracker);
+// → "handled-child+handled-parent"
+```
+
+Before v0.2.1, the child fiber would have thrown `MissingCapabilityHandlerException`.
 
 ---
 
