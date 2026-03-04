@@ -67,30 +67,40 @@ void exampleTest() throws Throwable {
 }
 ```
 
-### Retry with backoff
+### Built-in Retry
 
-Build a retry chain with recursive `catchAll`. `Effect.suspend(supplier)` re-evaluates the
-supplier on each attempt, so each call invokes the operation afresh:
+Use `.retry(n)` for a fixed number of additional attempts. `n` is additional attempts, not total:
+`retry(2)` = 1 initial + 2 retries = 3 total executions:
 
 ```java
-static Effect<RuntimeException, String> withRetry(Supplier<String> op, int remaining) {
-    return Effect.<RuntimeException, String>suspend(op)
-        .catchAll(err -> remaining > 0
-            ? withRetry(op, remaining - 1)
-            : Effect.fail(err));
-}
+Effect<RuntimeException, String> flaky = Effect.suspend(() -> {
+    if (callCount.incrementAndGet() < 3) throw new RuntimeException("transient failure");
+    return "ok";
+});
 
-// Usage:
-Pid actor = spawnEffectActor(system,
-    (String url) -> withRetry(() -> fetch(url), 3)
-        .flatMap(body -> Effect.suspend(() -> { handle(body); return Unit.unit(); }))
-        .catchAll(err -> Effect.suspend(() -> {
-            log("All retries exhausted: " + err.getMessage());
-            return Unit.unit();
-        })));
+String result = runtime.unsafeRun(flaky.retry(2));  // succeeds on attempt 3
 ```
 
-**See**: `EffectErrorHandlingExample.java`, `EffectRetryExample.java`
+For retry with delays, use `.retryWithDelay(n, Duration)` (widens error to `Throwable`):
+
+```java
+Effect<RuntimeException, String> withDelay = fetchData.retryWithDelay(3, Duration.ofMillis(100));
+```
+
+For configurable policies (exponential backoff, jitter, max attempts):
+
+```java
+import com.cajunsystems.roux.RetryPolicy;
+
+Effect<Throwable, String> withPolicy = fetchData.retry(
+    RetryPolicy.exponential(Duration.ofMillis(50)).maxAttempts(4)
+);
+```
+
+**Note**: `.retryWithDelay()` and `.retry(RetryPolicy)` widen the error type to `Throwable` —
+the calling method must declare `throws Throwable`.
+
+**See**: `EffectRetryExample.java`
 
 ---
 
@@ -296,16 +306,149 @@ dispatcher.tell(new Batch(List.of("hello", "world", "cajun")));
 
 ---
 
+## 6. Observe Without Altering: tap / tapError
+
+`tap(fn)` fires on success and passes the value through unchanged — use it for logging, metrics,
+or audit trails that must not affect the effect result:
+
+```java
+Effect<RuntimeException, Order> process =
+    Effect.<RuntimeException, Order>suspend(() -> placeOrder(req))
+        .tap(order -> logger.info("Order placed: " + order.id()))   // observe, don't change
+        .flatMap(order -> Effect.suspend(() -> sendConfirmation(order)));
+```
+
+`tapError(fn)` fires on failure and re-throws the original error unchanged — use it to record
+failures without suppressing them:
+
+```java
+Effect<RuntimeException, String> withMetrics =
+    fetchData
+        .tapError(err -> metrics.increment("fetch.errors"))    // observe failure
+        .catchAll(err -> Effect.succeed("fallback"));           // then recover
+```
+
+**See**: `EffectErrorHandlingExample.java`
+
+---
+
+## 7. Timeout with Fallback
+
+`timeout(Duration)` cancels an effect if it exceeds the deadline. The error type widens to
+`Throwable` — combine with `catchAll` to provide a fallback:
+
+```java
+Effect<RuntimeException, String> slow = Effect.suspend(() -> {
+    Thread.sleep(500); return "slow-result";
+});
+
+// Widen and recover: test method needs `throws Throwable`
+String result = runtime.unsafeRun(
+    slow.timeout(Duration.ofMillis(50))
+        .catchAll(e -> Effect.succeed("fallback"))
+);
+// → "fallback" (timeout exceeded)
+```
+
+Roux throws its own `com.cajunsystems.roux.exception.TimeoutException` — not
+`java.util.concurrent.TimeoutException`. When checking the type, use:
+
+```java
+assertTrue(thrown.getClass().getName().contains("TimeoutException"));
+```
+
+**Note**: `timeout().catchAll()` produces `Effect<Throwable, A>` — methods calling
+`runtime.unsafeRun()` on the result must declare `throws Throwable`.
+
+**See**: `EffectTimeoutExample.java`
+
+---
+
+## 8. Parallel / Sequential Combinators
+
+`Effects.parAll()`, `Effects.race()`, and `Effects.traverse()` process collections of effects.
+Choose based on whether concurrency and order matter:
+
+| Combinator | Execution | Error type | Use when |
+|------------|-----------|------------|----------|
+| `Effects.parAll(List)` | Concurrent | Widens to `Throwable` | All results needed; independent tasks |
+| `Effects.race(List)` | Concurrent | Widens to `Throwable` | Any one result sufficient |
+| `Effects.traverse(List, fn)` | Sequential | Stays as `E` | Order matters or tasks share state |
+
+```java
+// parAll — concurrent fan-out; results in insertion order
+List<String> results = runtime.unsafeRun(
+    Effects.parAll(List.of(fetchA, fetchB, fetchC))
+);
+
+// race — returns the fastest; cancels the rest
+String winner = runtime.unsafeRun(Effects.race(List.of(slow, medium, fast)));
+
+// traverse — sequential; error type stays as RuntimeException (not widened)
+List<Integer> lengths = runtime.unsafeRun(
+    Effects.traverse(List.of("hello", "world"), word ->
+        Effect.<RuntimeException, Integer>succeed(word.length()))
+);
+```
+
+**See**: `EffectParallelExample.java`
+
+---
+
+## 9. Resource Management
+
+`Resource<A>` pairs an acquire effect with a guaranteed-run release. The release always
+executes whether the consumer succeeds, fails, or is interrupted — preventing resource leaks:
+
+```java
+Resource<Connection> connResource = Resource.make(
+    Effect.suspend(() -> pool.acquire()),          // acquire
+    conn -> Effect.runnable(conn::close)           // always-run release
+);
+
+// resource.use() widens to Throwable — declare throws Throwable
+String result = runtime.unsafeRun(
+    connResource.use(conn -> Effect.suspend(() -> conn.query("SELECT ...")))
+);
+// conn.close() runs even if the query throws
+```
+
+For `AutoCloseable` resources (streams, readers), use `fromCloseable()` — no release lambda needed:
+
+```java
+Resource<InputStream> stream = Resource.fromCloseable(
+    Effect.suspend(() -> Files.newInputStream(path))
+);
+```
+
+For cleanup that doesn't depend on a resource handle, use `Resource.ensuring()` — the functional
+try-finally:
+
+```java
+// finalizer always runs (widens to Throwable)
+Effect<Throwable, String> safe = Resource.ensuring(
+    Effect.suspend(() -> riskyOperation()),
+    Effect.runnable(() -> counter.decrementAndGet())
+);
+```
+
+**See**: `EffectResourceExample.java`
+
+---
+
 ## Example Index
 
 | Example file | Patterns covered |
 |---|---|
 | `EffectActorExample.java` | First actor, `Effect.suspend`, `Effect.succeed`, `flatMap` |
-| `EffectErrorHandlingExample.java` | `catchAll`, `orElse`, `mapError`, `attempt` |
-| `EffectRetryExample.java` | Retry-with-backoff via recursive `catchAll` |
+| `EffectErrorHandlingExample.java` | `catchAll`, `orElse`, `mapError`, `attempt`, `tap`, `tapError` |
+| `EffectRetryExample.java` | Built-in `retry(n)`, `retryWithDelay()`, `RetryPolicy` |
+| `EffectTimeoutExample.java` | `timeout(Duration)`, timeout fallback, actor-always-replies |
 | `EffectAskPatternExample.java` | Reply-via-Pid, request-response with effect actor |
 | `EffectStatefulCompositionExample.java` | `StatefulHandler` + `EffectActorBuilder` side-by-side |
 | `EffectPipelineExample.java` | 4-stage linear pipeline, sink-first wiring |
 | `EffectFanOutExample.java` | Dispatcher + worker pool, round-robin fan-out |
 | `EffectCapabilityExample.java` | Custom capabilities, stateful handler, `compose()` |
 | `EffectTestableCapabilityExample.java` | Swappable handlers, test double pattern |
+| `EffectParallelExample.java` | `parAll`, `race`, `traverse` — parallel and sequential combinators |
+| `EffectResourceExample.java` | `Resource.make`, `fromCloseable`, `ensuring` — lifecycle guarantees |
