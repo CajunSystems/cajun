@@ -150,9 +150,7 @@ Plans: 14.1 (complete — 5 tests added/rewritten, 376 total, all green)
 ## Phase 15: New Concurrency & Resource Examples
 **Goal**: Demonstrate `Effects.parAll()` / `Effects.race()` / `Effects.traverse()` and `Resource<A>` in idiomatic effect actor patterns.
 
-Key tasks:
-- 15.1 Write `EffectParallelExample.java` — `Effects.parAll()` to fan-out work and collect results; `Effects.race()` to return first winner; `Effects.traverse()` over a collection
-- 15.2 Write `EffectResourceExample.java` — `Resource<A>` for actors that acquire/release managed state (e.g., a connection pool mock); demonstrate guaranteed cleanup on success and failure
+Plans: 15.1 (pending)
 
 ---
 
