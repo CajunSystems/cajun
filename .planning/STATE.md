@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 3 — Roux v0.2.1 Upgrade
-**Phase**: 14 ✅ Complete
-**Status**: Active — 376 tests, 0 failures
+**Phase**: 15 ✅ Complete
+**Status**: Active — 383 tests, 0 failures
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-03-04
 
@@ -14,7 +14,7 @@
 | 12 | Upgrade & Compatibility | ✅ Complete |
 | 13 | Bridge Concurrency & Timeout | ✅ Complete |
 | 14 | Modernize Retry & Error Examples | ✅ Complete |
-| 15 | New Concurrency & Resource Examples | ⬜ Not started |
+| 15 | New Concurrency & Resource Examples | ✅ Complete |
 | 16 | Documentation Update | ⬜ Not started |
 
 ## Milestone 2 Phase Progress (archived — v0.5.0)
@@ -37,6 +37,12 @@
 - Stateful handlers (e.g. MetricsHandler): instance-level `delegate` field built in constructor (closures capture instance state)
 - **Roux TimeoutException**: `com.cajunsystems.roux.exception.TimeoutException` — NOT `java.util.concurrent.TimeoutException`; assert with `getClass().getName().contains("TimeoutException")` or just use `catchAll` (no instanceof needed)
 - **`timeout().catchAll(...)` → `Effect<Throwable,...>`**: test methods must declare `throws Throwable` (not `Exception`)
+- **`resource.use()` and `Resource.ensuring()` widen to `Throwable`**: test methods need `throws Throwable`
+- **`Resource.fromCloseable(effect)`**: shorthand for `AutoCloseable`; release = `close()` automatically
+- **`Resource.make(acquire, release)`**: full control; release always runs on success AND failure
+- **`Resource.ensuring(effect, finalizer)`**: try-finally pattern; finalizer runs regardless of outcome
+- **`Resource.flatMap()` caveat**: simplified; prefer nested `use()` for resources that depend on each other
+- **`traverse()` does NOT widen**: error stays as `E`; only `parAll`/`race`/`timeout`/`retry(Policy)` widen to `Throwable`
 - **`retry(n)` counting**: n = ADDITIONAL attempts (not total). `retry(2)` = 3 total (1 initial + 2 retries)
 - **`retryWithDelay`/`retry(RetryPolicy)` widen to `Throwable`**: test methods need `throws Throwable`
 - **`tap()`**: fires on SUCCESS only; passes value through unchanged; does not alter error type

@@ -147,10 +147,10 @@ Plans: 14.1 (complete — 5 tests added/rewritten, 376 total, all green)
 
 ---
 
-## Phase 15: New Concurrency & Resource Examples
+## ~~Phase 15: New Concurrency & Resource Examples~~ ✅
 **Goal**: Demonstrate `Effects.parAll()` / `Effects.race()` / `Effects.traverse()` and `Resource<A>` in idiomatic effect actor patterns.
 
-Plans: 15.1 (pending)
+Plans: 15.1 (complete — 7 tests added, 383 total, all green)
 
 ---
 
