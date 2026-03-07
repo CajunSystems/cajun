@@ -10,10 +10,13 @@ import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
+import com.cajunsystems.loop.BehaviorMiddleware;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.PersistenceTruncationConfig;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -42,6 +45,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
     private MailboxProvider<Message> mailboxProvider;
+    private final List<BehaviorMiddleware<E, State, Message>> middlewares = new ArrayList<>();
 
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -208,6 +212,36 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
         this.truncationConfig = truncationConfig;
         return this;
     }
+
+    /**
+     * Adds a {@link BehaviorMiddleware} to the actor's behavior pipeline.
+     *
+     * <p>Middlewares are applied in the order they are added: the first added
+     * middleware is the innermost wrapper around the base behavior, and the last
+     * added is the outermost.  Execution order (outermost first) is therefore the
+     * reverse of addition order:
+     * <pre>
+     * Added order:   mw1, mw2, mw3
+     * Exec order:    mw3 → mw2 → mw1 → baseBehavior
+     * </pre>
+     *
+     * <p>Example:
+     * <pre>{@code
+     * system.statefulActorOf(MyHandler.class, initial)
+     *     .withMiddleware(new LoggingMiddleware<>("payment"))
+     *     .withMiddleware(new MetricsMiddleware<>("payment"))
+     *     .withMiddleware(RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50)))
+     *     .spawn();
+     * }</pre>
+     *
+     * @param middleware the middleware to add
+     * @return this builder for method chaining
+     */
+    public StatefulActorBuilder<E, State, Message> withMiddleware(
+            BehaviorMiddleware<E, State, Message> middleware) {
+        this.middlewares.add(middleware);
+        return this;
+    }
     
     /**
      * Creates and starts the actor with the configured settings.
@@ -233,26 +267,28 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
         if (customPersistence) {
             actor = new StatefulHandlerActor<>(
                     system,
-                    finalId,       // Use generated ID
+                    finalId,
                     handler,
                     initialState,
                     messageJournal,
                     snapshotStore,
                     backpressureConfig,
-                    mbConfigToUse, // Use effective mailbox config
-                    tpfToUse,      // Use effective TPF
-                    mpToUse        // Use effective MP
+                    mbConfigToUse,
+                    tpfToUse,
+                    mpToUse,
+                    List.copyOf(middlewares)
             );
         } else {
             actor = new StatefulHandlerActor<>(
                     system,
-                    finalId,       // Use generated ID
+                    finalId,
                     handler,
                     initialState,
                     backpressureConfig,
-                    mbConfigToUse, // Use effective mailbox config
-                    tpfToUse,      // Use effective TPF
-                    mpToUse        // Use effective MP
+                    mbConfigToUse,
+                    tpfToUse,
+                    mpToUse,
+                    List.copyOf(middlewares)
             );
         }
 

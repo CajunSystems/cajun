@@ -9,12 +9,16 @@ import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.functional.CajunEffectRuntime;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.loop.ActorBehavior;
+import com.cajunsystems.loop.BehaviorMiddleware;
+import com.cajunsystems.loop.LoopStep;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.roux.Effect;
 import com.cajunsystems.roux.EffectRuntime;
 import org.slf4j.Logger;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -22,11 +26,41 @@ import java.util.concurrent.TimeUnit;
 /**
  * Internal implementation of a StatefulActor that delegates to a {@link StatefulHandler}.
  *
- * <p>When a message arrives, {@link #processMessage} calls
- * {@link StatefulHandler#receive handler.receive()} which returns a Roux
- * {@link Effect}{@code <E, State>} describing the state transition.  The effect is
- * executed synchronously via {@link EffectRuntime#unsafeRun(Effect)} on the actor's
- * current virtual thread; the resulting value becomes the new actor state.
+ * <h2>Phase 2: Actor loop as a Roux Effect</h2>
+ *
+ * <p>Each message-processing step is described by an {@link ActorBehavior} — a
+ * functional interface that returns a Roux {@link Effect}{@code <E, LoopStep<State>>}.
+ * Executing the effect yields one of three {@link LoopStep} variants that control
+ * the actor's lifecycle:
+ * <ul>
+ *   <li>{@link LoopStep.Continue} — update state and keep processing</li>
+ *   <li>{@link LoopStep.Stop}     — update state and gracefully stop the actor</li>
+ *   <li>{@link LoopStep.Restart}  — update state and restart the actor</li>
+ * </ul>
+ *
+ * <p>Cross-cutting concerns (logging, metrics, retry, dead-letter capture, …) are
+ * composed by stacking {@link BehaviorMiddleware} instances around the base behavior
+ * <em>before</em> this actor is spawned:
+ *
+ * <pre>{@code
+ * Pid pid = system.statefulActorOf(MyHandler.class, initialState)
+ *     .withMiddleware(new LoggingMiddleware<>("order-processor"))
+ *     .withMiddleware(new MetricsMiddleware<>("order-processor"))
+ *     .withMiddleware(RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50)))
+ *     .spawn();
+ * }</pre>
+ *
+ * <p>The base behavior is assembled automatically from the {@link StatefulHandler#receive}
+ * method, wrapping its returned {@code Effect<E, State>} into a {@link LoopStep.Continue}:
+ * <pre>
+ * handler.receive(msg, state, ctx) : Effect&lt;E, State&gt;
+ *    .map(LoopStep::continue_)     : Effect&lt;E, LoopStep&lt;State&gt;&gt;
+ * </pre>
+ *
+ * <p>Handlers that need explicit lifecycle control can call
+ * {@link ActorContext#stop()} inside an effect (which produces a {@link LoopStep.Stop})
+ * or use {@link com.cajunsystems.loop.SupervisionStrategies} when building the middleware
+ * stack.
  *
  * <p>This class is not meant to be used directly by users.
  *
@@ -39,10 +73,15 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
 
     private final StatefulHandler<E, State, Message> handler;
     private final EffectRuntime rouxRuntime;
+    /** The composed behavior pipeline (base + all middleware layers). */
+    private final ActorBehavior<E, State, Message> pipeline;
+
+    // =========================================================================
+    // Constructors
+    // =========================================================================
 
     /**
-     * Creates a new StatefulHandlerActor with the specified handler, initial state, thread pool
-     * factory, and mailbox provider.  Uses default persistence.
+     * Creates a new StatefulHandlerActor with no middleware.
      */
     public StatefulHandlerActor(
             ActorSystem system,
@@ -53,14 +92,34 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
             ResizableMailboxConfig mailboxConfig,
             ThreadPoolFactory threadPoolFactory,
             MailboxProvider<Message> mailboxProvider) {
-        super(system, actorId, initialState, backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
-        this.handler = handler;
-        this.rouxRuntime = CajunEffectRuntime.forSystem(system);
+        this(system, actorId, handler, initialState, backpressureConfig, mailboxConfig,
+             threadPoolFactory, mailboxProvider, List.of());
     }
 
     /**
-     * Creates a new StatefulHandlerActor with the specified handler, initial state, persistence
-     * components, thread pool factory, and mailbox provider.
+     * Creates a new StatefulHandlerActor with a middleware stack.
+     *
+     * @param middlewares ordered list of middlewares applied outermost-last;
+     *                    the last middleware in the list wraps the pipeline outermost
+     */
+    public StatefulHandlerActor(
+            ActorSystem system,
+            String actorId,
+            StatefulHandler<E, State, Message> handler,
+            State initialState,
+            BackpressureConfig backpressureConfig,
+            ResizableMailboxConfig mailboxConfig,
+            ThreadPoolFactory threadPoolFactory,
+            MailboxProvider<Message> mailboxProvider,
+            List<BehaviorMiddleware<E, State, Message>> middlewares) {
+        super(system, actorId, initialState, backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
+        this.handler = handler;
+        this.rouxRuntime = CajunEffectRuntime.forSystem(system);
+        this.pipeline = buildPipeline(middlewares);
+    }
+
+    /**
+     * Creates a new StatefulHandlerActor with persistence and no middleware.
      */
     public StatefulHandlerActor(
             ActorSystem system,
@@ -73,34 +132,111 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
             ResizableMailboxConfig mailboxConfig,
             ThreadPoolFactory threadPoolFactory,
             MailboxProvider<Message> mailboxProvider) {
-        super(system, actorId, initialState, messageJournal, snapshotStore, backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
-        this.handler = handler;
-        this.rouxRuntime = CajunEffectRuntime.forSystem(system);
+        this(system, actorId, handler, initialState, messageJournal, snapshotStore,
+             backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider, List.of());
     }
 
     /**
-     * Processes a message by:
-     * <ol>
-     *   <li>Calling {@code handler.receive()} to obtain a Roux {@link Effect}</li>
-     *   <li>Running the effect synchronously via {@link EffectRuntime#unsafeRun(Effect)}</li>
-     *   <li>Returning the resulting state value</li>
-     * </ol>
+     * Creates a new StatefulHandlerActor with persistence and a middleware stack.
      *
-     * <p>If the effect fails, the exception is thrown and propagated to
-     * {@link StatefulActor}'s error handling machinery, which in turn calls
-     * {@link #onError(Object, Throwable)}.
+     * @param middlewares ordered list of middlewares applied outermost-last
+     */
+    public StatefulHandlerActor(
+            ActorSystem system,
+            String actorId,
+            StatefulHandler<E, State, Message> handler,
+            State initialState,
+            BatchedMessageJournal<Message> messageJournal,
+            SnapshotStore<State> snapshotStore,
+            BackpressureConfig backpressureConfig,
+            ResizableMailboxConfig mailboxConfig,
+            ThreadPoolFactory threadPoolFactory,
+            MailboxProvider<Message> mailboxProvider,
+            List<BehaviorMiddleware<E, State, Message>> middlewares) {
+        super(system, actorId, initialState, messageJournal, snapshotStore,
+              backpressureConfig, mailboxConfig, threadPoolFactory, mailboxProvider);
+        this.handler = handler;
+        this.rouxRuntime = CajunEffectRuntime.forSystem(system);
+        this.pipeline = buildPipeline(middlewares);
+    }
+
+    // =========================================================================
+    // Pipeline assembly
+    // =========================================================================
+
+    /**
+     * Assembles the base behavior and wraps it with all middlewares.
+     *
+     * <p>The base behavior maps {@code handler.receive()} (which returns
+     * {@code Effect<E, State>}) to {@code Effect<E, LoopStep.Continue<State>>}.
+     * Middlewares are applied in list order, so the first middleware in the list
+     * is the innermost wrapper and the last is the outermost.
+     */
+    private ActorBehavior<E, State, Message> buildPipeline(
+            List<BehaviorMiddleware<E, State, Message>> middlewares) {
+        // Base behavior: delegate to handler and wrap the resulting state in Continue
+        ActorBehavior<E, State, Message> base =
+            (msg, state, ctx) -> handler.receive(msg, state, ctx).map(LoopStep::continue_);
+
+        // Apply middlewares in order (first = innermost, last = outermost)
+        ActorBehavior<E, State, Message> current = base;
+        for (BehaviorMiddleware<E, State, Message> mw : middlewares) {
+            current = mw.wrap(current);
+        }
+        return current;
+    }
+
+    // =========================================================================
+    // Core message processing
+    // =========================================================================
+
+    /**
+     * Processes a message by executing the composed behavior pipeline and
+     * interpreting the resulting {@link LoopStep}.
+     *
+     * <ul>
+     *   <li>{@link LoopStep.Continue} — returns the new state; actor keeps running.</li>
+     *   <li>{@link LoopStep.Stop}     — calls {@link #stop()} and returns the final state.</li>
+     *   <li>{@link LoopStep.Restart}  — schedules a restart via {@link #scheduleRestart()}
+     *                                   and returns the restart state.</li>
+     * </ul>
+     *
+     * <p>If the effect fails (the error propagates past all middleware), the exception
+     * is rethrown so {@link StatefulActor}'s error handling invokes {@link #onError}.
      */
     @Override
     protected State processMessage(State currentState, Message message) {
         ActorContext context = new StatefulActorContext(this);
-        Effect<E, State> effect = handler.receive(message, currentState, context);
+        Effect<E, LoopStep<State>> stepEffect = pipeline.step(message, currentState, context);
         try {
-            return rouxRuntime.unsafeRun(effect);
+            LoopStep<State> step = rouxRuntime.unsafeRun(stepEffect);
+            return applyLoopStep(step);
         } catch (Throwable t) {
             // Rethrow so StatefulActor's error handling invokes onError()
             throw new RuntimeException("Effect execution failed for actor " + getActorId(), t);
         }
     }
+
+    /**
+     * Applies a {@link LoopStep} to the actor lifecycle and returns the new state.
+     */
+    private State applyLoopStep(LoopStep<State> step) {
+        return switch (step) {
+            case LoopStep.Continue<State> c -> c.state();
+            case LoopStep.Stop<State>     s -> {
+                stop();
+                yield s.state();
+            }
+            case LoopStep.Restart<State>  r -> {
+                scheduleRestart();
+                yield r.state();
+            }
+        };
+    }
+
+    // =========================================================================
+    // Lifecycle hooks
+    // =========================================================================
 
     @Override
     protected void preStart() {
