@@ -61,6 +61,7 @@
 - [Cluster Mode (Distributed Actors)](#cluster-mode)
 
 ### Reference
+- [Roux Effect API Reference](docs/roux_effect_reference.md) — complete `Effect<E, A>` cheat-sheet and examples
 - [Performance Benchmarks](#benchmarks)
   - [Persistence Benchmarks](#persistence-benchmarks)
 - [Running Examples](#running-examples)
@@ -944,6 +945,11 @@ The `StatefulHandler` interface provides lifecycle methods:
 - `preStart(State state, ActorContext context)`: Called when the actor starts, returns the initial state
 - `postStop(State state, ActorContext context)`: Called when the actor stops
 - `onError(Message message, State state, Throwable exception, ActorContext context)`: Called when message processing fails
+
+> **Roux Effect API reference**: For the full `Effect<E, A>` API — factory methods, `map`,
+> `flatMap`, `catchAll`, `tap`, retry, concurrency, and more — see
+> [docs/roux_effect_reference.md](docs/roux_effect_reference.md) and the
+> [Roux GitHub repository](https://github.com/CajunSystems/roux).
 
 ### Functional Actors with Effects
 
@@ -2706,7 +2712,7 @@ system.statefulActorOf(MyHandler.class, initial)
 > `DefaultEffectRuntime.create().unsafeRun(pipeline.step(msg, state, ctx))`.
 > See `BehaviorMiddlewareTest` and `SupervisionStrategiesTest` for examples.
 
-**Full guide**: [docs/behavior_middleware_guide.md](docs/behavior_middleware_guide.md)
+**Full guide**: [docs/behavior_middleware_guide.md](docs/behavior_middleware_guide.md) | **Roux Effect API**: [docs/roux_effect_reference.md](docs/roux_effect_reference.md)
 
 ---
 
