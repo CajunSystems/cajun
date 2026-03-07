@@ -600,7 +600,7 @@ Effect<Integer, Increment, Void> newStyle =
 
 ```java
 Effect<State, Message, Result> effect = ...;
-StatefulHandler<State, Message> handler = 
+StatefulHandler<RuntimeException, State, Message> handler =
     EffectConversions.toStatefulHandler(effect);
 ```
 

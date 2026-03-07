@@ -607,11 +607,11 @@ public class FunctionalActorBuilder<State, Message, Result> {
     
     public Pid spawn() {
         // Convert Effect to StatefulHandler
-        StatefulHandler<State, Message> handler = new StatefulHandler<>() {
+        StatefulHandler<RuntimeException, State, Message> handler = new StatefulHandler<>() {
             @Override
-            public State receive(Message message, State state, ActorContext context) {
+            public Effect<RuntimeException, State> receive(Message message, State state, ActorContext context) {
                 EffectResult<State, Result> result = effect.run(state, message, context);
-                return result.state();
+                return Effect.succeed(result.state());
             }
         };
         

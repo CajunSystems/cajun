@@ -432,21 +432,21 @@ actorPid.tell(new HelloMessage());
 
 ### Stateful Actors with StatefulHandler Interface
 
-For actors that need to maintain and persist state, implement the `StatefulHandler<State, Message>` interface:
+For actors that need to maintain and persist state, implement the `StatefulHandler<E, State, Message>` interface:
 
 ```java
-public class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
-    
+public class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
+
     @Override
-    public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+    public Effect<RuntimeException, Integer> receive(CounterMessage message, Integer state, ActorContext context) {
         return switch (message) {
-            case Increment ignored -> state + 1;
-            case Decrement ignored -> state - 1;
-            case Reset ignored -> 0;
-            case GetCount gc -> {
+            case Increment ignored -> Effect.succeed(state + 1);
+            case Decrement ignored -> Effect.succeed(state - 1);
+            case Reset ignored -> Effect.succeed(0);
+            case GetCount gc -> Effect.suspend(() -> {
                 context.tell(gc.replyTo(), new CountResult(state));
-                yield state; // Return unchanged state
-            }
+                return state; // Return unchanged state
+            });
         };
     }
     
@@ -1887,17 +1887,18 @@ Stateful actors can persist their state to disk or other storage backends. This 
 
 ```java
 // Define a stateful handler for the counter
-public class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+public class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
     @Override
-    public Integer processMessage(Integer count, CounterMessage message) {
+    public Effect<RuntimeException, Integer> receive(Integer count, CounterMessage message, ActorContext ctx) {
         if (message instanceof IncrementMessage) {
-            return count + 1;
+            return Effect.succeed(count + 1);
         } else if (message instanceof GetCountMessage getCountMsg) {
-            // Send the current count back to the sender
-            getCountMsg.getSender().tell(count);
-            return count;
+            return Effect.suspend(() -> {
+                getCountMsg.getSender().tell(count);
+                return count;
+            });
         }
-        return count;
+        return Effect.succeed(count);
     }
 }
 
@@ -1923,11 +1924,11 @@ Cajun supports message persistence and replay for stateful actors using a Write-
 
 ```java
 // Define a stateful handler with custom persistence (legacy approach)
-public class MyStatefulHandler implements StatefulHandler<MyState, MyMessage> {
+public class MyStatefulHandler implements StatefulHandler<RuntimeException, MyState, MyMessage> {
     @Override
-    public MyState processMessage(MyState state, MyMessage message) {
-        // Process the message and return the new state
-        return newState;
+    public Effect<RuntimeException, MyState> receive(MyMessage message, MyState state, ActorContext ctx) {
+        // Process the message and return the new state wrapped in an effect
+        return Effect.succeed(newState);
     }
 }
 
@@ -1956,11 +1957,11 @@ ActorSystemPersistenceHelper.persistence(actorSystem)
 
 // Create stateful actors using the handler pattern with the configured provider
 // No need to specify persistence components explicitly
-public class MyStatefulHandler implements StatefulHandler<MyState, MyMessage> {
+public class MyStatefulHandler implements StatefulHandler<RuntimeException, MyState, MyMessage> {
     @Override
-    public MyState processMessage(MyState state, MyMessage message) {
-        // Process the message and return the new state
-        return newState;
+    public Effect<RuntimeException, MyState> receive(MyMessage message, MyState state, ActorContext ctx) {
+        // Process the message and return the new state wrapped in an effect
+        return Effect.succeed(newState);
     }
 }
 
