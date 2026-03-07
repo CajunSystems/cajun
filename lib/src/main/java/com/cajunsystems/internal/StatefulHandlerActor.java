@@ -15,7 +15,6 @@ import com.cajunsystems.loop.LoopStep;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.roux.Effect;
-import com.cajunsystems.roux.EffectRuntime;
 import org.slf4j.Logger;
 
 import java.util.List;
@@ -72,7 +71,7 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
         extends StatefulActor<State, Message> {
 
     private final StatefulHandler<E, State, Message> handler;
-    private final EffectRuntime rouxRuntime;
+    private final CajunEffectRuntime rouxRuntime;
     /** The composed behavior pipeline (base + all middleware layers). */
     private final ActorBehavior<E, State, Message> pipeline;
 
@@ -211,10 +210,26 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
         try {
             LoopStep<State> step = rouxRuntime.unsafeRun(stepEffect);
             return applyLoopStep(step);
+        } catch (RuntimeException t) {
+            // Rethrow as-is so onError() receives the original exception type
+            throw t;
+        } catch (Error t) {
+            throw t;
         } catch (Throwable t) {
-            // Rethrow so StatefulActor's error handling invokes onError()
-            throw new RuntimeException("Effect execution failed for actor " + getActorId(), t);
+            // E is a checked exception — use sneaky throw to preserve the original type
+            // so that handler.onError() implementations can inspect it without unwrapping
+            throw sneakyThrow(t);
         }
+    }
+
+    /**
+     * Rethrows {@code t} without wrapping, bypassing the checked-exception compiler check.
+     * This preserves the original exception type so {@code handler.onError()} receives exactly
+     * the exception that the Effect produced.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> RuntimeException sneakyThrow(Throwable t) throws T {
+        throw (T) t;
     }
 
     /**
@@ -249,6 +264,7 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
     protected void postStop() {
         ActorContext context = new StatefulActorContext(this);
         handler.postStop(getState(), context);
+        rouxRuntime.close();
         super.postStop();
     }
 

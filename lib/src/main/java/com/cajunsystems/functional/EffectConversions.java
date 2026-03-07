@@ -3,7 +3,6 @@ package com.cajunsystems.functional;
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.functional.internal.Trampoline;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.EffectRuntime;
 import com.cajunsystems.roux.runtime.DefaultEffectRuntime;
 
 import java.util.function.BiConsumer;
@@ -176,9 +175,10 @@ public final class EffectConversions {
             try {
                 com.cajunsystems.roux.Effect<EH, State> rouxEffect =
                         handler.receive((Message) message, state, context);
-                EffectRuntime runtime = DefaultEffectRuntime.create();
-                State newState = runtime.unsafeRun(rouxEffect);
-                return Trampoline.done(EffectResult.noResult(newState));
+                try (DefaultEffectRuntime runtime = DefaultEffectRuntime.create()) {
+                    State newState = runtime.unsafeRun(rouxEffect);
+                    return Trampoline.done(EffectResult.noResult(newState));
+                }
             } catch (Throwable t) {
                 return Trampoline.done(EffectResult.failure(state, t));
             }
