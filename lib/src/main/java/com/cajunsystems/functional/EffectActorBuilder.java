@@ -7,27 +7,19 @@ import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 
 /**
- * Builder for creating actors based on the Effect monad.
- * Provides a fluent API for configuring and spawning effect-based actors.
- * 
- * <p>Example usage:
- * <pre>{@code
- * Effect<Integer, CounterMsg, Void> counterEffect = Effect.match()
- *     .when(Increment.class, (state, msg, ctx) -> 
- *         Effect.modify(s -> s + msg.amount()))
- *     .when(GetCount.class, (state, msg, ctx) ->
- *         Effect.tell(msg.replyTo(), state))
- *     .build();
- * 
- * Pid counter = system.effectActorOf(counterEffect, 0)
- *     .withId("counter")
- *     .spawn();
- * }</pre>
- * 
+ * Builder for creating actors based on the old internal Effect monad.
+ *
  * @param <State> The type of the actor's state
  * @param <Message> The type of messages the actor processes
  * @param <Result> The type of result produced by the effect (typically Void)
+ *
+ * @deprecated Use {@link com.cajunsystems.builder.StatefulActorBuilder} (obtained from
+ *     {@link com.cajunsystems.ActorSystem#statefulActorOf}) with a
+ *     {@link com.cajunsystems.handler.StatefulHandler} that returns the Roux
+ *     {@link com.cajunsystems.roux.Effect Effect&lt;E, State&gt;} from its {@code receive()} method.
+ *     This class will be removed in a future release.
  */
+@Deprecated(since = "0.5.0", forRemoval = true)
 public class EffectActorBuilder<State, Message, Result> {
     
     private final ActorSystem system;

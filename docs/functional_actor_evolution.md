@@ -1,5 +1,10 @@
 # FunctionalActor Evolution: Monadic API Design
 
+> **⚠️ Historical document** — The `com.cajunsystems.functional` Effect monad discussed
+> here is **deprecated as of v0.5.0**. The evolution described below culminated in Phase 2
+> (v0.5.0): the actor loop is now a composable Roux Effect pipeline. See
+> [behavior_middleware_guide.md](behavior_middleware_guide.md) for the current design.
+
 ## Current State Analysis
 
 ### Existing Implementation

@@ -12,20 +12,15 @@ import java.util.function.Function;
 
 /**
  * Utility class for converting between different actor programming styles.
- * Provides conversions between:
- * - Traditional BiFunction state transitions
- * - Cajun's internal Effect monad (Effect&lt;State, E, Result&gt;)
- * - Roux's Effect monad (com.cajunsystems.roux.Effect&lt;E, State&gt;)
- * - StatefulHandler interface
  *
- * <p>This enables gradual migration from the old API to the new Effect-based API.
- *
- * <p><strong>Note on the two Effect types:</strong> Cajun has its own internal
- * {@link Effect Effect&lt;State, E, Result&gt;} for composing stateful computations within the
- * actor system. Roux's {@code com.cajunsystems.roux.Effect&lt;E, A&gt;} is the external contract
- * returned by {@link StatefulHandler#receive}. Where both types appear in a single method the
- * Roux type is referenced by its fully-qualified name to avoid ambiguity.
+ * @deprecated This conversion utility exists only to bridge the old internal
+ *     {@link Effect} monad to the Roux Effect. Since the old {@link Effect} is
+ *     itself deprecated and scheduled for removal, this class is deprecated as well.
+ *     Implement {@link com.cajunsystems.handler.StatefulHandler} directly and return
+ *     {@link com.cajunsystems.roux.Effect} from {@code receive()} — no conversion needed.
+ *     This class will be removed in a future release.
  */
+@Deprecated(since = "0.5.0", forRemoval = true)
 public final class EffectConversions {
 
     private EffectConversions() {

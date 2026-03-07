@@ -79,6 +79,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter. Existing constructors without middlewares delegate with `List.of()` for
   full backward compatibility.
 
+### Deprecated
+
+The **internal `com.cajunsystems.functional` Effect monad** is deprecated as of v0.5.0
+and will be removed in the next major release. The Roux `Effect<E, A>` library is now the
+sole effect API going forward.
+
+**Deprecated classes** (all annotated `@Deprecated(since = "0.5.0", forRemoval = true)`):
+
+| Class | Replacement |
+|-------|-------------|
+| `com.cajunsystems.functional.Effect<S,E,R>` | `com.cajunsystems.roux.Effect<E, A>` via `StatefulHandler.receive()` |
+| `com.cajunsystems.functional.ThrowableEffect<S,R>` | `com.cajunsystems.roux.Effect<E, A>` |
+| `com.cajunsystems.functional.EffectMatchBuilder` | Sealed interfaces + Java `switch` pattern matching |
+| `com.cajunsystems.functional.ThrowableEffectMatchBuilder` | Sealed interfaces + Java `switch` pattern matching |
+| `com.cajunsystems.functional.EffectResult<State,Result>` | `com.cajunsystems.roux.Effect` result handling |
+| `com.cajunsystems.functional.EffectActorBuilder` | `com.cajunsystems.builder.StatefulActorBuilder` |
+| `com.cajunsystems.functional.ActorSystemEffectExtensions` | `ActorSystem.statefulActorOf()` |
+| `com.cajunsystems.functional.EffectConversions` | No replacement needed — implement `StatefulHandler` directly |
+| `com.cajunsystems.functional.internal.Trampoline` | Internal Roux runtime (no public replacement) |
+
+**Migration example:**
+
+```java
+// BEFORE (deprecated com.cajunsystems.functional.Effect)
+Effect<BankState, String, Void> behavior =
+    Effect.<BankState, String, Void, BankMsg>match()
+        .when(Deposit.class,  (state, msg, ctx) -> Effect.modify(s -> s.deposit(msg.amount())))
+        .when(Withdraw.class, (state, msg, ctx) -> Effect.modify(s -> s.withdraw(msg.amount())))
+        .build();
+
+Pid bank = ActorSystemEffectExtensions.fromEffect(system, behavior, initialState)
+    .withId("bank")
+    .spawn();
+
+// AFTER (current API — Roux Effect via StatefulHandler)
+public class BankHandler implements StatefulHandler<RuntimeException, BankState, BankMsg> {
+    @Override
+    public Effect<RuntimeException, BankState> receive(BankMsg msg, BankState state, ActorContext ctx) {
+        return switch (msg) {
+            case Deposit d  -> Effect.succeed(state.deposit(d.amount()));
+            case Withdraw w -> Effect.succeed(state.withdraw(w.amount()));
+        };
+    }
+}
+
+Pid bank = system.statefulActorOf(new BankHandler(), BankState.empty())
+    .withId("bank")
+    .spawn();
+```
+
+Note: `com.cajunsystems.functional.CajunEffectRuntime` is **not** deprecated — it is the
+internal Roux Effect runtime adapter used by `StatefulHandlerActor`.
+
 ## [0.4.0] - 2025-12-03
 
 ### Added

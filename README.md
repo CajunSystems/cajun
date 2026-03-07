@@ -947,7 +947,13 @@ The `StatefulHandler` interface provides lifecycle methods:
 
 ### Functional Actors with Effects
 
-**New in Cajun**: Build actors using composable Effects for a more functional programming style.
+> **⚠️ Deprecated since v0.5.0** — The `com.cajunsystems.functional.Effect<State, Error, Result>`
+> API documented in this section is scheduled for removal. Implement
+> `StatefulHandler<E, State, Message>` and return the Roux `Effect<E, State>` from
+> `receive()` instead. See [Behavior Pipeline & Middleware](#behavior-pipeline--middleware)
+> for the current API.
+
+**Legacy (pre-v0.5.0)**: Build actors using the internal composable Effect monad.
 
 Effects provide a powerful way to build actor behaviors by composing simple operations into complex workflows. Think of Effects as recipes that describe what your actor should do.
 

@@ -12,8 +12,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Comprehensive test suite for EffectResult.
- * Tests all result types, transformations, and utility methods.
+ * Retained to guard against regressions until the deprecated class is removed.
  */
+@SuppressWarnings("deprecation")
 @DisplayName("EffectResult Tests")
 class EffectResultTest {
     

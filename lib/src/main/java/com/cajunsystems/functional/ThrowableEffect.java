@@ -10,35 +10,17 @@ import java.util.function.Predicate;
 
 /**
  * A stack-safe, composable effect monad with built-in error handling.
- * 
- * <p>Simplified from {@link Effect} by removing the Message type parameter,
- * making it less verbose while maintaining full functionality. The Message type
- * is only specified at the {@link #match()} level where it's actually needed.
- * 
- * <p><strong>Key Differences from Effect:</strong>
- * <ul>
- * <li><strong>Less Verbose</strong> - Only 2 type parameters (State, Result) instead of 3
- * <li><strong>Stack-Safe</strong> - Uses {@link Trampoline} to prevent StackOverflowError
- * <li><strong>Built-in Error Channel</strong> - Throwable handling is part of the type
- * <li><strong>Message Type at Match</strong> - Type constraint only where needed
- * </ul>
- * 
- * <p>Example:
- * <pre>{@code
- * // Old Effect - verbose
- * Effect<BankState, BankMsg, Void> behavior = Effect.<BankState, BankMsg, Void>match()
- *     .when(Deposit.class, (state, msg, ctx) -> ...)
- *     .build();
- * 
- * // New ThrowableEffect - concise
- * ThrowableEffect<BankState, Void> behavior = ThrowableEffect.<BankState>match()
- *     .when(Deposit.class, (state, msg, ctx) -> ...)
- *     .build();
- * }</pre>
- * 
+ *
  * @param <S> The state type
  * @param <R> The result type
+ *
+ * @deprecated Use the <a href="https://github.com/CajunSystems/roux">Roux</a>
+ *     {@link com.cajunsystems.roux.Effect Effect&lt;E, A&gt;} API instead, accessed through
+ *     {@link com.cajunsystems.handler.StatefulHandler StatefulHandler&lt;E, State, Message&gt;}
+ *     and {@link com.cajunsystems.builder.StatefulActorBuilder}.
+ *     This class will be removed in a future release.
  */
+@Deprecated(since = "0.5.0", forRemoval = true)
 @FunctionalInterface
 public interface ThrowableEffect<S, R> {
     
