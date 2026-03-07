@@ -53,6 +53,10 @@
   - [ReplyingMessage Interface](#standardized-reply-pattern-with-replyingmessage)
 
 ### Advanced Features
+- [Behavior Pipeline & Middleware](#behavior-pipeline--middleware)
+  - [LoopStep — lifecycle control](#loopstep--lifecycle-control)
+  - [Built-in Middlewares](#built-in-middlewares)
+  - [Supervision Strategies (Effect-level)](#supervision-strategies-effect-level)
 - [Backpressure Management](#backpressure-support-in-actors)
 - [Cluster Mode (Distributed Actors)](#cluster-mode)
 
@@ -2589,6 +2593,116 @@ For complete benchmark details, analysis, and methodology, see:
 - [benchmarks/README.md](benchmarks/README.md) - Technical details on running benchmarks
 
 
+
+## Behavior Pipeline & Middleware
+
+Every `StatefulHandler`-based actor processes messages through a composable **behavior
+pipeline** built from Roux `Effect`s. Each step returns a `LoopStep<State>` that carries
+both the new state and a lifecycle directive.
+
+```
+message → [outermost middleware] → … → [innermost middleware] → handler.receive()
+          ←────────────────── Effect<E, LoopStep<State>> ←──────────────────────
+```
+
+### LoopStep — lifecycle control
+
+```java
+// Keep running with new state
+Effect.succeed(state + 1)               // wrapped into Continue automatically
+
+// Stop the actor (from inside a middleware or supervised behavior)
+LoopStep.stop(state)
+LoopStep.restart(initialState)
+```
+
+| `LoopStep` variant | Effect on actor |
+|--------------------|----------------|
+| `Continue<State>`  | Update state, process next message |
+| `Stop<State>`      | Update state, gracefully terminate |
+| `Restart<State>`   | Update state, restart actor (`preStart` re-runs) |
+
+### Adding Middleware to an Actor
+
+Use `withMiddleware()` on the builder. Middlewares execute outermost-first (last added =
+outermost):
+
+```java
+Pid orders = system.statefulActorOf(new OrderHandler(), OrderHandler.class, initial)
+    .withMiddleware(new LoggingMiddleware<>("orders"))      // innermost
+    .withMiddleware(new MetricsMiddleware<>("orders"))
+    .withMiddleware(RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50)))
+    .withMiddleware(new DeadLetterMiddleware<>(dlq::add))  // outermost
+    .spawn();
+```
+
+### Built-In Middlewares
+
+| Middleware | Purpose |
+|-----------|---------|
+| `LoggingMiddleware` | SLF4J `RECV / DONE / ERROR` structured log per step |
+| `MetricsMiddleware` | In-process counters (`processedCount`, `errorCount`, `stopCount`, etc.) + optional external sink |
+| `RetryMiddleware` | Retry failed effects with optional backoff and per-error predicate |
+| `DeadLetterMiddleware` | Capture failed messages to a consumer, actor, or logger |
+
+```java
+// Logging — by actor name or Logger instance
+new LoggingMiddleware<>("payment-processor")
+
+// Metrics — access counters via handle()
+var metrics = new MetricsMiddleware<Exception, OrderState, OrderMsg>("orders");
+metrics.handle().processedCount();
+metrics.handle().averageLatencyNanos();
+
+// Retry with exponential backoff
+RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50))
+
+// Retry only certain errors
+RetryMiddleware.withPredicate(3, err -> err instanceof java.io.IOException)
+
+// Dead-letter — forward to a list, an actor Pid, or SLF4J
+new DeadLetterMiddleware<>(captured::add)
+new DeadLetterMiddleware<>(DeadLetterMiddleware.toLogger())
+```
+
+### Supervision Strategies (Effect-level)
+
+`SupervisionStrategies` provides functional supervision that intercepts `Effect` failures
+and maps them to `LoopStep` directives — without propagating the raw exception:
+
+```java
+// Resume: swallow error, continue with current state
+SupervisionStrategies.withResume(baseBehavior)
+
+// Restart: swallow error, restart with initial state
+SupervisionStrategies.withRestart(baseBehavior, initialState)
+
+// Stop: swallow error, stop actor
+SupervisionStrategies.withStop(baseBehavior)
+
+// Per-exception decision
+SupervisionStrategies.withDecision(baseBehavior, (err, state) ->
+    err instanceof TransientException
+        ? LoopStep.restart(initialState)
+        : LoopStep.stop(state));
+```
+
+Use `withDecision` as middleware on the builder:
+
+```java
+system.statefulActorOf(MyHandler.class, initial)
+    .withMiddleware(next -> SupervisionStrategies.withDecision(next, (err, state) ->
+        err instanceof IOException ? LoopStep.restart(initial) : LoopStep.stop(state)))
+    .spawn();
+```
+
+> **Tip**: Middlewares can be unit-tested without an `ActorSystem` using
+> `DefaultEffectRuntime.create().unsafeRun(pipeline.step(msg, state, ctx))`.
+> See `BehaviorMiddlewareTest` and `SupervisionStrategiesTest` for examples.
+
+**Full guide**: [docs/behavior_middleware_guide.md](docs/behavior_middleware_guide.md)
+
+---
 
 ## Feature Roadmap
 

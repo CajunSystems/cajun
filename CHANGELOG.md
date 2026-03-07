@@ -5,6 +5,80 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-07
+
+### Added
+
+- **Phase 2: Actor Loop as a Roux Effect — Behavior Pipeline & Middleware**
+  - **`LoopStep<State>` sealed interface** (`com.cajunsystems.loop`): Replaces raw state
+    returns with an explicit lifecycle directive carried alongside the new state.
+    - `Continue<State>` — update state, keep running
+    - `Stop<State>`    — update state, gracefully stop the actor
+    - `Restart<State>` — update state, restart the actor (`preStart` re-runs)
+    - Factory helpers: `LoopStep.continue_(state)`, `LoopStep.stop(state)`, `LoopStep.restart(initialState)`
+    - Predicates: `isContinue()`, `isStop()`, `isRestart()`
+
+  - **`ActorBehavior<E, State, Message>` functional interface**: Describes one
+    message-processing step as `Effect<E, LoopStep<State>>`. Composable via
+    `withMiddleware(BehaviorMiddleware)` default method.
+
+  - **`BehaviorMiddleware<E, State, Message>` functional interface**: Decorator that
+    wraps an `ActorBehavior` with cross-cutting concerns. Stackable — middlewares are
+    applied in addition order, innermost first (last added = outermost execution).
+
+  - **`SupervisionStrategies` static helpers**: Functional supervision at the Effect
+    level, composable as middleware or direct wrappers.
+    - `withResume(behavior)` — swallow error, `Continue` with current state
+    - `withRestart(behavior, initialState)` — swallow error, `Restart` with initial state
+    - `withStop(behavior)` — swallow error, `Stop` with current state
+    - `withDecision(behavior, BiFunction<E,State,LoopStep<State>>)` — per-exception routing
+
+  - **Four built-in `BehaviorMiddleware` implementations** (`com.cajunsystems.loop.middleware`):
+    - **`LoggingMiddleware`**: SLF4J `RECV / DONE / ERROR` structured log per step.
+      Constructors accept either an actor name (auto-creates logger) or an `org.slf4j.Logger`.
+    - **`MetricsMiddleware`**: In-process counters (`processedCount`, `errorCount`,
+      `stopCount`, `restartCount`, `totalNanos`, `averageLatencyNanos()`) plus an
+      optional `Consumer<StepEvent>` sink for external export.
+    - **`RetryMiddleware`**: Recursive Roux-effect retry with configurable max attempts,
+      exponential backoff (`withExponentialBackoff(n, initialDelay)`), and per-error
+      predicate (`withPredicate(n, predicate)`). Thread.sleep on virtual threads — no
+      platform thread blocking.
+    - **`DeadLetterMiddleware`**: Taps `Effect` failures and forwards `DeadLetter`
+      records (actorId, message, error, timestamp) to a `Consumer`, a `Pid` actor, or
+      SLF4J. Error is not swallowed — it continues to propagate.
+
+  - **`StatefulActorBuilder.withMiddleware(BehaviorMiddleware)`**: Fluent builder method
+    to attach middleware to a stateful actor before spawning.
+
+  - **`StatefulActor.scheduleRestart()`** (protected): Exposes the package-private
+    restart machinery to subclasses in external packages (used by `StatefulHandlerActor`
+    to implement `LoopStep.Restart`).
+
+  - **`StatefulHandlerActor` pipeline integration**: The base behavior is automatically
+    assembled from `handler.receive(msg, state, ctx).map(LoopStep::continue_)`. The
+    effect runtime (`CajunEffectRuntime`) interprets `LoopStep` variants after each step
+    to drive `Continue`, `Stop`, or `Restart` on the actor lifecycle.
+
+- **Documentation**: Added `docs/behavior_middleware_guide.md`
+  - Full reference for `LoopStep`, `ActorBehavior`, `BehaviorMiddleware`
+  - API docs for all four built-in middlewares with usage examples
+  - `SupervisionStrategies` cookbook with per-exception decision example
+  - End-to-end example with full middleware stack
+  - Testing guide using `DefaultEffectRuntime` (no ActorSystem needed)
+  - Comparison table: Effect-level supervision vs. legacy `SupervisionStrategy` enum
+
+### Changed
+
+- **`StatefulHandlerActor.processMessage()`**: Rewired from imperative handler
+  delegation to executing the composed `ActorBehavior` pipeline via
+  `CajunEffectRuntime.unsafeRun()`, then pattern-matching on `LoopStep` to drive
+  lifecycle.
+
+- **`StatefulHandlerActor` constructors**: Both persistence and non-persistence
+  constructors now accept an optional `List<BehaviorMiddleware<E, State, Message>>`
+  parameter. Existing constructors without middlewares delegate with `List.of()` for
+  full backward compatibility.
+
 ## [0.4.0] - 2025-12-03
 
 ### Added
