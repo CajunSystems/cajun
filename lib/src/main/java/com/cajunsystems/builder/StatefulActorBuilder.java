@@ -18,15 +18,16 @@ import java.util.UUID;
 
 /**
  * Builder for creating stateful actors with a fluent API.
- * 
- * @param <State> The type of the actor's state
- * @param <Message> The type of messages this actor processes
+ *
+ * @param <E>       the error type of the handler's {@link com.cajunsystems.roux.Effect}
+ * @param <State>   the type of the actor's state
+ * @param <Message> the type of messages this actor processes
  */
-public class StatefulActorBuilder<State, Message> {
+public class StatefulActorBuilder<E extends Throwable, State, Message> {
 
     private final ActorSystem system;
-    private final StatefulHandler<State, Message> handler;
-    private final Class<? extends StatefulHandler<State, Message>> handlerClass;
+    private final StatefulHandler<E, State, Message> handler;
+    private final Class<? extends StatefulHandler<E, State, Message>> handlerClass;
     private final State initialState;
     private String id;
     private String idTemplate;
@@ -50,8 +51,8 @@ public class StatefulActorBuilder<State, Message> {
      * @param handlerClass The handler class (for ID generation)
      * @param initialState The initial state
      */
-    public StatefulActorBuilder(ActorSystem system, StatefulHandler<State, Message> handler,
-                               Class<? extends StatefulHandler<State, Message>> handlerClass,
+    public StatefulActorBuilder(ActorSystem system, StatefulHandler<E, State, Message> handler,
+                               Class<? extends StatefulHandler<E, State, Message>> handlerClass,
                                State initialState) {
         this.system = system;
         this.handler = handler;
@@ -68,7 +69,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param id The ID for the actor
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withId(String id) {
+    public StatefulActorBuilder<E, State, Message> withId(String id) {
         this.id = id;
         this.idTemplate = null;
         this.idStrategy = null;
@@ -89,7 +90,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param template The ID template with placeholders
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withIdTemplate(String template) {
+    public StatefulActorBuilder<E, State, Message> withIdTemplate(String template) {
         this.idTemplate = template;
         this.id = null;
         this.idStrategy = null;
@@ -105,7 +106,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param strategy The ID generation strategy
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withIdStrategy(IdStrategy strategy) {
+    public StatefulActorBuilder<E, State, Message> withIdStrategy(IdStrategy strategy) {
         this.idStrategy = strategy;
         this.id = null;
         this.idTemplate = null;
@@ -118,7 +119,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param backpressureConfig The backpressure configuration
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withBackpressureConfig(BackpressureConfig backpressureConfig) {
+    public StatefulActorBuilder<E, State, Message> withBackpressureConfig(BackpressureConfig backpressureConfig) {
         this.backpressureConfig = backpressureConfig;
         return this;
     }
@@ -129,7 +130,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param mailboxConfig The mailbox configuration
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withMailboxConfig(ResizableMailboxConfig mailboxConfig) {
+    public StatefulActorBuilder<E, State, Message> withMailboxConfig(ResizableMailboxConfig mailboxConfig) {
         this.mailboxConfig = mailboxConfig;
         return this;
     }
@@ -140,7 +141,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param parent The parent actor
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withParent(Actor<?> parent) {
+    public StatefulActorBuilder<E, State, Message> withParent(Actor<?> parent) {
         this.parent = parent;
         return this;
     }
@@ -152,7 +153,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param snapshotStore The snapshot store to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withPersistence(
+    public StatefulActorBuilder<E, State, Message> withPersistence(
             BatchedMessageJournal<Message> messageJournal,
             SnapshotStore<State> snapshotStore) {
         this.messageJournal = messageJournal;
@@ -167,7 +168,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param strategy The supervision strategy to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withSupervisionStrategy(SupervisionStrategy strategy) {
+    public StatefulActorBuilder<E, State, Message> withSupervisionStrategy(SupervisionStrategy strategy) {
         this.supervisionStrategy = strategy;
         return this;
     }
@@ -179,7 +180,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param threadPoolFactory The thread pool factory to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withThreadPoolFactory(ThreadPoolFactory threadPoolFactory) {
+    public StatefulActorBuilder<E, State, Message> withThreadPoolFactory(ThreadPoolFactory threadPoolFactory) {
         this.threadPoolFactory = threadPoolFactory;
         return this;
     }
@@ -191,7 +192,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param mailboxProvider The mailbox provider to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withMailboxProvider(MailboxProvider<Message> mailboxProvider) {
+    public StatefulActorBuilder<E, State, Message> withMailboxProvider(MailboxProvider<Message> mailboxProvider) {
         this.mailboxProvider = mailboxProvider;
         return this;
     }
@@ -203,7 +204,7 @@ public class StatefulActorBuilder<State, Message> {
      * @param truncationConfig The truncation configuration to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<State, Message> withPersistenceTruncation(PersistenceTruncationConfig truncationConfig) {
+    public StatefulActorBuilder<E, State, Message> withPersistenceTruncation(PersistenceTruncationConfig truncationConfig) {
         this.truncationConfig = truncationConfig;
         return this;
     }
@@ -217,7 +218,7 @@ public class StatefulActorBuilder<State, Message> {
         // Generate final ID based on priority
         String finalId = generateActorId();
 
-        StatefulHandlerActor<State, Message> actor;
+        StatefulHandlerActor<E, State, Message> actor;
 
         ThreadPoolFactory tpfToUse = (this.threadPoolFactory != null)
                                        ? this.threadPoolFactory

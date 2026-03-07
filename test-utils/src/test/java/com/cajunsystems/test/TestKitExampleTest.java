@@ -4,6 +4,7 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.roux.Effect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -39,18 +40,18 @@ class TestKitExampleTest {
     }
     
     // Stateful counter handler
-    public static class CounterHandler implements StatefulHandler<Integer, Object> {
+    public static class CounterHandler implements StatefulHandler<RuntimeException, Integer, Object> {
         @Override
-        public Integer receive(Object message, Integer state, ActorContext context) {
+        public Effect<RuntimeException, Integer> receive(Object message, Integer state, ActorContext context) {
             if (message instanceof Increment inc) {
-                return state + inc.amount();
+                return Effect.succeed(state + inc.amount());
             } else if (message instanceof Decrement dec) {
-                return state - dec.amount();
+                return Effect.succeed(state - dec.amount());
             } else if (message instanceof GetCount gc) {
                 context.tell(gc.replyTo(), new CountResponse(state));
-                return state;
+                return Effect.succeed(state);
             }
-            return state;
+            return Effect.succeed(state);
         }
     }
     

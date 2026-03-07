@@ -17,6 +17,7 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.SupervisionStrategy;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.roux.Effect;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.OperationAwareMessage;
 import com.cajunsystems.persistence.SnapshotStore;
@@ -417,44 +418,44 @@ public class StatefulActorExample {
     /**
      * Handler implementation for the counter actor using the new interface-based approach.
      */
-    public static class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+    public static class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
         private static final Logger logger = LoggerFactory.getLogger(CounterHandler.class);
-        
+
         @Override
-        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+        public Effect<RuntimeException, Integer> receive(CounterMessage message, Integer state, ActorContext context) {
             // Handle null state (could happen during recovery)
             if (state == null) {
                 state = 0;
             }
-            
+
             try {
                 if (message instanceof CounterMessage.Increment increment) {
-                    return state + increment.amount();
+                    return Effect.succeed(state + increment.amount());
                 } else if (message instanceof CounterMessage.Reset) {
-                    return 0;
+                    return Effect.succeed(0);
                 } else if (message instanceof CounterMessage.GetCount getCount) {
                     getCount.callback().accept(state);
                 } else if (message instanceof CounterMessage.ThrowError) {
                     throw new RuntimeException("Intentional error for demonstration");
                 }
-                return state;
+                return Effect.succeed(state);
             } catch (Exception e) {
                 // This will be caught by the actor framework and passed to onError
                 throw e;
             }
         }
-        
+
         @Override
         public Integer preStart(Integer state, ActorContext context) {
             logger.debug("CounterHandler for actor {} starting", context.getActorId());
             return state;
         }
-        
+
         @Override
         public void postStop(Integer state, ActorContext context) {
             logger.debug("CounterHandler for actor {} stopping", context.getActorId());
         }
-        
+
         @Override
         public boolean onError(CounterMessage message, Integer state, Throwable exception, ActorContext context) {
             logger.error("Error in CounterHandler for actor {}: {}", context.getActorId(), exception.getMessage());
@@ -466,43 +467,43 @@ public class StatefulActorExample {
      * A specialized counter handler that multiplies the increment amount by a factor.
      * Used for the actor chain example.
      */
-    public static class CounterHandlerMultiplier implements StatefulHandler<Integer, CounterMessage> {
+    public static class CounterHandlerMultiplier implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
         private static final Logger logger = LoggerFactory.getLogger(CounterHandlerMultiplier.class);
         private final int multiplier;
         private Pid nextActor;
-        
+
         public CounterHandlerMultiplier(int multiplier) {
             this.multiplier = multiplier;
         }
-        
+
         public void setNextActor(Pid nextActor) {
             this.nextActor = nextActor;
         }
-        
+
         @Override
-        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+        public Effect<RuntimeException, Integer> receive(CounterMessage message, Integer state, ActorContext context) {
             // Handle null state (could happen during recovery)
             if (state == null) {
                 state = 0;
             }
-            
+
             try {
                 if (message instanceof CounterMessage.Increment increment) {
                     logger.info("Actor {} incrementing by {}", context.getActorId(), increment.amount() * multiplier);
                     Integer newState = state + (increment.amount() * multiplier);
-                    
+
                     // Forward the message to the next actor in the chain if set
                     if (nextActor != null) {
                         context.tell(nextActor, message);
                     }
-                    
-                    return newState;
+
+                    return Effect.succeed(newState);
                 } else if (message instanceof CounterMessage.Reset) {
-                    return 0;
+                    return Effect.succeed(0);
                 } else if (message instanceof CounterMessage.GetCount getCount) {
                     getCount.callback().accept(state);
                 }
-                return state;
+                return Effect.succeed(state);
             } catch (Exception e) {
                 throw e;
             }
@@ -512,44 +513,44 @@ public class StatefulActorExample {
     /**
      * A counter handler that intentionally throws an error for testing error handling.
      */
-    public static class ErrorProneCounterHandler implements StatefulHandler<Integer, CounterMessage> {
+    public static class ErrorProneCounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
         private static final Logger logger = LoggerFactory.getLogger(ErrorProneCounterHandler.class);
-        
+
         @Override
-        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+        public Effect<RuntimeException, Integer> receive(CounterMessage message, Integer state, ActorContext context) {
             // Handle null state (could happen during recovery)
             if (state == null) {
                 state = 0;
             }
-            
+
             try {
                 if (message instanceof CounterMessage.Increment increment) {
-                    return state + increment.amount();
+                    return Effect.succeed(state + increment.amount());
                 } else if (message instanceof CounterMessage.Reset) {
-                    return 0;
+                    return Effect.succeed(0);
                 } else if (message instanceof CounterMessage.GetCount getCount) {
                     getCount.callback().accept(state);
                 } else if (message instanceof CounterMessage.ThrowError) {
                     throw new RuntimeException("Intentional error for demonstration");
                 }
-                return state;
+                return Effect.succeed(state);
             } catch (Exception e) {
                 // This will be caught by the actor framework and passed to onError
                 throw e;
             }
         }
-        
+
         @Override
         public Integer preStart(Integer state, ActorContext context) {
             logger.debug("ErrorProneCounterHandler for actor {} starting", context.getActorId());
             return state;
         }
-        
+
         @Override
         public void postStop(Integer state, ActorContext context) {
             logger.debug("ErrorProneCounterHandler for actor {} stopping", context.getActorId());
         }
-        
+
         @Override
         public boolean onError(CounterMessage message, Integer state, Throwable exception, ActorContext context) {
             logger.error("Error in ErrorProneCounterHandler for actor {}: {}", context.getActorId(), exception.getMessage());

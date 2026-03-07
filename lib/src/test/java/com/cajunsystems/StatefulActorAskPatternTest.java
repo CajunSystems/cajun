@@ -1,6 +1,7 @@
 package com.cajunsystems;
 
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.roux.Effect;
 import com.cajunsystems.test.AsyncAssertion;
 import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.AfterEach;
@@ -59,11 +60,11 @@ public class StatefulActorAskPatternTest {
     /**
      * KVStore handler that uses getSender() to reply to Get requests
      */
-    static class KVStoreHandler implements StatefulHandler<Map<String, String>, KVCommand> {
+    static class KVStoreHandler implements StatefulHandler<RuntimeException, Map<String, String>, KVCommand> {
         private static final AtomicInteger processedMessages = new AtomicInteger(0);
 
         @Override
-        public Map<String, String> receive(KVCommand command, Map<String, String> state, ActorContext context) {
+        public Effect<RuntimeException, Map<String, String>> receive(KVCommand command, Map<String, String> state, ActorContext context) {
             switch (command) {
                 case KVCommand.Put put -> {
                     state.put(put.key(), put.value());
@@ -89,7 +90,7 @@ public class StatefulActorAskPatternTest {
                     processedMessages.incrementAndGet();
                 }
             }
-            return state;
+            return Effect.succeed(state);
         }
 
         public static void resetCounter() {

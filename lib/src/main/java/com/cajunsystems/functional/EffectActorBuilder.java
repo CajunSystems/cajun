@@ -124,20 +124,19 @@ public class EffectActorBuilder<State, Message, Result> {
      * Spawns a StatefulActor with persistence enabled.
      */
     private Pid spawnStatefulActor() {
-        StatefulHandler<State, Message> handler = new StatefulHandler<State, Message>() {
+        StatefulHandler<RuntimeException, State, Message> handler = new StatefulHandler<RuntimeException, State, Message>() {
             @Override
-            public State receive(Message message, State state, ActorContext context) {
+            public com.cajunsystems.roux.Effect<RuntimeException, State> receive(Message message, State state, ActorContext context) {
                 EffectResult<State, Result> result = effect.run(state, message, context);
-                
+
                 // Log failures
                 if (result.isFailure()) {
-                    result.error().ifPresent(error -> 
-                        context.getLogger().error("Effect execution failed", error)
-                    );
+                    result.error().ifPresent(error ->
+                            context.getLogger().error("Effect execution failed", error));
                 }
-                
-                // Return the new state
-                return result.state();
+
+                // Wrap the resulting state in a Roux Effect
+                return com.cajunsystems.roux.Effect.succeed(result.state());
             }
         };
         

@@ -5,6 +5,7 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.roux.Effect;
 import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -27,24 +28,24 @@ class StatefulActorBuilderIdTest {
     private ActorSystem system;
 
     // Test handler classes
-    public static class TestStatefulHandler implements StatefulHandler<Integer, String>, Serializable {
+    public static class TestStatefulHandler implements StatefulHandler<RuntimeException, Integer, String>, Serializable {
         @Override
-        public Integer receive(String message, Integer state, com.cajunsystems.ActorContext context) {
-            return state;
+        public Effect<RuntimeException, Integer> receive(String message, Integer state, com.cajunsystems.ActorContext context) {
+            return Effect.succeed(state);
         }
     }
 
-    public static class UserStatefulHandler implements StatefulHandler<String, String>, Serializable {
+    public static class UserStatefulHandler implements StatefulHandler<RuntimeException, String, String>, Serializable {
         @Override
-        public String receive(String message, String state, com.cajunsystems.ActorContext context) {
-            return state;
+        public Effect<RuntimeException, String> receive(String message, String state, com.cajunsystems.ActorContext context) {
+            return Effect.succeed(state);
         }
     }
 
-    public static class OrderStatefulHandler implements StatefulHandler<Integer, String>, Serializable {
+    public static class OrderStatefulHandler implements StatefulHandler<RuntimeException, Integer, String>, Serializable {
         @Override
-        public Integer receive(String message, Integer state, com.cajunsystems.ActorContext context) {
-            return state;
+        public Effect<RuntimeException, Integer> receive(String message, Integer state, com.cajunsystems.ActorContext context) {
+            return Effect.succeed(state);
         }
     }
 

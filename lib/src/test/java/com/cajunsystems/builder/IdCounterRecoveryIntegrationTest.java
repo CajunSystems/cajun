@@ -3,6 +3,7 @@ package com.cajunsystems.builder;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.roux.Effect;
 import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import com.cajunsystems.persistence.impl.FileSystemPersistenceProvider;
@@ -34,10 +35,10 @@ class IdCounterRecoveryIntegrationTest {
     private Path tempDir;
 
     // Test handlers
-    public static class TestStatefulHandler implements StatefulHandler<Integer, String> {
+    public static class TestStatefulHandler implements StatefulHandler<RuntimeException, Integer, String> {
         @Override
-        public Integer receive(String message, Integer state, com.cajunsystems.ActorContext context) {
-            return state + 1;
+        public Effect<RuntimeException, Integer> receive(String message, Integer state, com.cajunsystems.ActorContext context) {
+            return Effect.succeed(state + 1);
         }
     }
     

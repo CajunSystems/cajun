@@ -575,12 +575,12 @@ public class ActorSystem {
      * @param initialState The initial state for the actor
      * @return A builder for configuring and creating the stateful actor
      */
-    public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
-            Class<? extends StatefulHandler<State, Message>> handlerClass,
+    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> statefulActorOf(
+            Class<? extends StatefulHandler<E, State, Message>> handlerClass,
             State initialState) {
         try {
-            StatefulHandler<State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
-            return new StatefulActorBuilder<State, Message>(this, handler, handlerClass, initialState);
+            StatefulHandler<E, State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
+            return new StatefulActorBuilder<E, State, Message>(this, handler, handlerClass, initialState);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
         }
@@ -592,19 +592,20 @@ public class ActorSystem {
      * which may not work correctly for anonymous classes or lambdas. Prefer using
      * {@link #statefulActorOf(Class, Object)} when possible.
      *
-     * @param <State> The type of the actor's state
-     * @param <Message> The type of messages the actor will handle
+     * @param <E>       the error type of the handler's {@link com.cajunsystems.roux.Effect}
+     * @param <State>   the type of the actor's state
+     * @param <Message> the type of messages the actor will handle
      * @param handler The handler instance to use
      * @param initialState The initial state for the actor
      * @return A builder for configuring and creating the stateful actor
      */
     @SuppressWarnings("unchecked")
-    public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
-            StatefulHandler<State, Message> handler,
+    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> statefulActorOf(
+            StatefulHandler<E, State, Message> handler,
             State initialState) {
-        Class<? extends StatefulHandler<State, Message>> handlerClass =
-            (Class<? extends StatefulHandler<State, Message>>) handler.getClass();
-        return new StatefulActorBuilder<State, Message>(this, handler, handlerClass, initialState);
+        Class<? extends StatefulHandler<E, State, Message>> handlerClass =
+            (Class<? extends StatefulHandler<E, State, Message>>) handler.getClass();
+        return new StatefulActorBuilder<E, State, Message>(this, handler, handlerClass, initialState);
     }
     
     /**
