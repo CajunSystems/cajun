@@ -1,9 +1,12 @@
 package com.cajunsystems;
 
 import com.cajunsystems.handler.EffectBehavior;
+import com.cajunsystems.handler.StatelessEffectBehavior;
 import com.cajunsystems.test.TempPersistenceExtension;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.roux.Effect;
+import com.cajunsystems.roux.capability.Capability;
+import com.cajunsystems.roux.capability.CapabilityHandler;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import java.io.Serializable;
@@ -13,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -53,6 +57,14 @@ class FromEffectTest {
     sealed interface FailMsg extends Serializable permits FromEffectTest.Good, FromEffectTest.Bad {}
     record Good() implements FailMsg {}
     record Bad()  implements FailMsg {}
+
+    // Capability type used in capability tests
+    /** A simple capability that supplies a string value — useful for testing capability injection. */
+    record StringCapability(String key) implements Capability<String> {}
+
+    sealed interface CapMsg extends Serializable permits FromEffectTest.Read, FromEffectTest.Observe {}
+    record Read(CountDownLatch latch, AtomicReference<String> result) implements CapMsg {}
+    record Observe() implements CapMsg {}
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -219,6 +231,104 @@ class FromEffectTest {
         assertEquals(2, goodCount.get());
     }
 
+    // -------------------------------------------------------------------------
+    // Stateless fromEffect tests
+    // -------------------------------------------------------------------------
+
+    sealed interface LogMsg extends java.io.Serializable permits FromEffectTest.Log, FromEffectTest.Ping {}
+    record Log(String text) implements LogMsg {}
+    record Ping(CountDownLatch latch) implements LogMsg {}
+
+    sealed interface OrderMsg extends java.io.Serializable permits FromEffectTest.Seq, FromEffectTest.Done {}
+    record Seq(int n) implements OrderMsg {}
+    record Done(CountDownLatch l) implements OrderMsg {}
+
+    @Test
+    @DisplayName("stateless fromEffect: executes effect for each message")
+    void statelessFromEffectBasic() throws InterruptedException {
+        AtomicInteger processedCount = new AtomicInteger();
+        CountDownLatch latch = new CountDownLatch(3);
+
+        Pid logger = system.<RuntimeException, LogMsg>fromEffect(
+            (msg, ctx) -> switch (msg) {
+                case Log(var text) -> Effect.runnable(() -> processedCount.incrementAndGet());
+                case Ping(var l)   -> Effect.runnable(l::countDown);
+            }
+        ).withId("stateless-logger").spawn();
+
+        logger.tell(new Log("a"));
+        logger.tell(new Log("b"));
+        logger.tell(new Log("c"));
+        logger.tell(new Ping(latch));
+        logger.tell(new Ping(latch));
+        logger.tell(new Ping(latch));
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals(3, processedCount.get());
+    }
+
+    @Test
+    @DisplayName("stateless fromEffect: messages processed in order")
+    void statelessFromEffectOrdering() throws InterruptedException {
+        java.util.List<Integer> order = new java.util.concurrent.CopyOnWriteArrayList<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        Pid actor = system.<RuntimeException, OrderMsg>fromEffect(
+            (msg, ctx) -> switch (msg) {
+                case Seq(var n) -> Effect.runnable(() -> order.add(n));
+                case Done(var l) -> Effect.runnable(l::countDown);
+            }
+        ).withId("stateless-order").spawn();
+
+        for (int i = 0; i < 5; i++) {
+            actor.tell(new Seq(i));
+        }
+        actor.tell(new Done(latch));
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals(java.util.List.of(0, 1, 2, 3, 4), order);
+    }
+
+    @Test
+    @DisplayName("stateless fromEffect: StatelessEffectBehavior.asHandler() produces a working Handler")
+    void statelessAsHandlerDelegates() throws InterruptedException {
+        AtomicInteger count = new AtomicInteger();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        StatelessEffectBehavior<RuntimeException, LogMsg> behavior =
+            (msg, ctx) -> switch (msg) {
+                case Log(var text) -> Effect.runnable(count::incrementAndGet);
+                case Ping(var l)   -> Effect.runnable(l::countDown);
+            };
+
+        Pid actor = system.actorOf(behavior.asHandler())
+            .withId("stateless-ashandler")
+            .spawn();
+
+        actor.tell(new Log("x"));
+        actor.tell(new Ping(latch));
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals(1, count.get());
+    }
+
+    @Test
+    @DisplayName("stateless fromEffect: builder API accessible (.withId works)")
+    void statelessBuilderApiAccessible() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+
+        Pid pid = system.<RuntimeException, LogMsg>fromEffect(
+            (msg, ctx) -> switch (msg) {
+                case Log ignored -> Effect.unit();
+                case Ping(var l) -> Effect.runnable(l::countDown);
+            }
+        ).withId("stateless-named").spawn();
+
+        assertEquals("stateless-named", pid.actorId());
+        pid.tell(new Ping(latch));
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+    }
+
     @Test
     @DisplayName("fromEffect: actors are full actors with mailboxes (messages process in order)")
     void actorHasMailbox() throws InterruptedException {
@@ -241,5 +351,114 @@ class FromEffectTest {
         assertTrue(latch.await(3, TimeUnit.SECONDS));
         // After 3 increments of 1 each, state == 3
         assertEquals(3, ref.get());
+    }
+
+    // -------------------------------------------------------------------------
+    // Capability tests
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a CapabilityHandler that resolves {@link StringCapability} by returning
+     * the given string value.
+     */
+    private static CapabilityHandler<Capability<?>> stringCapabilityHandler(String value) {
+        return CapabilityHandler.builder()
+            .on(StringCapability.class, cap -> value)
+            .build();
+    }
+
+    @Test
+    @DisplayName("stateless fromEffect with capability: capability is resolved per message")
+    void statelessFromEffectWithCapability() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> received = new AtomicReference<>();
+
+        CapabilityHandler<Capability<?>> handler =
+            stringCapabilityHandler("hello-from-capability");
+
+        Pid actor = system.<RuntimeException, CapMsg>fromEffect(
+            (msg, ctx) -> switch (msg) {
+                case Read(var l, var result) -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("my-key"));
+                    yield cap.flatMap(val -> Effect.runnable(() -> {
+                        result.set(val);
+                        l.countDown();
+                    }));
+                }
+                case Observe() -> Effect.unit();
+            },
+            handler
+        ).withId("cap-stateless").spawn();
+
+        actor.tell(new Read(latch, received));
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals("hello-from-capability", received.get());
+    }
+
+    @Test
+    @DisplayName("stateless fromEffect with capability: different capability values can be injected")
+    void statelessFromEffectCapabilitySwappable() throws InterruptedException {
+        CountDownLatch latch1 = new CountDownLatch(1);
+        CountDownLatch latch2 = new CountDownLatch(1);
+        AtomicReference<String> ref1 = new AtomicReference<>();
+        AtomicReference<String> ref2 = new AtomicReference<>();
+
+        StatelessEffectBehavior<RuntimeException, CapMsg> capBehavior =
+            (msg, ctx) -> switch (msg) {
+                case Read(var l, var result) -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("k"));
+                    yield cap.flatMap(v -> Effect.runnable(() -> { result.set(v); l.countDown(); }));
+                }
+                case Observe() -> Effect.unit();
+            };
+
+        // Actor 1: injected with "alpha"
+        Pid actor1 = system.<RuntimeException, CapMsg>fromEffect(
+            capBehavior, stringCapabilityHandler("alpha")
+        ).withId("cap-alpha").spawn();
+
+        // Actor 2: same behavior, different capability value "beta"
+        Pid actor2 = system.<RuntimeException, CapMsg>fromEffect(
+            capBehavior, stringCapabilityHandler("beta")
+        ).withId("cap-beta").spawn();
+
+        actor1.tell(new Read(latch1, ref1));
+        actor2.tell(new Read(latch2, ref2));
+
+        assertTrue(latch1.await(3, TimeUnit.SECONDS));
+        assertTrue(latch2.await(3, TimeUnit.SECONDS));
+        assertEquals("alpha", ref1.get());
+        assertEquals("beta", ref2.get());
+    }
+
+    @Test
+    @DisplayName("stateful fromEffect with capability: capability resolved in stateful actor")
+    void statefulFromEffectWithCapability() throws InterruptedException {
+        // Reuse stateful actor with capability via asHandler() with capabilityHandler
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> received = new AtomicReference<>();
+
+        CapabilityHandler<Capability<?>> capHandler =
+            stringCapabilityHandler("stateful-cap-value");
+
+        // StatelessEffectBehavior that uses capability
+        StatelessEffectBehavior<RuntimeException, CapMsg> behavior =
+            (msg, ctx) -> switch (msg) {
+                case Read(var l, var result) -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("x"));
+                    yield cap.flatMap(v -> Effect.runnable(() -> { result.set(v); l.countDown(); }));
+                }
+                case Observe() -> Effect.unit();
+            };
+
+        Pid actor = system.actorOf(behavior.asHandler(capHandler))
+            .withId("stateful-cap")
+            .spawn();
+
+        actor.tell(new Read(latch, received));
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals("stateful-cap-value", received.get());
     }
 }

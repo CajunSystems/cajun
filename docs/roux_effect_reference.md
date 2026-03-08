@@ -223,6 +223,103 @@ is the lambda target. If you later need to promote it to a full handler, call
 
 ---
 
+## Stateless Actors from Effects — `fromEffect(StatelessEffectBehavior)`
+
+When an actor carries **no state** between messages (it just executes side effects),
+use the stateless overload of `fromEffect`:
+
+```java
+import com.cajunsystems.handler.StatelessEffectBehavior;
+import com.cajunsystems.roux.Effect;
+
+sealed interface LogMsg permits Log, Flush {}
+record Log(String text)  implements LogMsg {}
+record Flush()           implements LogMsg {}
+
+Pid logger = system.fromEffect(
+    (LogMsg msg, ActorContext ctx) -> switch (msg) {
+        case Log(var text) -> Effect.runnable(() -> System.out.println("[LOG] " + text));
+        case Flush()       -> Effect.runnable(() -> System.out.flush());
+    }
+).withId("logger").spawn();
+```
+
+The returned builder is a full `ActorBuilder`, so you can chain `.withId()`,
+`.withBackpressureConfig()`, `.withThreadPoolFactory()`, etc.
+
+The Effect is executed **synchronously** on the actor's message-processing thread
+for each incoming message; its produced value is discarded.
+
+**When to use stateless `fromEffect`**
+
+| Situation | Use |
+|-----------|-----|
+| Actor only performs I/O / side effects, no state needed | `fromEffect(StatelessEffectBehavior)` |
+| Actor needs state between messages | `fromEffect(EffectBehavior, initialState)` |
+| Need lifecycle hooks | `actorOf(Handler)` / `statefulActorOf(StatefulHandler, state)` |
+
+The `StatelessEffectBehavior` functional interface (`com.cajunsystems.handler.StatelessEffectBehavior`)
+is the lambda target. You can also call `.asHandler()` on it to get a `Handler` instance
+directly usable with `actorOf(handler)`.
+
+### Capabilities in Stateless Effects
+
+Roux [capabilities](https://github.com/CajunSystems/roux) let you inject contextual values into
+effects (e.g. a test clock, a random source, or any user-defined service). Pass a
+`CapabilityHandler` as a second argument to `fromEffect`:
+
+```java
+import com.cajunsystems.roux.capability.Capability;
+import com.cajunsystems.roux.capability.CapabilityHandler;
+
+// 1. Define a capability
+record MyClock() implements Capability<Long> {}
+
+// 2. Build a handler that resolves it
+CapabilityHandler<Capability<?>> capHandler =
+    CapabilityHandler.builder()
+        .on(MyClock.class, cap -> System.currentTimeMillis())
+        .build();
+
+// 3. Use the capability inside the effect
+Pid actor = system.<RuntimeException, LogMsg>fromEffect(
+    (msg, ctx) -> switch (msg) {
+        case Log(var text) -> {
+            Effect<RuntimeException, Long> ts = Effect.from(new MyClock());
+            yield ts.flatMap(now -> Effect.runnable(() ->
+                System.out.println("[" + now + "] " + text)));
+        }
+        case Flush() -> Effect.unit();
+    },
+    capHandler  // <-- capability handler injected here
+).withId("timed-logger").spawn();
+```
+
+In tests you can supply a deterministic handler:
+```java
+CapabilityHandler<Capability<?>> testHandler =
+    CapabilityHandler.builder()
+        .on(MyClock.class, cap -> 1_000_000L)  // fixed timestamp
+        .build();
+```
+
+You can also inject capabilities into the stateless `asHandler()` adapter directly,
+without going through `ActorSystem.fromEffect`:
+
+```java
+StatelessEffectBehavior<RuntimeException, LogMsg> behavior = (msg, ctx) -> ...;
+
+// Uses default runtime (no capability handler)
+Handler<LogMsg> plain    = behavior.asHandler();
+
+// Uses the supplied capability handler
+Handler<LogMsg> withCaps = behavior.asHandler(capHandler);
+
+Pid actor = system.actorOf(withCaps).withId("capped").spawn();
+```
+
+---
+
 ## Full Example: Counter Actor (class-based)
 
 ```java
