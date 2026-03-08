@@ -166,7 +166,64 @@ block to avoid leaking its internal executor.
 
 ---
 
-## Full Example: Counter Actor
+## Creating Actors from Effects — `fromEffect`
+
+For simple actors where a named class would be ceremony, use
+`ActorSystem.fromEffect()` with an `EffectBehavior` lambda:
+
+```java
+import com.cajunsystems.ActorSystem;
+import com.cajunsystems.Pid;
+import com.cajunsystems.roux.Effect;
+
+sealed interface CounterMsg permits Increment, Decrement, Reset, GetCount {}
+record Increment(int amount)  implements CounterMsg {}
+record Decrement(int amount)  implements CounterMsg {}
+record Reset()                 implements CounterMsg {}
+record GetCount(Pid replyTo)  implements CounterMsg {}
+
+ActorSystem system = new ActorSystem();
+
+Pid counter = system.fromEffect(
+    (CounterMsg msg, Integer count, ActorContext ctx) -> switch (msg) {
+        case Increment i -> Effect.succeed(count + i.amount());
+        case Decrement d -> Effect.succeed(count - d.amount());
+        case Reset r     -> Effect.succeed(0);
+        case GetCount gc -> Effect.suspend(() -> {
+            ctx.tell(gc.replyTo(), count);
+            return count; // state unchanged
+        });
+    },
+    0   // initial state
+).withId("counter").spawn();
+```
+
+`fromEffect` returns the same `StatefulActorBuilder` as `statefulActorOf`, so
+you can chain `.withPersistence()`, `.withMiddleware()`, `.withBackpressureConfig()`,
+etc. on it.
+
+> **Effect-based actors are still full actors.**
+> A `fromEffect` actor has its own mailbox, runs on a dedicated virtual thread,
+> processes messages one at a time in arrival order, and participates in backpressure,
+> supervision, and persistence exactly like any other actor. The only difference is
+> that the behavior is expressed as a Roux Effect lambda instead of a named class.
+
+**When to use `fromEffect` vs `statefulActorOf`**
+
+| Situation | Use |
+|-----------|-----|
+| Simple behavior, no lifecycle hooks | `fromEffect` + lambda |
+| Need `preStart` / `postStop` / `onError` | `statefulActorOf` + `StatefulHandler` class |
+| Want to reuse handler across tests | `statefulActorOf` + named class |
+| Prototyping / exploratory | `fromEffect` + lambda |
+
+The `EffectBehavior` functional interface (`com.cajunsystems.handler.EffectBehavior`)
+is the lambda target. If you later need to promote it to a full handler, call
+`.asHandler()` on it to get a `StatefulHandler` instance.
+
+---
+
+## Full Example: Counter Actor (class-based)
 
 ```java
 import com.cajunsystems.ActorContext;

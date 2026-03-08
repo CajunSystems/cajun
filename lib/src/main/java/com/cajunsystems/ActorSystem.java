@@ -16,6 +16,7 @@ import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
 import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
+import com.cajunsystems.handler.EffectBehavior;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.persistence.PersistenceProvider;
@@ -609,9 +610,49 @@ public class ActorSystem {
     }
     
     /**
+     * Creates a builder for a stateful actor whose behavior is defined by an
+     * {@link EffectBehavior} lambda, without requiring a named handler class.
+     *
+     * <p>Use this when the actor logic is simple enough to express inline:
+     * <pre>{@code
+     * Pid counter = system.fromEffect(
+     *     (CounterMsg msg, Integer count, ActorContext ctx) -> switch (msg) {
+     *         case Increment() -> Effect.succeed(count + 1);
+     *         case Reset()     -> Effect.succeed(0);
+     *         case GetCount(var replyTo) -> Effect.suspend(() -> {
+     *             ctx.tell(replyTo, count);
+     *             return count;
+     *         });
+     *     },
+     *     0
+     * ).withId("counter").spawn();
+     * }</pre>
+     *
+     * <p>The returned builder supports the full {@link StatefulActorBuilder} API —
+     * persistence, middleware, backpressure, supervision, etc. For actors that also
+     * need {@code preStart}/{@code postStop}/{@code onError} hooks, implement
+     * {@link StatefulHandler} directly and use {@link #statefulActorOf} instead.
+     *
+     * @param <E>          the error type produced by the effect
+     * @param <State>      the type of the actor's state
+     * @param <Message>    the type of messages the actor handles
+     * @param behavior     lambda {@code (message, state, context) -> Effect<E, State>}
+     * @param initialState the initial state
+     * @return a builder for configuring and spawning the actor
+     */
+    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> fromEffect(
+            EffectBehavior<E, State, Message> behavior,
+            State initialState) {
+        // Inline adapter avoids the extra method-reference indirection of asHandler(),
+        // ensuring the effect's State type parameter resolves correctly at the call site.
+        StatefulHandler<E, State, Message> handler = (msg, state, ctx) -> behavior.receive(msg, state, ctx);
+        return statefulActorOf(handler, initialState);
+    }
+
+    /**
      * Registers an actor with this system.
      * This method is used by the builder classes.
-     * 
+     *
      * @param actor The actor to register
      */
     public void registerActor(Actor<?> actor) {
