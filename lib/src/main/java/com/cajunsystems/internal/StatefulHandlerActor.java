@@ -15,6 +15,8 @@ import com.cajunsystems.loop.LoopStep;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.roux.Effect;
+import com.cajunsystems.roux.capability.Capability;
+import com.cajunsystems.roux.capability.CapabilityHandler;
 import org.slf4j.Logger;
 
 import java.util.List;
@@ -74,6 +76,8 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
     private final CajunEffectRuntime rouxRuntime;
     /** The composed behavior pipeline (base + all middleware layers). */
     private final ActorBehavior<E, State, Message> pipeline;
+    /** Optional capability handler; when non-null, effects are run via {@code unsafeRunWithHandler}. */
+    private CapabilityHandler<Capability<?>> capabilityHandler;
 
     // =========================================================================
     // Constructors
@@ -185,6 +189,19 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
         return current;
     }
 
+    /**
+     * Sets the capability handler used to resolve Roux capabilities when executing each
+     * message's effect. When non-null, {@code processMessage} calls
+     * {@code unsafeRunWithHandler} instead of {@code unsafeRun}.
+     *
+     * <p>Must be called before the actor is started (i.e., before {@link #start()}).
+     *
+     * @param capabilityHandler the handler to use; {@code null} disables capability injection
+     */
+    public void setCapabilityHandler(CapabilityHandler<Capability<?>> capabilityHandler) {
+        this.capabilityHandler = capabilityHandler;
+    }
+
     // =========================================================================
     // Core message processing
     // =========================================================================
@@ -208,7 +225,9 @@ public class StatefulHandlerActor<E extends Throwable, State, Message>
         ActorContext context = new StatefulActorContext(this);
         Effect<E, LoopStep<State>> stepEffect = pipeline.step(message, currentState, context);
         try {
-            LoopStep<State> step = rouxRuntime.unsafeRun(stepEffect);
+            LoopStep<State> step = (capabilityHandler != null)
+                    ? rouxRuntime.unsafeRunWithHandler(stepEffect, capabilityHandler)
+                    : rouxRuntime.unsafeRun(stepEffect);
             return applyLoopStep(step);
         } catch (RuntimeException t) {
             // Rethrow as-is so onError() receives the original exception type

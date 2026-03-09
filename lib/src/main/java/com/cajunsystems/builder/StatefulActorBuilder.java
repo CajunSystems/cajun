@@ -14,6 +14,8 @@ import com.cajunsystems.loop.BehaviorMiddleware;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.PersistenceTruncationConfig;
+import com.cajunsystems.roux.capability.Capability;
+import com.cajunsystems.roux.capability.CapabilityHandler;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +47,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
     private MailboxProvider<Message> mailboxProvider;
+    private CapabilityHandler<Capability<?>> capabilityHandler;
     private final List<BehaviorMiddleware<E, State, Message>> middlewares = new ArrayList<>();
 
     /**
@@ -214,6 +217,23 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
     }
 
     /**
+     * Sets the Roux capability handler for this actor.
+     *
+     * <p>When a capability handler is supplied, each message's effect is executed with
+     * {@code unsafeRunWithHandler(effect, capabilityHandler)} instead of the plain
+     * {@code unsafeRun(effect)}, allowing Roux capabilities (e.g. a custom {@code Clock},
+     * {@code Random}, or any user-defined capability) to be injected at the actor level.
+     *
+     * @param capabilityHandler the handler used to resolve capabilities in the actor's effects
+     * @return this builder for method chaining
+     */
+    public StatefulActorBuilder<E, State, Message> withCapabilityHandler(
+            CapabilityHandler<Capability<?>> capabilityHandler) {
+        this.capabilityHandler = capabilityHandler;
+        return this;
+    }
+
+    /**
      * Adds a {@link BehaviorMiddleware} to the actor's behavior pipeline.
      *
      * <p>Middlewares are applied in the order they are added: the first added
@@ -295,6 +315,11 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
         // Apply per-actor truncation configuration if provided
         if (truncationConfig != null) {
             actor.setTruncationConfig(truncationConfig);
+        }
+
+        // Apply capability handler if provided
+        if (capabilityHandler != null) {
+            actor.setCapabilityHandler(capabilityHandler);
         }
 
         if (parent != null) {

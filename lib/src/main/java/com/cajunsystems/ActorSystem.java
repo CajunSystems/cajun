@@ -653,6 +653,48 @@ public class ActorSystem {
     }
 
     /**
+     * Creates a builder for a stateful actor whose behavior is defined by an
+     * {@link EffectBehavior} lambda, with a custom Roux capability handler.
+     *
+     * <p>Use this variant when the effect uses Roux
+     * {@link com.cajunsystems.roux.capability.Capability capabilities} that must be
+     * resolved at runtime (e.g. a test clock, a custom random source, or any user-defined
+     * capability):
+     * <pre>{@code
+     * Pid counter = system.fromEffect(
+     *     (CounterMsg msg, Integer count, ActorContext ctx) ->
+     *         Effect.from(Clock.CAPABILITY).flatMap(clock -> switch (msg) {
+     *             case Tick() -> Effect.succeed(count + 1);
+     *             case GetCount(var replyTo) -> Effect.suspend(() -> {
+     *                 ctx.tell(replyTo, clock.now() + ": " + count);
+     *                 return count;
+     *             });
+     *         }),
+     *     0,
+     *     myCapabilityHandler
+     * ).withId("timed-counter").spawn();
+     * }</pre>
+     *
+     * <p>The returned builder supports the full {@link StatefulActorBuilder} API —
+     * persistence, middleware, backpressure, supervision, etc.
+     *
+     * @param <E>               the error type produced by the effect
+     * @param <State>           the type of the actor's state
+     * @param <Message>         the type of messages the actor handles
+     * @param behavior          lambda {@code (message, state, context) -> Effect<E, State>}
+     * @param initialState      the initial state
+     * @param capabilityHandler the Roux capability handler used to resolve capabilities
+     * @return a builder for configuring and spawning the actor
+     */
+    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> fromEffect(
+            EffectBehavior<E, State, Message> behavior,
+            State initialState,
+            CapabilityHandler<Capability<?>> capabilityHandler) {
+        StatefulHandler<E, State, Message> handler = (msg, state, ctx) -> behavior.receive(msg, state, ctx);
+        return statefulActorOf(handler, initialState).withCapabilityHandler(capabilityHandler);
+    }
+
+    /**
      * Creates a builder for a <em>stateless</em> actor whose behavior is defined by a
      * {@link StatelessEffectBehavior} lambda, without requiring a named handler class.
      *

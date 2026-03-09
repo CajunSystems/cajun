@@ -461,4 +461,152 @@ class FromEffectTest {
         assertTrue(latch.await(3, TimeUnit.SECONDS));
         assertEquals("stateful-cap-value", received.get());
     }
+
+    // -------------------------------------------------------------------------
+    // Stateful fromEffect with capabilityHandler overload tests
+    // -------------------------------------------------------------------------
+
+    sealed interface StatefulCapMsg extends java.io.Serializable
+            permits FromEffectTest.Incr, FromEffectTest.CapRead {}
+    record Incr()    implements StatefulCapMsg {}
+    record CapRead() implements StatefulCapMsg {}
+
+    @Test
+    @DisplayName("stateful fromEffect(behavior, state, capabilityHandler): capability is resolved")
+    void statefulFromEffectCapabilityHandlerOverload_capabilityResolved() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> received = new AtomicReference<>();
+
+        CapabilityHandler<Capability<?>> capHandler = stringCapabilityHandler("injected-value");
+
+        Pid actor = system.<RuntimeException, Integer, StatefulCapMsg>fromEffect(
+            (msg, count, ctx) -> switch (msg) {
+                case Incr() -> Effect.succeed(count + 1);
+                case CapRead() -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("k"));
+                    yield cap.flatMap(v -> Effect.suspend(() -> {
+                        received.set(v + ":" + count);
+                        latch.countDown();
+                        return count;
+                    }));
+                }
+            },
+            0,
+            capHandler
+        ).withId("stateful-cap-overload").spawn();
+
+        Thread.sleep(100);
+        actor.tell(new Incr());
+        actor.tell(new Incr());
+        actor.tell(new Incr());
+        actor.tell(new CapRead());
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals("injected-value:3", received.get());
+    }
+
+    @Test
+    @DisplayName("stateful fromEffect(behavior, state, capabilityHandler): state is preserved across messages")
+    void statefulFromEffectCapabilityHandlerOverload_statePreserved() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> received = new AtomicReference<>();
+
+        CapabilityHandler<Capability<?>> capHandler = stringCapabilityHandler("cap");
+
+        Pid actor = system.<RuntimeException, Integer, StatefulCapMsg>fromEffect(
+            (msg, count, ctx) -> switch (msg) {
+                case Incr()    -> Effect.succeed(count + 10);
+                case CapRead() -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("k"));
+                    yield cap.flatMap(v -> Effect.suspend(() -> {
+                        received.set(v + "=" + count);
+                        latch.countDown();
+                        return count;
+                    }));
+                }
+            },
+            5,
+            capHandler
+        ).withId("stateful-cap-state").spawn();
+
+        Thread.sleep(100);
+        actor.tell(new Incr());   // 5 + 10 = 15
+        actor.tell(new Incr());   // 15 + 10 = 25
+        actor.tell(new CapRead());
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals("cap=25", received.get());
+    }
+
+    @Test
+    @DisplayName("StatefulActorBuilder.withCapabilityHandler: capability injected via builder method")
+    void withCapabilityHandlerBuilderMethod() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> received = new AtomicReference<>();
+
+        CapabilityHandler<Capability<?>> capHandler = stringCapabilityHandler("builder-cap");
+
+        Pid actor = system.<RuntimeException, Integer, StatefulCapMsg>fromEffect(
+            (msg, count, ctx) -> switch (msg) {
+                case Incr()    -> Effect.succeed(count + 1);
+                case CapRead() -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("k"));
+                    yield cap.flatMap(v -> Effect.suspend(() -> {
+                        received.set(v);
+                        latch.countDown();
+                        return count;
+                    }));
+                }
+            },
+            0
+        ).withCapabilityHandler(capHandler).withId("stateful-cap-builder").spawn();
+
+        Thread.sleep(100);
+        actor.tell(new CapRead());
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        assertEquals("builder-cap", received.get());
+    }
+
+    @Test
+    @DisplayName("stateful fromEffect with capability: different actors get different capability values")
+    void statefulFromEffectCapabilityHandlerOverload_swappable() throws InterruptedException {
+        CountDownLatch latch1 = new CountDownLatch(1);
+        CountDownLatch latch2 = new CountDownLatch(1);
+        AtomicReference<String> ref1 = new AtomicReference<>();
+        AtomicReference<String> ref2 = new AtomicReference<>();
+
+        Pid actor1 = system.<RuntimeException, Integer, StatefulCapMsg>fromEffect(
+            (msg, count, ctx) -> switch (msg) {
+                case Incr()    -> Effect.succeed(count + 1);
+                case CapRead() -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("k"));
+                    yield cap.flatMap(v -> Effect.suspend(() -> { ref1.set(v); latch1.countDown(); return count; }));
+                }
+            },
+            0,
+            stringCapabilityHandler("first")
+        ).withId("cap-stateful-1").spawn();
+
+        Pid actor2 = system.<RuntimeException, Integer, StatefulCapMsg>fromEffect(
+            (msg, count, ctx) -> switch (msg) {
+                case Incr()    -> Effect.succeed(count + 1);
+                case CapRead() -> {
+                    Effect<RuntimeException, String> cap = Effect.from(new StringCapability("k"));
+                    yield cap.flatMap(v -> Effect.suspend(() -> { ref2.set(v); latch2.countDown(); return count; }));
+                }
+            },
+            0,
+            stringCapabilityHandler("second")
+        ).withId("cap-stateful-2").spawn();
+
+        Thread.sleep(100);
+        actor1.tell(new CapRead());
+        actor2.tell(new CapRead());
+
+        assertTrue(latch1.await(3, TimeUnit.SECONDS));
+        assertTrue(latch2.await(3, TimeUnit.SECONDS));
+        assertEquals("first", ref1.get());
+        assertEquals("second", ref2.get());
+    }
 }
