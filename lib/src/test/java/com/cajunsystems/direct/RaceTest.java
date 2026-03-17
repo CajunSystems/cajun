@@ -151,6 +151,99 @@ class RaceTest {
     }
 
     @Test
+    void raceReturnsResultWhenOneTaskThrows() throws Exception {
+        Scoped.supervised(scope -> {
+            String result = Race.race(
+                    scope,
+                    () -> {
+                        throw new RuntimeException("error in first task");
+                    },
+                    () -> {
+                        Thread.sleep(50);
+                        return "second wins";
+                    }
+            );
+            assertEquals("second wins", result);
+            return null;
+        });
+    }
+
+    @Test
+    void raceReturnsResultWhenSecondTaskThrows() throws Exception {
+        Scoped.supervised(scope -> {
+            String result = Race.race(
+                    scope,
+                    () -> {
+                        Thread.sleep(50);
+                        return "first wins";
+                    },
+                    () -> {
+                        throw new RuntimeException("error in second task");
+                    }
+            );
+            assertEquals("first wins", result);
+            return null;
+        });
+    }
+
+    @Test
+    void raceWithTimeout() throws Exception {
+        Scoped.supervised(scope -> {
+            String result = Race.race(
+                    scope,
+                    () -> {
+                        Thread.sleep(50);
+                        return "fast";
+                    },
+                    () -> {
+                        Thread.sleep(5000);
+                        return "very slow";
+                    }
+            );
+            assertEquals("fast", result);
+            return null;
+        });
+    }
+
+    @Test
+    void raceBothCompleteNearlySimultaneously() throws Exception {
+        Scoped.supervised(scope -> {
+            String result = Race.race(
+                    scope,
+                    () -> {
+                        Thread.sleep(50);
+                        return "a";
+                    },
+                    () -> {
+                        Thread.sleep(50);
+                        return "b";
+                    }
+            );
+            // Either result is acceptable when both complete at nearly the same time
+            assertTrue("a".equals(result) || "b".equals(result),
+                    "Result should be either 'a' or 'b', got: " + result);
+            return null;
+        });
+    }
+
+    @Test
+    void raceWithSingleTask() throws Exception {
+        Scoped.supervised(scope -> {
+            @SuppressWarnings("unchecked")
+            java.util.concurrent.Callable<String>[] tasks = new java.util.concurrent.Callable[]{
+                    () -> {
+                        Thread.sleep(50);
+                        return "only";
+                    }
+            };
+
+            String result = Race.race(scope, tasks);
+            assertEquals("only", result);
+            return null;
+        });
+    }
+
+    @Test
     void timeoutReturnsResultWithinTimeLimit() throws Exception {
         Scoped.supervised(scope -> {
             String result = Race.timeout(

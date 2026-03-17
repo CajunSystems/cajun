@@ -222,6 +222,114 @@ class ParTest {
     }
 
     @Test
+    void parMapFailurePropagatesException() {
+        RuntimeException expected = new RuntimeException("parMap task failed");
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, () -> {
+            Scoped.supervised(scope -> {
+                List<String> input = List.of("a", "bb", "ccc");
+                Par.parMap(scope, input, s -> {
+                    if (s.equals("bb")) {
+                        throw expected;
+                    }
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(e);
+                    }
+                    return s.length();
+                });
+                return null;
+            });
+        });
+
+        assertEquals("parMap task failed", thrown.getMessage());
+    }
+
+    @Test
+    void parThreeWayWithListVerifiesAllResults() {
+        Scoped.supervised(scope -> {
+            List<Callable<String>> tasks = List.of(
+                    () -> "first",
+                    () -> "second",
+                    () -> "third"
+            );
+            List<String> results = Par.par(scope, tasks);
+            assertEquals(3, results.size());
+            assertEquals("first", results.get(0));
+            assertEquals("second", results.get(1));
+            assertEquals("third", results.get(2));
+            return null;
+        });
+    }
+
+    @Test
+    void parThreeWayParallelismVerification() {
+        Scoped.supervised(scope -> {
+            long start = System.currentTimeMillis();
+
+            List<Callable<String>> tasks = List.of(
+                    () -> {
+                        Thread.sleep(200);
+                        return "first";
+                    },
+                    () -> {
+                        Thread.sleep(200);
+                        return "second";
+                    },
+                    () -> {
+                        Thread.sleep(200);
+                        return "third";
+                    }
+            );
+
+            List<String> results = Par.par(scope, tasks);
+
+            long elapsed = System.currentTimeMillis() - start;
+
+            assertEquals(List.of("first", "second", "third"), results);
+
+            // If sequential, would take ~600ms. In parallel, should be ~200ms.
+            assertTrue(elapsed < 400, "Three-way par should run in parallel, but took " + elapsed + "ms");
+            return null;
+        });
+    }
+
+    @Test
+    void parTotalElapsedTimeLessThanSumOfIndividualDurations() {
+        Scoped.supervised(scope -> {
+            int taskCount = 10;
+            int sleepPerTask = 200;
+            long totalSequentialTime = (long) taskCount * sleepPerTask;
+
+            List<Callable<Integer>> tasks = new java.util.ArrayList<>();
+            for (int i = 0; i < taskCount; i++) {
+                final int idx = i;
+                tasks.add(() -> {
+                    Thread.sleep(sleepPerTask);
+                    return idx;
+                });
+            }
+
+            long start = System.currentTimeMillis();
+            List<Integer> results = Par.par(scope, tasks);
+            long elapsed = System.currentTimeMillis() - start;
+
+            assertEquals(taskCount, results.size());
+            for (int i = 0; i < taskCount; i++) {
+                assertEquals(i, results.get(i));
+            }
+
+            // Elapsed time should be much less than the sum of all individual durations
+            assertTrue(elapsed < totalSequentialTime / 2,
+                    "Total elapsed time (" + elapsed + "ms) should be much less than sequential time ("
+                            + totalSequentialTime + "ms), proving parallelism");
+            return null;
+        });
+    }
+
+    @Test
     void parExecutesBothTasksConcurrently() {
         Scoped.supervised(scope -> {
             AtomicInteger counter = new AtomicInteger(0);

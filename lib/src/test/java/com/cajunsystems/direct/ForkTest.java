@@ -107,20 +107,30 @@ class ForkTest {
     @Test
     void forkDaemonDoesNotPreventCompletion() throws Exception {
         AtomicBoolean daemonStarted = new AtomicBoolean(false);
+        AtomicBoolean daemonInterrupted = new AtomicBoolean(false);
 
         ForkHandle<Void> daemonHandle = Fork.forkDaemon(() -> {
             daemonStarted.set(true);
-            Thread.sleep(10000);
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                daemonInterrupted.set(true);
+                throw e;
+            }
             return null;
         });
 
         // Give daemon time to start
         Thread.sleep(100);
-        assertTrue(daemonStarted.get());
+        assertTrue(daemonStarted.get(), "Daemon task should have started");
 
         // We should be able to cancel it
         daemonHandle.cancel();
-        assertTrue(daemonHandle.isCancelled());
+        assertTrue(daemonHandle.isCancelled(), "Daemon handle should be marked as cancelled");
+
+        // Give a moment for interruption to propagate
+        Thread.sleep(100);
+        assertTrue(daemonInterrupted.get(), "Daemon task should have been interrupted on cancel");
     }
 
     @Test
@@ -160,6 +170,68 @@ class ForkTest {
     }
 
     @Test
+    void forkPropagatesExceptionOnJoin() {
+        ForkHandle<String> handle = Fork.fork(() -> {
+            throw new RuntimeException("task failed");
+        });
+
+        Exception exception = assertThrows(Exception.class, handle::join);
+        assertTrue(exception.getMessage().contains("task failed") ||
+                        (exception.getCause() != null && exception.getCause().getMessage().contains("task failed")),
+                "Exception message should contain the original error");
+    }
+
+    @Test
+    void forkHandleCancelInterruptsTheTask() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicBoolean wasInterrupted = new AtomicBoolean(false);
+        CountDownLatch finished = new CountDownLatch(1);
+
+        ForkHandle<Void> handle = Fork.fork(() -> {
+            started.countDown();
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                wasInterrupted.set(true);
+                finished.countDown();
+                throw e;
+            }
+            return null;
+        });
+
+        assertTrue(started.await(2, TimeUnit.SECONDS), "Task should have started");
+        handle.cancel();
+        assertTrue(finished.await(2, TimeUnit.SECONDS), "Task should have been interrupted and finished");
+        assertTrue(wasInterrupted.get(), "Task should have received an InterruptedException");
+        assertTrue(handle.isCancelled(), "Handle should report cancelled");
+    }
+
+    @Test
+    void forkScopedPropagatesFirstExceptionWhenTaskFails() {
+        Exception exception = assertThrows(Exception.class, () -> {
+            Fork.forkScoped(List.of(
+                    () -> {
+                        Thread.sleep(50);
+                        return "ok";
+                    },
+                    () -> {
+                        throw new RuntimeException("first failure");
+                    },
+                    () -> {
+                        Thread.sleep(100);
+                        return "also ok";
+                    }
+            ));
+        });
+
+        // The exception should originate from the failing task
+        String message = exception.getMessage();
+        String causeMessage = exception.getCause() != null ? exception.getCause().getMessage() : "";
+        assertTrue(message.contains("first failure") || causeMessage.contains("first failure"),
+                "Should propagate the exception from the failing task, got: " + message);
+    }
+
+    @Test
     void errorPropagationWhenForkedTaskThrowsException() {
         ForkHandle<String> handle = Fork.fork(() -> {
             throw new RuntimeException("task failed");
@@ -193,12 +265,44 @@ class ForkTest {
     }
 
     @Test
+    void forkWithNullResultReturnsNull() throws Exception {
+        ForkHandle<String> handle = Fork.fork(() -> null);
+        assertNull(handle.join(), "Fork with null-returning supplier should return null on join");
+    }
+
+    @Test
     void forkWithSlowTaskEventuallyCompletes() throws Exception {
         ForkHandle<String> handle = Fork.fork(() -> {
             Thread.sleep(200);
             return "slow result";
         });
         assertEquals("slow result", handle.join());
+    }
+
+    @Test
+    void forkWithSlowTaskVerifiesAsyncBehavior() throws Exception {
+        long startTime = System.nanoTime();
+
+        ForkHandle<String> handle = Fork.fork(() -> {
+            Thread.sleep(500);
+            return "async result";
+        });
+
+        long forkReturnTime = System.nanoTime();
+        long forkDurationMs = TimeUnit.NANOSECONDS.toMillis(forkReturnTime - startTime);
+
+        // fork() should return almost immediately, not wait for the task to complete
+        assertTrue(forkDurationMs < 200,
+                "fork() should return quickly (was " + forkDurationMs + "ms), task runs asynchronously");
+
+        // join() should block until the result is available
+        String result = handle.join();
+        long joinReturnTime = System.nanoTime();
+        long totalDurationMs = TimeUnit.NANOSECONDS.toMillis(joinReturnTime - startTime);
+
+        assertEquals("async result", result);
+        assertTrue(totalDurationMs >= 400,
+                "Total time including join should reflect the task's sleep (was " + totalDurationMs + "ms)");
     }
 
     @Test
@@ -222,11 +326,5 @@ class ForkTest {
         assertEquals("first", results.get(0));
         assertEquals("second", results.get(1));
         assertEquals("third", results.get(2));
-    }
-
-    @Test
-    void forkWithNullResultReturnsNull() throws Exception {
-        ForkHandle<String> handle = Fork.fork(() -> null);
-        assertNull(handle.join());
     }
 }
