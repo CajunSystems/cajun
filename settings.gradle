@@ -25,3 +25,6 @@ include('lib')
 // Supporting modules
 include('test-utils')
 include('benchmarks')
+
+// Direct-style actor API
+include('cajun-direct')

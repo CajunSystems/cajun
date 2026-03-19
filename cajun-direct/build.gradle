@@ -1,0 +1,109 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+group = 'com.cajunsystems'
+version = project.findProperty('cajunVersion') ?: '0.4.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withJavadocJar()
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).each {
+    it.options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Javadoc) {
+    options.addBooleanOption('-enable-preview', true)
+    options.addStringOption('source', '21')
+}
+
+dependencies {
+    // Depends on the full lib module which includes ActorSystem, Pid, Handler, etc.
+    api project(':lib')
+
+    // Logging
+    api 'org.slf4j:slf4j-api:2.0.9'
+
+    // Testing
+    testImplementation libs.junit.jupiter
+    testImplementation 'org.mockito:mockito-core:5.7.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.16'
+}
+
+tasks.named('test') {
+    jvmArgs(['--enable-preview'])
+    useJUnitPlatform {
+        excludeTags 'performance'
+    }
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            from components.java
+            artifactId = 'cajun-direct'
+
+            pom {
+                name.set('Cajun Direct')
+                description.set('Direct-style (synchronous) actor API for the Cajun actor system')
+                url.set('https://github.com/cajunsystems/cajun')
+
+                licenses {
+                    license {
+                        name.set('MIT License')
+                        url.set('https://opensource.org/licenses/MIT')
+                    }
+                }
+
+                developers {
+                    developer {
+                        id.set('cajunsystems')
+                        name.set('CajunSystems')
+                        email.set('info@cajunsystems.io')
+                    }
+                }
+
+                scm {
+                    connection.set('scm:git:git://github.com/cajunsystems/cajun.git')
+                    developerConnection.set('scm:git:ssh://github.com:cajunsystems/cajun.git')
+                    url.set('https://github.com/cajunsystems/cajun')
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'CentralPortal'
+            url = layout.buildDirectory.dir('repo')
+        }
+    }
+}
+
+def hasSigningCredentials = project.hasProperty('signing.keyId') &&
+        project.hasProperty('signing.password') &&
+        project.hasProperty('signing.secretKeyRingFile')
+
+signing {
+    required {
+        gradle.taskGraph.hasTask('publishMavenJavaPublicationToCentralPortalRepository') && hasSigningCredentials
+    }
+
+    if (hasSigningCredentials) {
+        sign publishing.publications.mavenJava
+    } else {
+        logger.lifecycle("Signing disabled for ${project.path} - missing signing properties")
+    }
+}
