@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Status
-**Milestone**: 3 — Roux v0.2.1 Upgrade
+**Milestone**: 3 — Roux v0.2.1 Upgrade ✅ Archived as v0.6.0
 **Phase**: 16 ✅ Complete
-**Status**: Active — 383 tests, 0 failures
+**Status**: Milestone complete — 383 tests, 0 failures
 **Branch**: feature/roux-effect-integration
-**Last Updated**: 2026-03-04
+**Last Updated**: 2026-03-27
 
 ## Milestone 3 Phase Progress
 
