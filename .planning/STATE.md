@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 20 ✅ Complete → Phase 21 next
-**Status**: Version bumped to 0.7.0 — gradle.properties, README snippets, CHANGELOG
+**Phase**: 21 ✅ Complete — Milestone 4 complete
+**Status**: v0.7.0 ready — 629 tests, 0 failures, all audits clean
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-01
 
@@ -15,7 +15,7 @@
 | 18 | Update Root README | ✅ Complete |
 | 19 | Archive/Redirect Old Effect Docs | ✅ Complete |
 | 20 | Version Bump | ✅ Complete |
-| 21 | Release Validation | 🔲 Not started |
+| 21 | Release Validation | ✅ Complete |
 
 ## Milestone 4 Audit Findings (Phase 17)
 - 4 docs need ARCHIVE action: `effect_monad_api.md` (line 12), `throwable_effect_api.md` (line 3), `functional_actor_evolution.md` (line 1), `effect_monad_new_features.md` (line 5)
