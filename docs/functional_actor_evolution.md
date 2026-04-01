@@ -1,3 +1,24 @@
+> **Historical Document:** This document describes the design evolution and proposal for
+> Cajun's original `Effect<State, Message, Result>` monad and `FunctionalActor` class.
+> That API was implemented and subsequently **removed** in the Cajun × Roux migration (Milestone 1),
+> replaced by Roux's `Effect<E, A>` system.
+>
+> This document is preserved for historical context only.
+
+## Current Documentation
+
+- **[Getting Started with Effect Actors](effect-actors/getting-started.md)**
+  — current Roux-native API
+
+- **[Migration Guide](effect-actors/migration.md)**
+  — what changed and how to update
+
+---
+
+*The content below reflects the design of the deleted API. The described classes and interfaces no longer exist.*
+
+---
+
 # FunctionalActor Evolution: Monadic API Design
 
 ## Current State Analysis

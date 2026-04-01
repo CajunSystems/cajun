@@ -41,6 +41,9 @@ dependencies {
     // Core dependencies (abstract interfaces)
     api 'org.slf4j:slf4j-api:2.0.9'
 
+    // Roux effect system (unified effects for Cajun actors)
+    api libs.roux
+
     // Runtime implementation dependencies (logback for logging)
     implementation 'ch.qos.logback:logback-classic:1.5.16'
 

@@ -5,6 +5,53 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-01
+
+### Added
+
+- **Roux Effect System integration** (Milestones 1–3): Replaced Cajun's bespoke
+  `Effect<State,Error,Result>` monad with Roux (`com.cajunsystems:roux:0.2.1`),
+  a production-quality functional effect system for Java 21+.
+
+- **`ActorEffectRuntime`**: Roux `EffectRuntime` backed by the actor system's executor —
+  effects dispatched through actor threads, not a separate virtual-thread pool.
+
+- **`EffectActorBuilder`** and **`ActorSystemEffectExtensions`**: Fluent API for spawning actors
+  that handle messages as `Effect<E, A>` pipelines.
+
+- **`LogCapability`** and **`ConsoleLogHandler`**: Roux-native `Capability<R>` / `CapabilityHandler`
+  for structured logging inside effects.
+
+- **11 runnable effect actor examples** covering: error handling, retry policies, timeout,
+  stateful composition (ask pattern), multi-stage pipelines, fan-out dispatchers, custom
+  capabilities, parallel execution (`parAll`, `race`, `traverse`), and resource management
+  (`Resource<A>`).
+
+- **`docs/effect-actors/`**: Four guides — Getting Started, Patterns Catalogue, Capabilities,
+  and Migration (v0.1.0 → v0.2.1).
+
+### Changed
+
+- Roux dependency upgraded from `0.1.0` → `0.2.1`. New APIs available:
+  `retry(n)`, `retryWithDelay()`, `retry(RetryPolicy)`, `timeout(Duration)`,
+  `tap()`, `tapError()`, `Effects.parAll/race/traverse`, `Resource<A>`,
+  `Effect.unit/runnable/sleep/when/unless`.
+
+- **`ActorEffectRuntime.close()`** is now a no-op — the executor lifecycle is owned by
+  `ActorSystem`, not the runtime. Fixes double-shutdown on `AutoCloseable` scope exit.
+
+- All capability handlers migrated to `CapabilityHandler.builder()` pattern, which
+  auto-throws `UnsupportedOperationException` for unregistered capability types.
+
+### Removed
+
+- **Old `functional/` effect system** (hard cut, no deprecated wrappers):
+  `Effect<State,Error,Result>`, `ThrowableEffect`, `EffectMatchBuilder`,
+  `EffectConversions`, `EffectGenerator`, `GeneratorContext`, `Trampoline`,
+  `functional/capabilities/Capability.java`, `functional/capabilities/CapabilityHandler.java`.
+
+---
+
 ## [0.4.0] - 2025-12-03
 
 ### Added

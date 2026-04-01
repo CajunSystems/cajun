@@ -164,7 +164,7 @@ Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.4.0'
+    implementation 'com.cajunsystems:cajun:0.7.0'
 }
 ```
 
@@ -174,7 +174,7 @@ Or with Maven:
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun</artifactId>
-    <version>0.4.0</version>
+    <version>0.7.0</version>
 </dependency>
 ```
 
@@ -943,105 +943,92 @@ The `StatefulHandler` interface provides lifecycle methods:
 
 ### Functional Actors with Effects
 
-**New in Cajun**: Build actors using composable Effects for a more functional programming style.
-
-Effects provide a powerful way to build actor behaviors by composing simple operations into complex workflows. Think of Effects as recipes that describe what your actor should do.
+Build actors using composable [Roux](https://github.com/cajunsystems/roux) `Effect` pipelines —
+a functional, type-safe style backed by the actor system's executor.
 
 #### Quick Example
 
 ```java
-import static com.cajunsystems.functional.ActorSystemEffectExtensions.*;
+import com.cajunsystems.ActorSystem;
+import com.cajunsystems.Pid;
+import com.cajunsystems.functional.EffectActorBuilder;
+import com.cajunsystems.roux.Effect;
+import com.cajunsystems.roux.data.Unit;
+
+ActorSystem system = new ActorSystem();
 
 // Define messages
-sealed interface CounterMsg {}
+sealed interface CounterMsg permits Increment, Decrement {}
 record Increment(int amount) implements CounterMsg {}
 record Decrement(int amount) implements CounterMsg {}
-record GetCount(Pid replyTo) implements CounterMsg {}
 
-// Build behavior using effects - Note: Message type is at match level
-Effect<Integer, Throwable, Void> counterBehavior = 
-    Effect.<Integer, Throwable, Void, CounterMsg>match()
-        .when(Increment.class, (state, msg, ctx) -> 
-            Effect.modify(s -> s + msg.amount())
-                .andThen(Effect.logState(s -> "Count: " + s)))
-        
-        .when(Decrement.class, (state, msg, ctx) ->
-            Effect.modify(s -> s - msg.amount())
-                .andThen(Effect.logState(s -> "Count: " + s)))
-        
-        .when(GetCount.class, (state, msg, ctx) ->
-            Effect.tell(msg.replyTo(), state))
-        
-        .build();
+// Spawn an effect actor — handler returns Effect<E, A> per message
+Pid counter = new EffectActorBuilder<>(
+    system,
+    (CounterMsg msg) -> switch (msg) {
+        case Increment(var n) -> Effect.suspend(() -> {
+            System.out.println("Incrementing by " + n);
+            return Unit.unit();
+        });
+        case Decrement(var n) -> Effect.suspend(() -> {
+            System.out.println("Decrementing by " + n);
+            return Unit.unit();
+        });
+    }
+).withId("counter").spawn();
 
-// Create actor from effect
-Pid counter = fromEffect(system, counterBehavior, 0)
-    .withId("counter")
-    .spawn();
-
-// Use like any actor
 counter.tell(new Increment(5));
+system.shutdown();
 ```
 
 #### Why Use Effects?
 
-- **Composable**: Build complex behaviors from simple building blocks
-- **Stack-Safe**: Prevents stack overflow on deep compositions (chain thousands of operations safely)
-- **🚀 Blocking is Safe**: Cajun runs on Java 21+ Virtual Threads - write normal blocking code without fear!
-  - No `CompletableFuture` chains or async/await complexity
-  - Database calls, HTTP requests, file I/O - just write them naturally
-  - Virtual threads handle suspension efficiently - you never block an OS thread
-- **Type-safe**: Compile-time checking of state and error types
-- **Testable**: Pure functions that are easy to test without spawning actors
-- **Error handling**: Explicit error recovery with `.recover()`, `.orElse()`, and rich error combinators
-- **Parallel Execution**: Built-in support for `parZip`, `parSequence`, `race`, and `withTimeout`
-- **Readable**: Declarative style makes intent clear
+- **Composable**: Chain steps with `.flatMap()` / `.map()` — build complex pipelines from simple pieces
+- **🚀 Blocking is Safe**: Effects run on Cajun's virtual-thread executor — write natural blocking code
+- **Type-safe error handling**: `.catchAll()`, `.attempt()`, `retry(n)`, `timeout(Duration)`
+- **Parallel execution**: `Effects.parAll()`, `Effects.race()`, `Effects.traverse()`
+- **Resource safety**: `Resource<A>` guarantees cleanup on success and failure
+- **Testable**: Handler logic is pure — test without spawning actors
 
 #### Common Effect Patterns
 
-**State Modification:**
+**Chaining steps:**
 ```java
-Effect.modify(count -> count + 1)              // Update state
-Effect.setState(0)                             // Set to specific value
+Effect.<RuntimeException, Integer>succeed(n)
+    .flatMap(x -> Effect.suspend(() -> process(x)))
+    .map(result -> result * 2)
 ```
 
-**Messaging:**
+**Error handling:**
 ```java
-Effect.tell(otherActor, message)               // Send to another actor
-Effect.tellSelf(message)                       // Send to self
-Effect.ask(actor, request, Duration.ofSeconds(5))  // Request-response
+Effect.suspend(() -> riskyCall())
+    .catchAll(err -> Effect.succeed(defaultValue))
 ```
 
-**Composition:**
+**Retry & timeout:**
 ```java
-Effect.modify(s -> s + 1)
-    .andThen(Effect.logState(s -> "New state: " + s))
-    .andThen(Effect.tell(monitor, new StateUpdate(s)))
+Effect.suspend(() -> httpCall())
+    .retry(3)                          // 3 additional attempts
+    .timeout(Duration.ofSeconds(5))
 ```
 
-**Error Handling:**
+**Parallel execution:**
 ```java
-Effect.attempt(() -> riskyOperation())
-    .recover(error -> defaultValue)
-    .orElse(Effect.of(fallbackValue))
+Effects.parAll(List.of(effect1, effect2, effect3))  // run concurrently
 ```
 
-**Blocking I/O (Safe with Virtual Threads!):**
+**Resource management:**
 ```java
-// Write natural blocking code - Virtual Threads make it efficient!
-Effect.attempt(() -> {
-    var user = database.findUser(userId);           // Blocking - totally fine!
-    var profile = httpClient.get("/api/profile");   // Also blocking - great!
-    return new UserData(user, profile);
-})
-.recover(error -> UserData.empty());
+Resource.fromCloseable(() -> openFile(path))
+    .use(file -> Effect.suspend(() -> readLines(file)))
 ```
 
 #### Learn More
 
-- **[Effect Monad Guide](docs/effect_monad_guide.md)** - Beginner-friendly introduction with examples
-- **[Effect API Reference](docs/effect_monad_api.md)** - Complete API documentation
-- **[Functional Actor Evolution](docs/functional_actor_evolution.md)** - Advanced patterns and best practices
+- **[Getting Started with Effect Actors](docs/effect-actors/getting-started.md)** — first actor, `Effect.suspend`, `flatMap`, `LogCapability`
+- **[Patterns Catalogue](docs/effect-actors/patterns.md)** — retry, timeout, parallel, resource, ask pattern
+- **[Capabilities Guide](docs/effect-actors/capabilities.md)** — `Capability<R>`, `CapabilityHandler`, custom capabilities
+- **[Migration Guide](docs/effect-actors/migration.md)** — upgrading from old `Effect<State,Error,Result>` API
 
 ### Using the Actor System
 

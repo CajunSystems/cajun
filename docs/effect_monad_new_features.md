@@ -1,3 +1,26 @@
+> **Note:** This document describes feature additions to the old `Effect<State, Error, Result>`
+> API that was **removed** in the Cajun × Roux migration (Milestone 1). These features
+> (`Effect.identity()`, `filterOrElse()`, etc.) no longer exist.
+>
+> For current API features, see the Roux-native documentation below.
+
+## Current Documentation
+
+- **[Getting Started with Effect Actors](effect-actors/getting-started.md)**
+  — first actor, `Effect.suspend`, `flatMap`, `LogCapability`
+
+- **[Patterns Catalogue](effect-actors/patterns.md)**
+  — retry, timeout, parallel, resource, ask pattern
+
+- **[Migration Guide](effect-actors/migration.md)**
+  — upgrading from `Effect<State,Error,Result>` to `Effect<E,A>`
+
+---
+
+*The content below is preserved for historical reference only. The APIs described here no longer exist.*
+
+---
+
 # Effect Monad - New Features Summary
 
 This document summarizes the latest enhancements to the Cajun Effect monad API.

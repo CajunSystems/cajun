@@ -1,3 +1,28 @@
+> **Note:** This guide documents the old `Effect<State, Error, Result>` API that was **removed**
+> in the Cajun × Roux migration (Milestone 1).
+>
+> For current documentation, see the Roux-native effect actor guides below.
+
+## Current Documentation
+
+- **[Getting Started with Effect Actors](effect-actors/getting-started.md)**
+  — first actor, `Effect.suspend`, `flatMap`, `LogCapability`
+
+- **[Patterns Catalogue](effect-actors/patterns.md)**
+  — retry, timeout, parallel, resource, ask pattern
+
+- **[Capabilities Guide](effect-actors/capabilities.md)**
+  — `Capability<R>`, `CapabilityHandler`, custom capabilities
+
+- **[Migration Guide](effect-actors/migration.md)**
+  — upgrading from `Effect<State,Error,Result>` to `Effect<E,A>`
+
+---
+
+*The content below is preserved for historical reference only. The APIs described here no longer exist.*
+
+---
+
 # Effect Monad API Guide
 
 ## Overview
