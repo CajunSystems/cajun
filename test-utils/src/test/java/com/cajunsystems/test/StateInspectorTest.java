@@ -3,7 +3,6 @@ package com.cajunsystems.test;
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.Effect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -24,17 +23,17 @@ class StateInspectorTest {
     public record Reset() implements Serializable {}
     
     // Simple calculator handler
-    public static class CalculatorHandler implements StatefulHandler<RuntimeException, Integer, Object> {
+    public static class CalculatorHandler implements StatefulHandler<Integer, Object> {
         @Override
-        public Effect<RuntimeException, Integer> receive(Object message, Integer state, ActorContext context) {
+        public Integer receive(Object message, Integer state, ActorContext context) {
             if (message instanceof Add add) {
-                return Effect.succeed(state + add.value());
+                return state + add.value();
             } else if (message instanceof Multiply mult) {
-                return Effect.succeed(state * mult.value());
+                return state * mult.value();
             } else if (message instanceof Reset) {
-                return Effect.succeed(0);
+                return 0;
             }
-            return Effect.succeed(state);
+            return state;
         }
     }
     

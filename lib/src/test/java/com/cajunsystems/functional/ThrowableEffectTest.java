@@ -11,11 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for ThrowableEffect - the stack-safe, simplified effect monad.
- *
- * @deprecated These tests cover the deprecated {@link ThrowableEffect} monad.
- *     They are retained to guard against regressions until the class is removed.
  */
-@SuppressWarnings("deprecation")
 class ThrowableEffectTest {
     
     private ActorContext context;

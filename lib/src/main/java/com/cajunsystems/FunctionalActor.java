@@ -1,7 +1,6 @@
 package com.cajunsystems;
 
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.Effect;
 
 import java.util.function.BiFunction;
 import java.util.function.BiConsumer;
@@ -38,29 +37,33 @@ public record FunctionalActor<State, Message>() {
         // Create actors in reverse order (last to first)
         Pid[] actorPids = new Pid[count];
         Pid nextPid = null;
-
+        
         for (int i = count; i >= 1; i--) {
             final String actorId = baseId + "-" + i;
             final int index = i - 1;
             final Pid finalNextPid = nextPid;
-
-            // Wrap the BiFunction as a StatefulHandler returning an Effect
-            StatefulHandler<RuntimeException, S, M> handler = new StatefulHandler<RuntimeException, S, M>() {
+            
+            // Create a stateful handler that wraps the action function and forwards messages
+            StatefulHandler<S, M> handler = new StatefulHandler<S, M>() {
                 @Override
-                public Effect<RuntimeException, S> receive(M message, S state, ActorContext context) {
+                public S receive(M message, S state, ActorContext context) {
+                    // Apply the action to get the new state
                     S newState = actions[index].apply(state, message);
+                    
+                    // Forward to the next actor if available
                     if (finalNextPid != null) {
                         finalNextPid.tell(message);
                     }
-                    return Effect.succeed(newState);
+                    
+                    return newState;
                 }
             };
-
+            
             // Create the actor with the handler and initial state
             actorPids[index] = system.statefulActorOf(handler, initialStates[index])
                     .withId(actorId)
                     .spawn();
-
+            
             // Update nextPid for the next iteration
             nextPid = actorPids[index];
         }
@@ -71,7 +74,7 @@ public record FunctionalActor<State, Message>() {
     /**
      * Main method with error handling support. If an errorHandler is provided, it will be called on exception.
      * Otherwise, errors are logged to System.err and the state is not changed.
-     *
+     * 
      * Note: This method is maintained for backward compatibility. New code should use the
      * interface-based approach with ActorSystem.statefulActorOf() instead.
      */
@@ -99,32 +102,32 @@ public record FunctionalActor<State, Message>() {
             }
         };
     }
-
+    
     /**
      * Creates a StatefulHandler from a functional state transition function.
      * This is a bridge between the old functional approach and the new interface-based approach.
-     *
+     * 
      * @param action The state transition function
      * @param errorHandler Optional error handler
      * @return A StatefulHandler that uses the provided function
      */
-    public StatefulHandler<RuntimeException, State, Message> toStatefulHandler(
+    public StatefulHandler<State, Message> toStatefulHandler(
             BiFunction<State, Message, State> action,
             BiConsumer<State, Exception> errorHandler
     ) {
-        return new StatefulHandler<RuntimeException, State, Message>() {
+        return new StatefulHandler<State, Message>() {
             @Override
-            public Effect<RuntimeException, State> receive(Message message, State state, ActorContext context) {
+            public State receive(Message message, State state, ActorContext context) {
                 try {
-                    return Effect.succeed(action.apply(state, message));
-                } catch (RuntimeException e) {
+                    return action.apply(state, message);
+                } catch (Exception e) {
                     if (errorHandler != null) {
                         errorHandler.accept(state, e);
                     } else {
                         System.err.println("[FunctionalActor] Error processing message: " + e.getMessage());
                         e.printStackTrace();
                     }
-                    return Effect.succeed(state); // Return unchanged state on error
+                    return state; // Return unchanged state on error
                 }
             }
         };

@@ -1,10 +1,6 @@
 # Effect Monad - New Features Summary
 
-> **⚠️ DEPRECATED** — The `com.cajunsystems.functional.Effect` monad described here is
-> **deprecated as of v0.5.0** and will be removed in a future release. Use the Roux
-> `Effect<E, A>` API via `StatefulHandler.receive()` instead.
-
-This document summarizes enhancements to the (now-deprecated) Cajun internal Effect monad API.
+This document summarizes the latest enhancements to the Cajun Effect monad API.
 
 ## 1. Effect.identity() - Clean No-Op State
 

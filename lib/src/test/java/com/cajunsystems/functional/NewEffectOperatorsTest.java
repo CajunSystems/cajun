@@ -14,10 +14,8 @@ import java.util.concurrent.TimeoutException;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for Effect operators: identity, filterOrElse, error channel, and parallel execution.
- * Retained to guard against regressions until the deprecated classes are removed.
+ * Tests for new Effect operators: identity, filterOrElse, error channel, and parallel execution.
  */
-@SuppressWarnings("deprecation")
 class NewEffectOperatorsTest {
 
     @Mock

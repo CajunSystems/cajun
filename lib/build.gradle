@@ -38,9 +38,6 @@ dependencies {
     api project(':cajun-persistence')
     api project(':cajun-cluster')
 
-    // Roux effect system — replaces Cajun's own Effect at the StatefulHandler API boundary
-    api libs.roux
-
     // Core dependencies (abstract interfaces)
     api 'org.slf4j:slf4j-api:2.0.9'
 

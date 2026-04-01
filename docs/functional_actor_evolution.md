@@ -1,10 +1,5 @@
 # FunctionalActor Evolution: Monadic API Design
 
-> **⚠️ Historical document** — The `com.cajunsystems.functional` Effect monad discussed
-> here is **deprecated as of v0.5.0**. The evolution described below culminated in Phase 2
-> (v0.5.0): the actor loop is now a composable Roux Effect pipeline. See
-> [behavior_middleware_guide.md](behavior_middleware_guide.md) for the current design.
-
 ## Current State Analysis
 
 ### Existing Implementation
@@ -612,11 +607,11 @@ public class FunctionalActorBuilder<State, Message, Result> {
     
     public Pid spawn() {
         // Convert Effect to StatefulHandler
-        StatefulHandler<RuntimeException, State, Message> handler = new StatefulHandler<>() {
+        StatefulHandler<State, Message> handler = new StatefulHandler<>() {
             @Override
-            public Effect<RuntimeException, State> receive(Message message, State state, ActorContext context) {
+            public State receive(Message message, State state, ActorContext context) {
                 EffectResult<State, Result> result = effect.run(state, message, context);
-                return Effect.succeed(result.state());
+                return result.state();
             }
         };
         

@@ -14,7 +14,6 @@ import com.cajunsystems.backpressure.BackpressureStrategy;
 import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.Effect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,38 +45,38 @@ public class BackpressureStatefulActorExample {
         
         // Create the stateful actor using the new interface-based approach
         Pid processorPid = system.statefulActorOf(
-            new StatefulHandler<RuntimeException, CounterState, CounterMessage>() {
+            new StatefulHandler<CounterState, CounterMessage>() {
                 private final AtomicInteger processedCount = new AtomicInteger(0);
                 private long startTime = System.currentTimeMillis();
-
+                
                 @Override
-                public Effect<RuntimeException, CounterState> receive(CounterMessage message, CounterState state, ActorContext context) {
+                public CounterState receive(CounterMessage message, CounterState state, ActorContext context) {
                     try {
                         // Simulate varying processing times
                         int processed = processedCount.incrementAndGet();
-
+                        
                         if (processed % 1000 == 0) {
                             // Every 1000th message, log progress
                             long elapsed = System.currentTimeMillis() - startTime;
                             double rate = processed * 1000.0 / elapsed;
                             logger.info("Processed {} messages at {} msg/sec", processed, String.format("%.2f", rate));
                         }
-
+                        
                         // Simulate processing time (variable based on message count)
                         Thread.sleep(5 + (processed % 5));
-
+                        
                         // Process the message based on operation
                         if ("increment".equals(message.getOperation())) {
-                            return Effect.succeed(state.increment());
+                            return state.increment();
                         } else if ("decrement".equals(message.getOperation())) {
-                            return Effect.succeed(state.decrement());
+                            return state.decrement();
                         } else {
                             logger.warn("Unknown operation: {}", message.getOperation());
-                            return Effect.succeed(state);
+                            return state;
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        return Effect.succeed(state);
+                        return state;
                     }
                 }
             },

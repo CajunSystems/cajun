@@ -5,13 +5,22 @@ import com.cajunsystems.Pid;
 
 /**
  * Extension methods for ActorSystem to support Effect-based actors.
- *
- * @deprecated Use {@link com.cajunsystems.ActorSystem#statefulActorOf} directly with a
- *     {@link com.cajunsystems.handler.StatefulHandler} that returns the Roux
- *     {@link com.cajunsystems.roux.Effect Effect&lt;E, State&gt;} from its {@code receive()} method.
- *     This class will be removed in a future release.
+ * This class provides static methods that can be used to create effect-based actors.
+ * 
+ * <p>Usage:
+ * <pre>{@code
+ * import static com.cajunsystems.functional.ActorSystemEffectExtensions.*;
+ * 
+ * Effect<Integer, Msg, Void> effect = ...;
+ * Pid actor = fromEffect(system, effect, 0)
+ *     .withId("my-actor")
+ *     .spawn();
+ * }</pre>
+ * 
+ * <p>Note: In Java, we can't add extension methods directly to classes like in Kotlin or C#,
+ * so we provide static methods that take the ActorSystem as the first parameter.
+ * A future version might integrate these directly into ActorSystem.
  */
-@Deprecated(since = "0.5.0", forRemoval = true)
 public final class ActorSystemEffectExtensions {
     
     private ActorSystemEffectExtensions() {

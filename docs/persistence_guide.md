@@ -318,12 +318,12 @@ System.out.println("LMDB entries: " + stats.entries);
 
 ```java
 // Take snapshots periodically to reduce recovery time
-public class MyHandler implements StatefulHandler<RuntimeException, State, Message> {
+public class MyHandler implements StatefulHandler<State, Message> {
     private int messageCount = 0;
     private static final int SNAPSHOT_INTERVAL = 1000;
 
     @Override
-    public Effect<RuntimeException, State> receive(Message msg, State state, ActorContext ctx) {
+    public State receive(Message msg, State state, ActorContext ctx) {
         messageCount++;
         State newState = processMessage(msg, state);
 
@@ -332,7 +332,7 @@ public class MyHandler implements StatefulHandler<RuntimeException, State, Messa
             ctx.saveSnapshot(newState);
         }
 
-        return Effect.succeed(newState);
+        return newState;
     }
 }
 ```
@@ -352,7 +352,7 @@ stateful handler:
 ```java
 import com.cajunsystems.persistence.filesystem.JournalCleanup;
 
-public class MyHandler implements StatefulHandler<RuntimeException, State, Message> {
+public class MyHandler implements StatefulHandler<State, Message> {
 
     private final MessageJournal<Message> journal;
     private long lastSequence;
@@ -362,7 +362,7 @@ public class MyHandler implements StatefulHandler<RuntimeException, State, Messa
     }
 
     @Override
-    public Effect<RuntimeException, State> receive(Message msg, State state, ActorContext ctx) {
+    public State receive(Message msg, State state, ActorContext ctx) {
         // ... update state and sequence number ...
 
         if (shouldSnapshot()) {
@@ -375,7 +375,7 @@ public class MyHandler implements StatefulHandler<RuntimeException, State, Messa
                           .join();   // synchronous cleanup
         }
 
-        return Effect.succeed(state);
+        return state;
     }
 }
 ```

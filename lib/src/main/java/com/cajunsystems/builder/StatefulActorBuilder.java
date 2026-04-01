@@ -10,29 +10,23 @@ import com.cajunsystems.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
-import com.cajunsystems.loop.BehaviorMiddleware;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.PersistenceTruncationConfig;
-import com.cajunsystems.roux.capability.Capability;
-import com.cajunsystems.roux.capability.CapabilityHandler;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 /**
  * Builder for creating stateful actors with a fluent API.
- *
- * @param <E>       the error type of the handler's {@link com.cajunsystems.roux.Effect}
- * @param <State>   the type of the actor's state
- * @param <Message> the type of messages this actor processes
+ * 
+ * @param <State> The type of the actor's state
+ * @param <Message> The type of messages this actor processes
  */
-public class StatefulActorBuilder<E extends Throwable, State, Message> {
+public class StatefulActorBuilder<State, Message> {
 
     private final ActorSystem system;
-    private final StatefulHandler<E, State, Message> handler;
-    private final Class<? extends StatefulHandler<E, State, Message>> handlerClass;
+    private final StatefulHandler<State, Message> handler;
+    private final Class<? extends StatefulHandler<State, Message>> handlerClass;
     private final State initialState;
     private String id;
     private String idTemplate;
@@ -47,8 +41,6 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
     private MailboxProvider<Message> mailboxProvider;
-    private CapabilityHandler<Capability<?>> capabilityHandler;
-    private final List<BehaviorMiddleware<E, State, Message>> middlewares = new ArrayList<>();
 
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -58,8 +50,8 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param handlerClass The handler class (for ID generation)
      * @param initialState The initial state
      */
-    public StatefulActorBuilder(ActorSystem system, StatefulHandler<E, State, Message> handler,
-                               Class<? extends StatefulHandler<E, State, Message>> handlerClass,
+    public StatefulActorBuilder(ActorSystem system, StatefulHandler<State, Message> handler,
+                               Class<? extends StatefulHandler<State, Message>> handlerClass,
                                State initialState) {
         this.system = system;
         this.handler = handler;
@@ -76,7 +68,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param id The ID for the actor
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withId(String id) {
+    public StatefulActorBuilder<State, Message> withId(String id) {
         this.id = id;
         this.idTemplate = null;
         this.idStrategy = null;
@@ -97,7 +89,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param template The ID template with placeholders
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withIdTemplate(String template) {
+    public StatefulActorBuilder<State, Message> withIdTemplate(String template) {
         this.idTemplate = template;
         this.id = null;
         this.idStrategy = null;
@@ -113,7 +105,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param strategy The ID generation strategy
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withIdStrategy(IdStrategy strategy) {
+    public StatefulActorBuilder<State, Message> withIdStrategy(IdStrategy strategy) {
         this.idStrategy = strategy;
         this.id = null;
         this.idTemplate = null;
@@ -126,7 +118,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param backpressureConfig The backpressure configuration
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withBackpressureConfig(BackpressureConfig backpressureConfig) {
+    public StatefulActorBuilder<State, Message> withBackpressureConfig(BackpressureConfig backpressureConfig) {
         this.backpressureConfig = backpressureConfig;
         return this;
     }
@@ -137,7 +129,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param mailboxConfig The mailbox configuration
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withMailboxConfig(ResizableMailboxConfig mailboxConfig) {
+    public StatefulActorBuilder<State, Message> withMailboxConfig(ResizableMailboxConfig mailboxConfig) {
         this.mailboxConfig = mailboxConfig;
         return this;
     }
@@ -148,7 +140,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param parent The parent actor
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withParent(Actor<?> parent) {
+    public StatefulActorBuilder<State, Message> withParent(Actor<?> parent) {
         this.parent = parent;
         return this;
     }
@@ -160,7 +152,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param snapshotStore The snapshot store to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withPersistence(
+    public StatefulActorBuilder<State, Message> withPersistence(
             BatchedMessageJournal<Message> messageJournal,
             SnapshotStore<State> snapshotStore) {
         this.messageJournal = messageJournal;
@@ -175,7 +167,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param strategy The supervision strategy to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withSupervisionStrategy(SupervisionStrategy strategy) {
+    public StatefulActorBuilder<State, Message> withSupervisionStrategy(SupervisionStrategy strategy) {
         this.supervisionStrategy = strategy;
         return this;
     }
@@ -187,7 +179,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param threadPoolFactory The thread pool factory to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withThreadPoolFactory(ThreadPoolFactory threadPoolFactory) {
+    public StatefulActorBuilder<State, Message> withThreadPoolFactory(ThreadPoolFactory threadPoolFactory) {
         this.threadPoolFactory = threadPoolFactory;
         return this;
     }
@@ -199,7 +191,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param mailboxProvider The mailbox provider to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withMailboxProvider(MailboxProvider<Message> mailboxProvider) {
+    public StatefulActorBuilder<State, Message> withMailboxProvider(MailboxProvider<Message> mailboxProvider) {
         this.mailboxProvider = mailboxProvider;
         return this;
     }
@@ -211,55 +203,8 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
      * @param truncationConfig The truncation configuration to use
      * @return This builder for method chaining
      */
-    public StatefulActorBuilder<E, State, Message> withPersistenceTruncation(PersistenceTruncationConfig truncationConfig) {
+    public StatefulActorBuilder<State, Message> withPersistenceTruncation(PersistenceTruncationConfig truncationConfig) {
         this.truncationConfig = truncationConfig;
-        return this;
-    }
-
-    /**
-     * Sets the Roux capability handler for this actor.
-     *
-     * <p>When a capability handler is supplied, each message's effect is executed with
-     * {@code unsafeRunWithHandler(effect, capabilityHandler)} instead of the plain
-     * {@code unsafeRun(effect)}, allowing Roux capabilities (e.g. a custom {@code Clock},
-     * {@code Random}, or any user-defined capability) to be injected at the actor level.
-     *
-     * @param capabilityHandler the handler used to resolve capabilities in the actor's effects
-     * @return this builder for method chaining
-     */
-    public StatefulActorBuilder<E, State, Message> withCapabilityHandler(
-            CapabilityHandler<Capability<?>> capabilityHandler) {
-        this.capabilityHandler = capabilityHandler;
-        return this;
-    }
-
-    /**
-     * Adds a {@link BehaviorMiddleware} to the actor's behavior pipeline.
-     *
-     * <p>Middlewares are applied in the order they are added: the first added
-     * middleware is the innermost wrapper around the base behavior, and the last
-     * added is the outermost.  Execution order (outermost first) is therefore the
-     * reverse of addition order:
-     * <pre>
-     * Added order:   mw1, mw2, mw3
-     * Exec order:    mw3 → mw2 → mw1 → baseBehavior
-     * </pre>
-     *
-     * <p>Example:
-     * <pre>{@code
-     * system.statefulActorOf(MyHandler.class, initial)
-     *     .withMiddleware(new LoggingMiddleware<>("payment"))
-     *     .withMiddleware(new MetricsMiddleware<>("payment"))
-     *     .withMiddleware(RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50)))
-     *     .spawn();
-     * }</pre>
-     *
-     * @param middleware the middleware to add
-     * @return this builder for method chaining
-     */
-    public StatefulActorBuilder<E, State, Message> withMiddleware(
-            BehaviorMiddleware<E, State, Message> middleware) {
-        this.middlewares.add(middleware);
         return this;
     }
     
@@ -272,7 +217,7 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
         // Generate final ID based on priority
         String finalId = generateActorId();
 
-        StatefulHandlerActor<E, State, Message> actor;
+        StatefulHandlerActor<State, Message> actor;
 
         ThreadPoolFactory tpfToUse = (this.threadPoolFactory != null)
                                        ? this.threadPoolFactory
@@ -287,39 +232,32 @@ public class StatefulActorBuilder<E extends Throwable, State, Message> {
         if (customPersistence) {
             actor = new StatefulHandlerActor<>(
                     system,
-                    finalId,
+                    finalId,       // Use generated ID
                     handler,
                     initialState,
                     messageJournal,
                     snapshotStore,
                     backpressureConfig,
-                    mbConfigToUse,
-                    tpfToUse,
-                    mpToUse,
-                    List.copyOf(middlewares)
+                    mbConfigToUse, // Use effective mailbox config
+                    tpfToUse,      // Use effective TPF
+                    mpToUse        // Use effective MP
             );
         } else {
             actor = new StatefulHandlerActor<>(
                     system,
-                    finalId,
+                    finalId,       // Use generated ID
                     handler,
                     initialState,
                     backpressureConfig,
-                    mbConfigToUse,
-                    tpfToUse,
-                    mpToUse,
-                    List.copyOf(middlewares)
+                    mbConfigToUse, // Use effective mailbox config
+                    tpfToUse,      // Use effective TPF
+                    mpToUse        // Use effective MP
             );
         }
 
         // Apply per-actor truncation configuration if provided
         if (truncationConfig != null) {
             actor.setTruncationConfig(truncationConfig);
-        }
-
-        // Apply capability handler if provided
-        if (capabilityHandler != null) {
-            actor.setCapabilityHandler(capabilityHandler);
         }
 
         if (parent != null) {

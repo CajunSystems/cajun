@@ -8,16 +8,30 @@ import java.util.Map;
 
 /**
  * Builder for creating pattern-matching effects with {@link ThrowableEffect}.
+ * 
+ * <p>This builder allows you to define handlers for different message types
+ * and combines them into a single effect that dispatches based on message type.
+ * 
+ * <p>Example:
+ * <pre>{@code
+ * ThrowableEffect<BankState, Void> behavior = ThrowableEffect.<BankState>match()
+ *     .when(Deposit.class, (state, msg, ctx) -> 
+ *         ThrowableEffect.modify(s -> new BankState(s.balance() + msg.amount()))
+ *     )
+ *     .when(Withdraw.class, (state, msg, ctx) -> 
+ *         ThrowableEffect.<BankState, Void>modify(s -> 
+ *             new BankState(s.balance() - msg.amount())
+ *         )
+ *         .filterOrElse(
+ *             s -> s.balance() >= 0,
+ *             ThrowableEffect.identity()
+ *         )
+ *     )
+ *     .build();
+ * }</pre>
  *
  * @param <S> The state type
- *
- * @deprecated Part of the deprecated {@link ThrowableEffect} monad.
- *     Use sealed interfaces and Java {@code switch} pattern matching inside
- *     {@link com.cajunsystems.handler.StatefulHandler#receive} with the Roux
- *     {@link com.cajunsystems.roux.Effect Effect&lt;E, A&gt;} instead.
- *     This class will be removed in a future release.
  */
-@Deprecated(since = "0.5.0", forRemoval = true)
 public class ThrowableEffectMatchBuilder<S> {
     
     private final Map<Class<?>, MessageHandler<S, ?, ?>> handlers = new HashMap<>();

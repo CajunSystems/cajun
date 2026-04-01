@@ -9,10 +9,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for the Trampoline data structure.
- * Retained to guard against regressions until the deprecated class is removed.
+ * Tests for the Trampoline data structure to verify stack-safety.
  */
-@SuppressWarnings("deprecation")
 class TrampolineTest {
     
     @Test

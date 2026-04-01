@@ -29,11 +29,7 @@ import static com.cajunsystems.functional.ActorSystemEffectExtensions.*;
  * Pid references are automatically rehydrated with the ActorSystem after recovery.
  * 
  * Run with: jbang KVEffectExample.java
- *
- * @deprecated This example uses the deprecated {@link com.cajunsystems.functional.Effect}
- *     monad. Refer to the StatefulHandler + Roux Effect examples instead.
  */
-@SuppressWarnings("deprecation")
 public class KVEffectExample {
     
     // Messages

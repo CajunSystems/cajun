@@ -24,4 +24,4 @@ include('lib')
 
 // Supporting modules
 include('test-utils')
-// include('benchmarks')  // JMH plugin unavailable in offline environment
+include('benchmarks')
