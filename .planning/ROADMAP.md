@@ -114,3 +114,22 @@ Plans:
 ## ~~Milestone 3: Roux v0.2.1 Upgrade~~ ✅ `v0.6.0`
 
 Roux upgraded to 0.2.1, AutoCloseable fix, concurrency/resource/timeout examples, full doc update. → [Archive](.planning/milestones/v0.6.0-ROADMAP.md)
+
+---
+
+---
+
+## Milestone 4: Doc Audit & v0.7.0 Release
+
+Audit all documentation for stale references to the deleted `Effect<State,Error,Result>` API.
+Update the root README, archive/redirect legacy effect docs, bump the project version to 0.7.0,
+and tag the release.
+
+**Branch**: `feature/roux-effect-integration`
+
+Plans:
+- 17.1 Doc Audit — inventory every doc file, classify each as current / stale / historical
+- 18.1 Update Root README — rewrite stale Effect API code examples, fix broken doc links
+- 19.1 Archive/Redirect Old Effect Docs — add redirect headers to `effect_monad_api.md`, `throwable_effect_api.md`, `effect_monad_new_features.md`, `functional_actor_evolution.md`; update `docs/README.md`
+- 20.1 Version Bump — `cajunVersion` 0.4.0 → 0.7.0 in `gradle.properties`, update version refs in docs
+- 21.1 Release Validation — full `./gradlew test`, final grep audit, git tag v0.7.0

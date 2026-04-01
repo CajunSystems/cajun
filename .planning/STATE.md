@@ -1,13 +1,23 @@
 # Project State
 
 ## Current Status
-**Milestone**: 3 — Roux v0.2.1 Upgrade ✅ Archived as v0.6.0
-**Phase**: 16 ✅ Complete
-**Status**: Milestone complete — 383 tests, 0 failures
+**Milestone**: 4 — Doc Audit & v0.7.0 Release
+**Phase**: 17 (not yet started)
+**Status**: Milestone created — awaiting first plan
 **Branch**: feature/roux-effect-integration
-**Last Updated**: 2026-03-27
+**Last Updated**: 2026-04-01
 
-## Milestone 3 Phase Progress
+## Milestone 4 Phase Progress
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 17 | Doc Audit | 🔲 Not started |
+| 18 | Update Root README | 🔲 Not started |
+| 19 | Archive/Redirect Old Effect Docs | 🔲 Not started |
+| 20 | Version Bump | 🔲 Not started |
+| 21 | Release Validation | 🔲 Not started |
+
+## Milestone 3 Phase Progress (archived — v0.6.0)
 
 | Phase | Name | Status |
 |-------|------|--------|
