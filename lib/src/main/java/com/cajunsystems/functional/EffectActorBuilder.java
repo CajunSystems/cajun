@@ -1,5 +1,6 @@
 package com.cajunsystems.functional;
 
+import com.cajunsystems.ActorContext;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
@@ -92,19 +93,27 @@ public class EffectActorBuilder<E extends Throwable, Message, A> {
         final Function<Message, Effect<E, A>> h = this.handler;
         final CapabilityHandler<Capability<?>> cap = this.capabilityHandler;
 
-        Handler<Message> wrappedHandler = (message, context) -> {
-            Effect<E, A> effect = h.apply(message);
-            try {
-                if (cap != null) {
-                    rt.unsafeRunWithHandler(effect, cap);
-                } else {
-                    rt.unsafeRun(effect);
+        Handler<Message> wrappedHandler = new Handler<>() {
+            @Override
+            public void receive(Message message, ActorContext context) {
+                Effect<E, A> effect = h.apply(message);
+                try {
+                    if (cap != null) {
+                        rt.unsafeRunWithHandler(effect, cap);
+                    } else {
+                        rt.unsafeRun(effect);
+                    }
+                } catch (RuntimeException re) {
+                    throw re;
+                } catch (Throwable t) {
+                    throw new RuntimeException(
+                            "Effect execution failed for message: " + message, t);
                 }
-            } catch (RuntimeException re) {
-                throw re;
-            } catch (Throwable t) {
-                throw new RuntimeException(
-                        "Effect execution failed for message: " + message, t);
+            }
+
+            @Override
+            public void postStop(ActorContext context) {
+                rt.close();
             }
         };
 

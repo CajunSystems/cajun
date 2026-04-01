@@ -10,6 +10,7 @@ import org.junit.jupiter.api.*;
 
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -106,6 +107,35 @@ class ActorEffectRuntimeTest {
     @Test
     void executorIsNonNull() {
         assertNotNull(runtime.executor());
+    }
+
+    @Test
+    void closeShutsDedicatedExecutorWhenOwned() {
+        ActorSystem noSharedSystem = new ActorSystem(
+                new ThreadPoolFactory().setUseSharedExecutor(false)
+        );
+        ActorEffectRuntime dedicatedRuntime = new ActorEffectRuntime(noSharedSystem);
+
+        dedicatedRuntime.close();
+
+        assertTrue(((ExecutorService) dedicatedRuntime.executor()).isShutdown(),
+                "Dedicated executor must be shut down after close()");
+        noSharedSystem.shutdown();
+    }
+
+    @Test
+    void closeIsNoOpForSharedExecutor() {
+        ActorSystem sharedSystem = new ActorSystem(
+                new ThreadPoolFactory().setUseSharedExecutor(true)
+        );
+        try {
+            ActorEffectRuntime sharedRuntime = new ActorEffectRuntime(sharedSystem);
+            sharedRuntime.close();
+            assertFalse(((ExecutorService) sharedRuntime.executor()).isShutdown(),
+                    "Shared executor must not be shut down by runtime.close()");
+        } finally {
+            sharedSystem.shutdown();
+        }
     }
 
     @Test

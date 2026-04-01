@@ -13,7 +13,16 @@ import java.util.concurrent.ExecutorService;
  * integrating effect lifecycle with actor system lifecycle.
  *
  * <p>If the system has a shared executor enabled it is used directly; otherwise a dedicated
- * executor is created from the system's ThreadPoolFactory.
+ * executor is created from the system's ThreadPoolFactory and owned by this runtime.
+ *
+ * <p>Lifecycle:
+ * <ul>
+ *   <li>Shared executor path — {@link #close()} is a no-op; the executor is owned by
+ *       {@link ActorSystem} and cleaned up by {@link ActorSystem#shutdown()}.
+ *   <li>Dedicated executor path — {@link #close()} shuts down the executor created for
+ *       this runtime. {@link EffectActorBuilder} calls {@code close()} automatically via
+ *       the actor's {@code postStop} hook.
+ * </ul>
  *
  * <pre>{@code
  * ActorSystem system = new ActorSystem();
@@ -25,32 +34,44 @@ import java.util.concurrent.ExecutorService;
  */
 public class ActorEffectRuntime extends DefaultEffectRuntime {
 
+    private final boolean ownsExecutor;
+
     /**
      * Creates an ActorEffectRuntime that dispatches effects through the given
      * actor system's executor.
      *
+     * <p>If the system has a shared executor, it is used directly and this runtime
+     * does not own its lifecycle. Otherwise a dedicated executor is created and
+     * owned by this runtime — it will be shut down when {@link #close()} is called.
+     *
      * @param system the actor system whose executor will run effects
      */
     public ActorEffectRuntime(ActorSystem system) {
-        super(resolveExecutor(system), true);
+        this(system, system.getSharedExecutor());
+    }
+
+    private ActorEffectRuntime(ActorSystem system, ExecutorService shared) {
+        super(
+            shared != null ? shared
+                           : system.getThreadPoolFactory().createExecutorService("actor-effect-runtime"),
+            true  // useTrampoline
+        );
+        this.ownsExecutor = (shared == null);
     }
 
     /**
-     * No-op override. The {@link ExecutorService} passed to this runtime is owned by
-     * the {@link ActorSystem}, not by this runtime. Shutting it down here would
-     * terminate actor execution for the entire system.
+     * Closes this runtime.
      *
-     * <p>Lifecycle cleanup is managed by {@link ActorSystem#shutdown()}.
+     * <p>If this runtime owns a dedicated executor (created because no shared executor
+     * was configured), the executor is shut down. If the runtime uses the actor system's
+     * shared executor, this method is a no-op — the shared executor's lifecycle belongs
+     * to {@link ActorSystem}.
      */
     @Override
     public void close() {
-        // Intentional no-op: executor lifecycle belongs to ActorSystem.
-    }
-
-    private static ExecutorService resolveExecutor(ActorSystem system) {
-        ExecutorService shared = system.getSharedExecutor();
-        return shared != null
-                ? shared
-                : system.getThreadPoolFactory().createExecutorService("actor-effect-runtime");
+        if (ownsExecutor) {
+            super.close();
+        }
+        // else: executor lifecycle belongs to ActorSystem.
     }
 }
