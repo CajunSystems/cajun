@@ -1,3 +1,25 @@
+> **Note:** `ThrowableEffect<State, Result>` was part of the old Cajun effect system that was
+> **removed** in the Cajun × Roux migration (Milestone 1).
+>
+> The equivalent in the current API is `Effect<RuntimeException, A>` (Roux).
+
+## Current Documentation
+
+- **[Getting Started with Effect Actors](effect-actors/getting-started.md)**
+  — first actor, `Effect.suspend`, `flatMap`, `LogCapability`
+
+- **[Patterns Catalogue](effect-actors/patterns.md)**
+  — error handling, retry, timeout, parallel, resource patterns
+
+- **[Migration Guide](effect-actors/migration.md)**
+  — upgrading from `ThrowableEffect<State, Result>` to `Effect<E,A>`
+
+---
+
+*The content below is preserved for historical reference only. The APIs described here no longer exist.*
+
+---
+
 # ThrowableEffect API Guide
 
 ## Overview
