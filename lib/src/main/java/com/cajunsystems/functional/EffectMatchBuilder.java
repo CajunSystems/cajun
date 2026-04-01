@@ -8,11 +8,13 @@ import java.util.Map;
 
 /**
  * Builder for creating pattern-matching effects with {@link Effect}.
- * 
- * <p>This builder allows you to define handlers for different message types
- * and combines them into a single effect that dispatches based on message type.
- * 
- * <p>Example:
+ *
+ * @deprecated Part of the deprecated internal {@link Effect} monad.
+ *     Use the Roux {@link com.cajunsystems.roux.Effect Effect&lt;E, A&gt;} API with sealed
+ *     interfaces and Java pattern matching ({@code switch}) instead.
+ *     This class will be removed in a future release.
+ *
+ * <p>Example (old — deprecated):
  * <pre>{@code
  * Effect<BankState, String, Void> behavior = 
  *     Effect.<BankState, String, Void, BankMsg>match()
@@ -36,6 +38,7 @@ import java.util.Map;
  * @param <R> The result type
  * @param <M> The base message type (for type safety at match level)
  */
+@Deprecated(since = "0.5.0", forRemoval = true)
 public class EffectMatchBuilder<S, E, R, M> {
     
     private final Map<Class<?>, MessageHandler<S, E, ?, R>> handlers = new HashMap<>();

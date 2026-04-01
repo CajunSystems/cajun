@@ -126,26 +126,27 @@ public class TestKit implements AutoCloseable {
      * @param <T> the message type
      * @return a TestPid wrapping the spawned actor
      */
-    public <S, T> TestPid<T> spawnStateful(
-            Class<? extends StatefulHandler<S, T>> handlerClass, 
+    public <E extends Throwable, S, T> TestPid<T> spawnStateful(
+            Class<? extends StatefulHandler<E, S, T>> handlerClass,
             S initialState) {
         Pid pid = system.statefulActorOf(handlerClass, initialState)
                 .withIdStrategy(IdStrategy.UUID)
                 .spawn();
         return new TestPid<>(pid, system);
     }
-    
+
     /**
      * Spawns a stateful actor with test instrumentation using a handler instance.
-     * 
+     *
      * @param handler the stateful handler instance
      * @param initialState the initial state
+     * @param <E> the handler's error type
      * @param <S> the state type
      * @param <T> the message type
      * @return a TestPid wrapping the spawned actor
      */
-    public <S, T> TestPid<T> spawnStateful(
-            StatefulHandler<S, T> handler, 
+    public <E extends Throwable, S, T> TestPid<T> spawnStateful(
+            StatefulHandler<E, S, T> handler,
             S initialState) {
         Pid pid = system.statefulActorOf(handler, initialState)
                 .withIdStrategy(com.cajunsystems.builder.IdStrategy.UUID)

@@ -53,10 +53,15 @@
   - [ReplyingMessage Interface](#standardized-reply-pattern-with-replyingmessage)
 
 ### Advanced Features
+- [Behavior Pipeline & Middleware](#behavior-pipeline--middleware)
+  - [LoopStep — lifecycle control](#loopstep--lifecycle-control)
+  - [Built-in Middlewares](#built-in-middlewares)
+  - [Supervision Strategies (Effect-level)](#supervision-strategies-effect-level)
 - [Backpressure Management](#backpressure-support-in-actors)
 - [Cluster Mode (Distributed Actors)](#cluster-mode)
 
 ### Reference
+- [Roux Effect API Reference](docs/roux_effect_reference.md) — complete `Effect<E, A>` cheat-sheet and examples
 - [Performance Benchmarks](#benchmarks)
   - [Persistence Benchmarks](#persistence-benchmarks)
 - [Running Examples](#running-examples)
@@ -432,21 +437,21 @@ actorPid.tell(new HelloMessage());
 
 ### Stateful Actors with StatefulHandler Interface
 
-For actors that need to maintain and persist state, implement the `StatefulHandler<State, Message>` interface:
+For actors that need to maintain and persist state, implement the `StatefulHandler<E, State, Message>` interface:
 
 ```java
-public class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
-    
+public class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
+
     @Override
-    public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+    public Effect<RuntimeException, Integer> receive(CounterMessage message, Integer state, ActorContext context) {
         return switch (message) {
-            case Increment ignored -> state + 1;
-            case Decrement ignored -> state - 1;
-            case Reset ignored -> 0;
-            case GetCount gc -> {
+            case Increment ignored -> Effect.succeed(state + 1);
+            case Decrement ignored -> Effect.succeed(state - 1);
+            case Reset ignored -> Effect.succeed(0);
+            case GetCount gc -> Effect.suspend(() -> {
                 context.tell(gc.replyTo(), new CountResult(state));
-                yield state; // Return unchanged state
-            }
+                return state; // Return unchanged state
+            });
         };
     }
     
@@ -941,9 +946,20 @@ The `StatefulHandler` interface provides lifecycle methods:
 - `postStop(State state, ActorContext context)`: Called when the actor stops
 - `onError(Message message, State state, Throwable exception, ActorContext context)`: Called when message processing fails
 
+> **Roux Effect API reference**: For the full `Effect<E, A>` API — factory methods, `map`,
+> `flatMap`, `catchAll`, `tap`, retry, concurrency, and more — see
+> [docs/roux_effect_reference.md](docs/roux_effect_reference.md) and the
+> [Roux GitHub repository](https://github.com/CajunSystems/roux).
+
 ### Functional Actors with Effects
 
-**New in Cajun**: Build actors using composable Effects for a more functional programming style.
+> **⚠️ Deprecated since v0.5.0** — The `com.cajunsystems.functional.Effect<State, Error, Result>`
+> API documented in this section is scheduled for removal. Implement
+> `StatefulHandler<E, State, Message>` and return the Roux `Effect<E, State>` from
+> `receive()` instead. See [Behavior Pipeline & Middleware](#behavior-pipeline--middleware)
+> for the current API.
+
+**Legacy (pre-v0.5.0)**: Build actors using the internal composable Effect monad.
 
 Effects provide a powerful way to build actor behaviors by composing simple operations into complex workflows. Think of Effects as recipes that describe what your actor should do.
 
@@ -1887,17 +1903,18 @@ Stateful actors can persist their state to disk or other storage backends. This 
 
 ```java
 // Define a stateful handler for the counter
-public class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+public class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
     @Override
-    public Integer processMessage(Integer count, CounterMessage message) {
+    public Effect<RuntimeException, Integer> receive(Integer count, CounterMessage message, ActorContext ctx) {
         if (message instanceof IncrementMessage) {
-            return count + 1;
+            return Effect.succeed(count + 1);
         } else if (message instanceof GetCountMessage getCountMsg) {
-            // Send the current count back to the sender
-            getCountMsg.getSender().tell(count);
-            return count;
+            return Effect.suspend(() -> {
+                getCountMsg.getSender().tell(count);
+                return count;
+            });
         }
-        return count;
+        return Effect.succeed(count);
     }
 }
 
@@ -1923,11 +1940,11 @@ Cajun supports message persistence and replay for stateful actors using a Write-
 
 ```java
 // Define a stateful handler with custom persistence (legacy approach)
-public class MyStatefulHandler implements StatefulHandler<MyState, MyMessage> {
+public class MyStatefulHandler implements StatefulHandler<RuntimeException, MyState, MyMessage> {
     @Override
-    public MyState processMessage(MyState state, MyMessage message) {
-        // Process the message and return the new state
-        return newState;
+    public Effect<RuntimeException, MyState> receive(MyMessage message, MyState state, ActorContext ctx) {
+        // Process the message and return the new state wrapped in an effect
+        return Effect.succeed(newState);
     }
 }
 
@@ -1956,11 +1973,11 @@ ActorSystemPersistenceHelper.persistence(actorSystem)
 
 // Create stateful actors using the handler pattern with the configured provider
 // No need to specify persistence components explicitly
-public class MyStatefulHandler implements StatefulHandler<MyState, MyMessage> {
+public class MyStatefulHandler implements StatefulHandler<RuntimeException, MyState, MyMessage> {
     @Override
-    public MyState processMessage(MyState state, MyMessage message) {
-        // Process the message and return the new state
-        return newState;
+    public Effect<RuntimeException, MyState> receive(MyMessage message, MyState state, ActorContext ctx) {
+        // Process the message and return the new state wrapped in an effect
+        return Effect.succeed(newState);
     }
 }
 
@@ -2588,6 +2605,116 @@ For complete benchmark details, analysis, and methodology, see:
 - [benchmarks/README.md](benchmarks/README.md) - Technical details on running benchmarks
 
 
+
+## Behavior Pipeline & Middleware
+
+Every `StatefulHandler`-based actor processes messages through a composable **behavior
+pipeline** built from Roux `Effect`s. Each step returns a `LoopStep<State>` that carries
+both the new state and a lifecycle directive.
+
+```
+message → [outermost middleware] → … → [innermost middleware] → handler.receive()
+          ←────────────────── Effect<E, LoopStep<State>> ←──────────────────────
+```
+
+### LoopStep — lifecycle control
+
+```java
+// Keep running with new state
+Effect.succeed(state + 1)               // wrapped into Continue automatically
+
+// Stop the actor (from inside a middleware or supervised behavior)
+LoopStep.stop(state)
+LoopStep.restart(initialState)
+```
+
+| `LoopStep` variant | Effect on actor |
+|--------------------|----------------|
+| `Continue<State>`  | Update state, process next message |
+| `Stop<State>`      | Update state, gracefully terminate |
+| `Restart<State>`   | Update state, restart actor (`preStart` re-runs) |
+
+### Adding Middleware to an Actor
+
+Use `withMiddleware()` on the builder. Middlewares execute outermost-first (last added =
+outermost):
+
+```java
+Pid orders = system.statefulActorOf(new OrderHandler(), OrderHandler.class, initial)
+    .withMiddleware(new LoggingMiddleware<>("orders"))      // innermost
+    .withMiddleware(new MetricsMiddleware<>("orders"))
+    .withMiddleware(RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50)))
+    .withMiddleware(new DeadLetterMiddleware<>(dlq::add))  // outermost
+    .spawn();
+```
+
+### Built-In Middlewares
+
+| Middleware | Purpose |
+|-----------|---------|
+| `LoggingMiddleware` | SLF4J `RECV / DONE / ERROR` structured log per step |
+| `MetricsMiddleware` | In-process counters (`processedCount`, `errorCount`, `stopCount`, etc.) + optional external sink |
+| `RetryMiddleware` | Retry failed effects with optional backoff and per-error predicate |
+| `DeadLetterMiddleware` | Capture failed messages to a consumer, actor, or logger |
+
+```java
+// Logging — by actor name or Logger instance
+new LoggingMiddleware<>("payment-processor")
+
+// Metrics — access counters via handle()
+var metrics = new MetricsMiddleware<Exception, OrderState, OrderMsg>("orders");
+metrics.handle().processedCount();
+metrics.handle().averageLatencyNanos();
+
+// Retry with exponential backoff
+RetryMiddleware.withExponentialBackoff(3, Duration.ofMillis(50))
+
+// Retry only certain errors
+RetryMiddleware.withPredicate(3, err -> err instanceof java.io.IOException)
+
+// Dead-letter — forward to a list, an actor Pid, or SLF4J
+new DeadLetterMiddleware<>(captured::add)
+new DeadLetterMiddleware<>(DeadLetterMiddleware.toLogger())
+```
+
+### Supervision Strategies (Effect-level)
+
+`SupervisionStrategies` provides functional supervision that intercepts `Effect` failures
+and maps them to `LoopStep` directives — without propagating the raw exception:
+
+```java
+// Resume: swallow error, continue with current state
+SupervisionStrategies.withResume(baseBehavior)
+
+// Restart: swallow error, restart with initial state
+SupervisionStrategies.withRestart(baseBehavior, initialState)
+
+// Stop: swallow error, stop actor
+SupervisionStrategies.withStop(baseBehavior)
+
+// Per-exception decision
+SupervisionStrategies.withDecision(baseBehavior, (err, state) ->
+    err instanceof TransientException
+        ? LoopStep.restart(initialState)
+        : LoopStep.stop(state));
+```
+
+Use `withDecision` as middleware on the builder:
+
+```java
+system.statefulActorOf(MyHandler.class, initial)
+    .withMiddleware(next -> SupervisionStrategies.withDecision(next, (err, state) ->
+        err instanceof IOException ? LoopStep.restart(initial) : LoopStep.stop(state)))
+    .spawn();
+```
+
+> **Tip**: Middlewares can be unit-tested without an `ActorSystem` using
+> `DefaultEffectRuntime.create().unsafeRun(pipeline.step(msg, state, ctx))`.
+> See `BehaviorMiddlewareTest` and `SupervisionStrategiesTest` for examples.
+
+**Full guide**: [docs/behavior_middleware_guide.md](docs/behavior_middleware_guide.md) | **Roux Effect API**: [docs/roux_effect_reference.md](docs/roux_effect_reference.md)
+
+---
 
 ## Feature Roadmap
 

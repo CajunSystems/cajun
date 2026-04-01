@@ -21,8 +21,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for Effect interruption handling and cancellation semantics.
- * Verifies that effects properly handle Thread.interrupt() for virtual thread cancellation.
+ * Retained to guard against regressions until the deprecated class is removed.
  */
+@SuppressWarnings("deprecation")
 @ExtendWith(TempPersistenceExtension.class)
 class EffectInterruptionTest {
 

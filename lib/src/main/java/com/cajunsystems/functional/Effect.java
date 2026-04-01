@@ -13,28 +13,18 @@ import java.util.function.Predicate;
 
 /**
  * A stack-safe, composable effect monad with explicit error handling.
- * 
- * <p>Simplified from the original Effect by:
- * <ul>
- * <li>Using 3 type parameters: State, Error, Result (Message type only at match level)
- * <li>Stack-safe via {@link Trampoline}
- * <li>Explicit Error type instead of just Throwable
- * </ul>
- * 
- * <p>Example:
- * <pre>{@code
- * Effect<BankState, String, Void> behavior = 
- *     Effect.<BankState, String, Void, BankMsg>match()
- *         .when(Deposit.class, (state, msg, ctx) -> 
- *             Effect.modify(s -> new BankState(s.balance() + msg.amount()))
- *         )
- *         .build();
- * }</pre>
- * 
+ *
  * @param <S> The state type
  * @param <E> The error type
  * @param <R> The result type
+ *
+ * @deprecated Use the <a href="https://github.com/CajunSystems/roux">Roux</a>
+ *     {@link com.cajunsystems.roux.Effect Effect&lt;E, A&gt;} API instead, accessed through
+ *     {@link com.cajunsystems.handler.StatefulHandler StatefulHandler&lt;E, State, Message&gt;}
+ *     and {@link com.cajunsystems.builder.StatefulActorBuilder}.
+ *     This class will be removed in a future release.
  */
+@Deprecated(since = "0.5.0", forRemoval = true)
 @FunctionalInterface
 public interface Effect<S, E, R> {
     

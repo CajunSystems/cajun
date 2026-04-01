@@ -1,5 +1,21 @@
 # Effect Monad API Guide
 
+> **⚠️ DEPRECATED — Scheduled for removal**
+>
+> The `com.cajunsystems.functional.Effect<State, Error, Result>` API documented here is
+> **deprecated as of v0.5.0** and will be removed in a future release.
+>
+> Use the **Roux `Effect<E, A>`** library instead:
+> - Return `com.cajunsystems.roux.Effect<E, State>` from
+>   [`StatefulHandler.receive()`](../lib/src/main/java/com/cajunsystems/handler/StatefulHandler.java)
+> - Add cross-cutting concerns with [`BehaviorMiddleware`](behavior_middleware_guide.md)
+> - Use [`SupervisionStrategies`](behavior_middleware_guide.md#supervision-strategies-effect-level)
+>   for functional supervision
+>
+> The Roux Effect ships as `com.cajunsystems:roux:0.2.2` and provides the same core
+> operations (`succeed`, `fail`, `suspend`, `map`, `flatMap`, `catchAll`, `tap`,
+> `tapError`) with a cleaner 2-param signature `Effect<E extends Throwable, A>`.
+
 ## Overview
 
 The Effect monad provides a composable, type-safe, **stack-safe** way to build actor behaviors using functional programming patterns. It integrates seamlessly with Java's Stream API and reactive libraries while maintaining the actor-oriented nature of Cajun.
@@ -600,7 +616,7 @@ Effect<Integer, Increment, Void> newStyle =
 
 ```java
 Effect<State, Message, Result> effect = ...;
-StatefulHandler<State, Message> handler = 
+StatefulHandler<RuntimeException, State, Message> handler =
     EffectConversions.toStatefulHandler(effect);
 ```
 

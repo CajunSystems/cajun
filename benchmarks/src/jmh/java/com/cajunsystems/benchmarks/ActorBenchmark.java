@@ -5,6 +5,7 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
+import com.cajunsystems.roux.Effect;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.Serializable;
@@ -90,16 +91,16 @@ public class ActorBenchmark {
         }
     }
 
-    public static class CounterHandler implements StatefulHandler<Integer, CounterMessage> {
+    public static class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMessage> {
         @Override
-        public Integer receive(CounterMessage message, Integer state, ActorContext context) {
+        public Effect<RuntimeException, Integer> receive(CounterMessage message, Integer state, ActorContext context) {
             return switch (message) {
-                case CounterMessage.Increment inc -> state + inc.amount();
+                case CounterMessage.Increment inc -> Effect.succeed(state + inc.amount());
                 case CounterMessage.GetCount get -> {
                     get.result().complete(state);
-                    yield state;
+                    yield Effect.succeed(state);
                 }
-                case CounterMessage.Reset reset -> 0;
+                case CounterMessage.Reset reset -> Effect.succeed(0);
             };
         }
     }

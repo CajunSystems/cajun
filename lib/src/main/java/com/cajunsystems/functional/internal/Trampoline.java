@@ -5,8 +5,12 @@ import java.util.function.Supplier;
 
 /**
  * Stack-safe trampoline for recursive computations.
- * This implementation truly prevents stack overflow by using an iterative evaluation strategy.
+ *
+ * @deprecated Internal implementation detail of the deprecated
+ *     {@link com.cajunsystems.functional.Effect} monad.
+ *     This class will be removed in a future release.
  */
+@Deprecated(since = "0.5.0", forRemoval = true)
 public abstract class Trampoline<A> {
     
     private static final class Done<A> extends Trampoline<A> {

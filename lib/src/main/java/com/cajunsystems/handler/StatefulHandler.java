@@ -1,62 +1,87 @@
 package com.cajunsystems.handler;
 
 import com.cajunsystems.ActorContext;
+import com.cajunsystems.roux.Effect;
 
 /**
  * Interface for handling messages in a stateful actor.
  * This provides a clean separation between the actor implementation and message handling logic.
  *
- * @param <State> The type of the actor's state
- * @param <Message> The type of messages this handler processes
+ * <p>The {@link #receive} method returns a Roux {@link Effect}{@code <E, State>} — a lazy,
+ * composable description of the state transition. Cajun's runtime executes the effect via
+ * {@code EffectRuntime.unsafeRun()} and uses the resulting state value as the new actor state.
+ *
+ * <p>Example usage:
+ * <pre>{@code
+ * public class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMsg> {
+ *
+ *     @Override
+ *     public Effect<RuntimeException, Integer> receive(CounterMsg msg, Integer count, ActorContext ctx) {
+ *         return switch (msg) {
+ *             case Increment() -> Effect.succeed(count + 1);
+ *             case Reset()     -> Effect.succeed(0);
+ *             case GetCount(var replyTo) -> Effect.suspend(() -> {
+ *                 ctx.tell(replyTo, count);
+ *                 return count;
+ *             });
+ *         };
+ *     }
+ * }
+ * }</pre>
+ *
+ * @param <E>       the error type (must extend {@link Throwable})
+ * @param <State>   the type of the actor's state
+ * @param <Message> the type of messages this handler processes
  */
-public interface StatefulHandler<State, Message> {
-    
+public interface StatefulHandler<E extends Throwable, State, Message> {
+
     /**
-     * Processes a message and potentially updates the state.
+     * Processes a message and returns an effect describing the resulting state transition.
      *
-     * @param message The message to process
-     * @param state The current state of the actor
-     * @param context The actor context providing access to actor functionality
-     * @return The new state (or the same state if no change is needed)
+     * <p>The returned {@link Effect} is executed by Cajun's runtime immediately after this
+     * method returns. On success the effect's value becomes the new actor state; on failure
+     * the exception is propagated to {@link #onError}.
+     *
+     * @param message the message to process
+     * @param state   the current state of the actor
+     * @param context the actor context providing access to actor functionality
+     * @return an effect whose success value is the new state
      */
-    State receive(Message message, State state, ActorContext context);
-    
+    Effect<E, State> receive(Message message, State state, ActorContext context);
+
     /**
      * Called before the actor starts processing messages.
      * Override to perform initialization logic.
      *
-     * @param state The initial state of the actor
-     * @param context The actor context providing access to actor functionality
-     * @return The potentially modified initial state
+     * @param state   the initial state of the actor
+     * @param context the actor context providing access to actor functionality
+     * @return the potentially modified initial state
      */
     default State preStart(State state, ActorContext context) {
-        // Default implementation returns the state unchanged
         return state;
     }
-    
+
     /**
      * Called after the actor has stopped processing messages.
      * Override to perform cleanup logic.
      *
-     * @param state The final state of the actor
-     * @param context The actor context providing access to actor functionality
+     * @param state   the final state of the actor
+     * @param context the actor context providing access to actor functionality
      */
     default void postStop(State state, ActorContext context) {
-        // Default implementation does nothing
     }
-    
+
     /**
      * Called when an exception occurs during message processing.
      * Override to provide custom error handling.
      *
-     * @param message The message that caused the exception
-     * @param state The current state when the exception occurred
-     * @param exception The exception that was thrown
-     * @param context The actor context providing access to actor functionality
-     * @return true if the message should be reprocessed, false otherwise
+     * @param message   the message that caused the exception
+     * @param state     the current state when the exception occurred
+     * @param exception the exception that was thrown
+     * @param context   the actor context providing access to actor functionality
+     * @return {@code true} if the message should be reprocessed, {@code false} otherwise
      */
     default boolean onError(Message message, State state, Throwable exception, ActorContext context) {
-        // Default implementation doesn't reprocess
         return false;
     }
 }
