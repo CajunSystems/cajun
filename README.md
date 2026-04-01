@@ -164,7 +164,7 @@ Cajun is available on Maven Central. Add it to your project using Gradle:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.4.0'
+    implementation 'com.cajunsystems:cajun:0.7.0'
 }
 ```
 
@@ -174,7 +174,7 @@ Or with Maven:
 <dependency>
     <groupId>com.cajunsystems</groupId>
     <artifactId>cajun</artifactId>
-    <version>0.4.0</version>
+    <version>0.7.0</version>
 </dependency>
 ```
 
