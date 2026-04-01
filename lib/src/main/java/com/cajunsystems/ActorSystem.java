@@ -16,12 +16,8 @@ import com.cajunsystems.config.BackpressureConfig;
 import com.cajunsystems.config.MailboxConfig;
 import com.cajunsystems.mailbox.config.MailboxProvider;
 import com.cajunsystems.config.ThreadPoolFactory;
-import com.cajunsystems.handler.EffectBehavior;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.handler.StatelessEffectBehavior;
-import com.cajunsystems.roux.capability.CapabilityHandler;
-import com.cajunsystems.roux.capability.Capability;
 import com.cajunsystems.persistence.PersistenceProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -579,12 +575,12 @@ public class ActorSystem {
      * @param initialState The initial state for the actor
      * @return A builder for configuring and creating the stateful actor
      */
-    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> statefulActorOf(
-            Class<? extends StatefulHandler<E, State, Message>> handlerClass,
+    public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
+            Class<? extends StatefulHandler<State, Message>> handlerClass,
             State initialState) {
         try {
-            StatefulHandler<E, State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
-            return new StatefulActorBuilder<E, State, Message>(this, handler, handlerClass, initialState);
+            StatefulHandler<State, Message> handler = handlerClass.getDeclaredConstructor().newInstance();
+            return new StatefulActorBuilder<State, Message>(this, handler, handlerClass, initialState);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create handler of type " + handlerClass.getName(), e);
         }
@@ -596,177 +592,25 @@ public class ActorSystem {
      * which may not work correctly for anonymous classes or lambdas. Prefer using
      * {@link #statefulActorOf(Class, Object)} when possible.
      *
-     * @param <E>       the error type of the handler's {@link com.cajunsystems.roux.Effect}
-     * @param <State>   the type of the actor's state
-     * @param <Message> the type of messages the actor will handle
+     * @param <State> The type of the actor's state
+     * @param <Message> The type of messages the actor will handle
      * @param handler The handler instance to use
      * @param initialState The initial state for the actor
      * @return A builder for configuring and creating the stateful actor
      */
     @SuppressWarnings("unchecked")
-    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> statefulActorOf(
-            StatefulHandler<E, State, Message> handler,
+    public <State, Message> StatefulActorBuilder<State, Message> statefulActorOf(
+            StatefulHandler<State, Message> handler,
             State initialState) {
-        Class<? extends StatefulHandler<E, State, Message>> handlerClass =
-            (Class<? extends StatefulHandler<E, State, Message>>) handler.getClass();
-        return new StatefulActorBuilder<E, State, Message>(this, handler, handlerClass, initialState);
+        Class<? extends StatefulHandler<State, Message>> handlerClass =
+            (Class<? extends StatefulHandler<State, Message>>) handler.getClass();
+        return new StatefulActorBuilder<State, Message>(this, handler, handlerClass, initialState);
     }
     
     /**
-     * Creates a builder for a stateful actor whose behavior is defined by an
-     * {@link EffectBehavior} lambda, without requiring a named handler class.
-     *
-     * <p>Use this when the actor logic is simple enough to express inline:
-     * <pre>{@code
-     * Pid counter = system.fromEffect(
-     *     (CounterMsg msg, Integer count, ActorContext ctx) -> switch (msg) {
-     *         case Increment() -> Effect.succeed(count + 1);
-     *         case Reset()     -> Effect.succeed(0);
-     *         case GetCount(var replyTo) -> Effect.suspend(() -> {
-     *             ctx.tell(replyTo, count);
-     *             return count;
-     *         });
-     *     },
-     *     0
-     * ).withId("counter").spawn();
-     * }</pre>
-     *
-     * <p>The returned builder supports the full {@link StatefulActorBuilder} API —
-     * persistence, middleware, backpressure, supervision, etc. For actors that also
-     * need {@code preStart}/{@code postStop}/{@code onError} hooks, implement
-     * {@link StatefulHandler} directly and use {@link #statefulActorOf} instead.
-     *
-     * @param <E>          the error type produced by the effect
-     * @param <State>      the type of the actor's state
-     * @param <Message>    the type of messages the actor handles
-     * @param behavior     lambda {@code (message, state, context) -> Effect<E, State>}
-     * @param initialState the initial state
-     * @return a builder for configuring and spawning the actor
-     */
-    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> fromEffect(
-            EffectBehavior<E, State, Message> behavior,
-            State initialState) {
-        // Inline adapter avoids the extra method-reference indirection of asHandler(),
-        // ensuring the effect's State type parameter resolves correctly at the call site.
-        StatefulHandler<E, State, Message> handler = (msg, state, ctx) -> behavior.receive(msg, state, ctx);
-        return statefulActorOf(handler, initialState);
-    }
-
-    /**
-     * Creates a builder for a stateful actor whose behavior is defined by an
-     * {@link EffectBehavior} lambda, with a custom Roux capability handler.
-     *
-     * <p>Use this variant when the effect uses Roux
-     * {@link com.cajunsystems.roux.capability.Capability capabilities} that must be
-     * resolved at runtime (e.g. a test clock, a custom random source, or any user-defined
-     * capability):
-     * <pre>{@code
-     * Pid counter = system.fromEffect(
-     *     (CounterMsg msg, Integer count, ActorContext ctx) ->
-     *         Effect.from(Clock.CAPABILITY).flatMap(clock -> switch (msg) {
-     *             case Tick() -> Effect.succeed(count + 1);
-     *             case GetCount(var replyTo) -> Effect.suspend(() -> {
-     *                 ctx.tell(replyTo, clock.now() + ": " + count);
-     *                 return count;
-     *             });
-     *         }),
-     *     0,
-     *     myCapabilityHandler
-     * ).withId("timed-counter").spawn();
-     * }</pre>
-     *
-     * <p>The returned builder supports the full {@link StatefulActorBuilder} API —
-     * persistence, middleware, backpressure, supervision, etc.
-     *
-     * @param <E>               the error type produced by the effect
-     * @param <State>           the type of the actor's state
-     * @param <Message>         the type of messages the actor handles
-     * @param behavior          lambda {@code (message, state, context) -> Effect<E, State>}
-     * @param initialState      the initial state
-     * @param capabilityHandler the Roux capability handler used to resolve capabilities
-     * @return a builder for configuring and spawning the actor
-     */
-    public <E extends Throwable, State, Message> StatefulActorBuilder<E, State, Message> fromEffect(
-            EffectBehavior<E, State, Message> behavior,
-            State initialState,
-            CapabilityHandler<Capability<?>> capabilityHandler) {
-        StatefulHandler<E, State, Message> handler = (msg, state, ctx) -> behavior.receive(msg, state, ctx);
-        return statefulActorOf(handler, initialState).withCapabilityHandler(capabilityHandler);
-    }
-
-    /**
-     * Creates a builder for a <em>stateless</em> actor whose behavior is defined by a
-     * {@link StatelessEffectBehavior} lambda, without requiring a named handler class.
-     *
-     * <p>Use this when the actor logic is purely side-effectful and carries no state between
-     * messages:
-     * <pre>{@code
-     * Pid logger = system.fromEffect(
-     *     (LogMsg msg, ActorContext ctx) -> switch (msg) {
-     *         case Log(var text)  -> Effect.runnable(() -> System.out.println("[LOG] " + text));
-     *         case Shutdown()     -> Effect.runnable(ctx::stop);
-     *     }
-     * ).withId("logger").spawn();
-     * }</pre>
-     *
-     * <p>The returned builder supports the full {@link ActorBuilder} API — backpressure,
-     * middleware, supervision, custom thread pools, etc.  The Effect is executed synchronously
-     * on the actor's message-processing thread for each incoming message; its produced value
-     * is discarded.
-     *
-     * <p>If the effect uses Roux {@link com.cajunsystems.roux.capability.Capability capabilities},
-     * use {@link #fromEffect(StatelessEffectBehavior, CapabilityHandler)} to supply a
-     * capability handler.
-     *
-     * <p>For actors that need state between messages, use
-     * {@link #fromEffect(EffectBehavior, Object)} instead.
-     * For actors that need lifecycle hooks ({@code preStart}/{@code postStop}/{@code onError}),
-     * implement {@link Handler} directly and use {@link #actorOf(Handler)}.
-     *
-     * @param <E>      the error type produced by the effect
-     * @param <Message> the type of messages the actor handles
-     * @param behavior  lambda {@code (message, context) -> Effect<E, ?>}
-     * @return a builder for configuring and spawning the stateless actor
-     */
-    public <E extends Throwable, Message> ActorBuilder<Message> fromEffect(
-            StatelessEffectBehavior<E, Message> behavior) {
-        return actorOf(behavior.asHandler());
-    }
-
-    /**
-     * Creates a builder for a <em>stateless</em> actor whose behavior is defined by a
-     * {@link StatelessEffectBehavior} lambda, with a custom Roux capability handler.
-     *
-     * <p>Use this variant when the effect uses Roux
-     * {@link com.cajunsystems.roux.capability.Capability capabilities} that must be
-     * resolved at runtime (e.g. a test clock, a custom random source, or any user-defined
-     * capability):
-     * <pre>{@code
-     * Pid actor = system.fromEffect(
-     *     (MyMsg msg, ActorContext ctx) ->
-     *         Effect.from(MyClock.CAPABILITY).flatMap(clock -> Effect.runnable(() -> {
-     *             log(clock.now() + ": " + msg);
-     *         })),
-     *     myCapabilityHandler
-     * ).withId("timed-logger").spawn();
-     * }</pre>
-     *
-     * @param <E>               the error type produced by the effect
-     * @param <Message>         the type of messages the actor handles
-     * @param behavior          lambda {@code (message, context) -> Effect<E, ?>}
-     * @param capabilityHandler the Roux capability handler used to resolve capabilities
-     * @return a builder for configuring and spawning the stateless actor
-     */
-    public <E extends Throwable, Message> ActorBuilder<Message> fromEffect(
-            StatelessEffectBehavior<E, Message> behavior,
-            CapabilityHandler<Capability<?>> capabilityHandler) {
-        return actorOf(behavior.asHandler(capabilityHandler));
-    }
-
-    /**
      * Registers an actor with this system.
      * This method is used by the builder classes.
-     *
+     * 
      * @param actor The actor to register
      */
     public void registerActor(Actor<?> actor) {

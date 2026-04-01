@@ -6,7 +6,6 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.StatefulActor;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.Effect;
 import com.cajunsystems.persistence.filesystem.FileSystemCleanupDaemon;
 import com.cajunsystems.persistence.impl.FileSystemPersistenceProvider;
 import com.cajunsystems.test.TempPersistenceExtension;
@@ -56,16 +55,16 @@ class FilesystemAsyncTruncationActorTest {
         record Get(java.util.function.Consumer<Integer> callback) implements CounterMsg {}
     }
 
-    public static class CounterHandler implements StatefulHandler<RuntimeException, Integer, CounterMsg> {
+    public static class CounterHandler implements StatefulHandler<Integer, CounterMsg> {
         @Override
-        public Effect<RuntimeException, Integer> receive(CounterMsg message, Integer state, ActorContext context) {
+        public Integer receive(CounterMsg message, Integer state, ActorContext context) {
             if (state == null) state = 0;
             if (message instanceof CounterMsg.Increment inc) {
-                return Effect.succeed(state + inc.delta());
+                return state + inc.delta();
             } else if (message instanceof CounterMsg.Get get) {
                 get.callback().accept(state);
             }
-            return Effect.succeed(state);
+            return state;
         }
     }
 

@@ -11,8 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -58,26 +56,26 @@ public class FileSystemPersistenceProvider implements PersistenceProvider {
     
     @Override
     public <M> MessageJournal<M> createMessageJournal(String actorId) {
-        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, sanitizeForPath(actorId));
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, actorId);
         return new FileMessageJournal<>(journalDir);
     }
-
+    
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal() {
         Path journalDir = Paths.get(baseDir, JOURNAL_DIR);
         return new BatchedFileMessageJournal<>(journalDir);
     }
-
+    
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal(String actorId) {
-        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, sanitizeForPath(actorId));
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, actorId);
         return new BatchedFileMessageJournal<>(journalDir);
     }
-
+    
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal(
             String actorId, int maxBatchSize, long maxBatchDelayMs) {
-        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, sanitizeForPath(actorId));
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, actorId);
         BatchedFileMessageJournal<M> journal = new BatchedFileMessageJournal<>(journalDir);
         journal.setMaxBatchSize(maxBatchSize);
         journal.setMaxBatchDelayMs(maxBatchDelayMs);
@@ -92,7 +90,7 @@ public class FileSystemPersistenceProvider implements PersistenceProvider {
     
     @Override
     public <S> SnapshotStore<S> createSnapshotStore(String actorId) {
-        Path snapshotDir = Paths.get(baseDir, SNAPSHOT_DIR, sanitizeForPath(actorId));
+        Path snapshotDir = Paths.get(baseDir, SNAPSHOT_DIR, actorId);
         return new FileSnapshotStore<>(snapshotDir);
     }
     
@@ -128,18 +126,6 @@ public class FileSystemPersistenceProvider implements PersistenceProvider {
             logger.warn("Failed to scan persisted actors from {}", snapshotDir, e);
             return actorIds;
         }
-    }
-
-    /**
-     * Sanitizes an actor ID for safe use as a file system path component.
-     * Non-ASCII and path-separator characters are percent-encoded so that any
-     * valid actor ID (including unicode and emoji) maps to a legal file name on
-     * all platforms.
-     */
-    private static String sanitizeForPath(String actorId) {
-        if (actorId == null) return "_null_";
-        // URLEncoder encodes everything except [A-Za-z0-9_.-~]; replace '+' (space) with '%20'
-        return URLEncoder.encode(actorId, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     /**

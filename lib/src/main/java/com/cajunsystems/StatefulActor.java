@@ -555,22 +555,6 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         super.handleException(message, exception);
     }
 
-    /**
-     * Schedules a restart of this actor after the current message batch finishes.
-     *
-     * <p>Exposed as {@code protected} so that subclasses in other packages (e.g.
-     * {@code com.cajunsystems.internal.StatefulHandlerActor}) can trigger a
-     * lifecycle-managed restart in response to a {@link com.cajunsystems.loop.LoopStep.Restart}
-     * signal without requiring direct access to the package-private
-     * {@link #requestRestart(Runnable)} / {@link #stopForRestart()} methods.
-     */
-    protected final void scheduleRestart() {
-        requestRestart(() -> {
-            stopForRestart();
-            start();
-        });
-    }
-
     @Override
     protected final void receive(Message message) {
         if (!stateInitialized) {

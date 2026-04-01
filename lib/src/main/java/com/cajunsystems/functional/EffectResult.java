@@ -6,15 +6,18 @@ import java.util.function.Function;
 
 /**
  * Result of executing an effect.
- *
+ * Contains the new state and an optional result value.
+ * 
+ * <p>This is a sealed interface with three possible outcomes:
+ * <ul>
+ *   <li>{@link Success} - Effect executed successfully with a result value</li>
+ *   <li>{@link NoResult} - Effect executed successfully but produced no result (state change only)</li>
+ *   <li>{@link Failure} - Effect execution failed with an error</li>
+ * </ul>
+ * 
  * @param <State> The type of the actor's state
  * @param <Result> The type of result produced by the effect
- *
- * @deprecated Part of the deprecated internal {@link Effect} monad.
- *     Use the Roux {@link com.cajunsystems.roux.Effect Effect&lt;E, A&gt;} API instead.
- *     This class will be removed in a future release.
  */
-@Deprecated(since = "0.5.0", forRemoval = true)
 public sealed interface EffectResult<State, Result> {
     
     /**

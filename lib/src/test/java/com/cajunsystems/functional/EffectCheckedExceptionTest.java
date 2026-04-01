@@ -14,9 +14,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for Effect monad's error channel with checked exceptions.
- * Retained to guard against regressions until the deprecated class is removed.
+ * Verifies that the Error type parameter properly handles checked exceptions.
  */
-@SuppressWarnings("deprecation")
 class EffectCheckedExceptionTest {
 
     @Mock

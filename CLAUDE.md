@@ -37,7 +37,7 @@ Cajun is a high-performance, distributed actor system for Java 21+ that provides
 
 #### Interface-Based Actors (Preferred)
 - **`Handler<Message>`**: For stateless message handling
-- **`StatefulHandler<E, State, Message>`**: For stateful actors with persistence; `receive()` returns `Effect<E, State>`
+- **`StatefulHandler<State, Message>`**: For stateful actors with persistence
 - Created via `ActorBuilder` and `StatefulActorBuilder` with fluent API
 - Separation of business logic (handlers) from infrastructure (actors)
 
@@ -116,8 +116,8 @@ ThreadPoolFactory customFactory = new ThreadPoolFactory()
 ### Message Handling Patterns
 - Use sealed interfaces for message types with pattern matching
 - Implement `Handler<Message>` for stateless processing
-- Implement `StatefulHandler<E, State, Message>` for stateful processing
-- Return `Effect<E, State>` (e.g. `Effect.succeed(newState)`) from stateful handlers
+- Implement `StatefulHandler<State, Message>` for stateful processing
+- Return new state from stateful handlers (immutable state pattern)
 
 ### Testing Approach
 - Unit tests use JUnit 5 with Mockito

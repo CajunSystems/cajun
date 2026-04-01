@@ -7,19 +7,27 @@ import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
 
 /**
- * Builder for creating actors based on the old internal Effect monad.
- *
+ * Builder for creating actors based on the Effect monad.
+ * Provides a fluent API for configuring and spawning effect-based actors.
+ * 
+ * <p>Example usage:
+ * <pre>{@code
+ * Effect<Integer, CounterMsg, Void> counterEffect = Effect.match()
+ *     .when(Increment.class, (state, msg, ctx) -> 
+ *         Effect.modify(s -> s + msg.amount()))
+ *     .when(GetCount.class, (state, msg, ctx) ->
+ *         Effect.tell(msg.replyTo(), state))
+ *     .build();
+ * 
+ * Pid counter = system.effectActorOf(counterEffect, 0)
+ *     .withId("counter")
+ *     .spawn();
+ * }</pre>
+ * 
  * @param <State> The type of the actor's state
  * @param <Message> The type of messages the actor processes
  * @param <Result> The type of result produced by the effect (typically Void)
- *
- * @deprecated Use {@link com.cajunsystems.builder.StatefulActorBuilder} (obtained from
- *     {@link com.cajunsystems.ActorSystem#statefulActorOf}) with a
- *     {@link com.cajunsystems.handler.StatefulHandler} that returns the Roux
- *     {@link com.cajunsystems.roux.Effect Effect&lt;E, State&gt;} from its {@code receive()} method.
- *     This class will be removed in a future release.
  */
-@Deprecated(since = "0.5.0", forRemoval = true)
 public class EffectActorBuilder<State, Message, Result> {
     
     private final ActorSystem system;
@@ -116,19 +124,20 @@ public class EffectActorBuilder<State, Message, Result> {
      * Spawns a StatefulActor with persistence enabled.
      */
     private Pid spawnStatefulActor() {
-        StatefulHandler<RuntimeException, State, Message> handler = new StatefulHandler<RuntimeException, State, Message>() {
+        StatefulHandler<State, Message> handler = new StatefulHandler<State, Message>() {
             @Override
-            public com.cajunsystems.roux.Effect<RuntimeException, State> receive(Message message, State state, ActorContext context) {
+            public State receive(Message message, State state, ActorContext context) {
                 EffectResult<State, Result> result = effect.run(state, message, context);
-
+                
                 // Log failures
                 if (result.isFailure()) {
-                    result.error().ifPresent(error ->
-                            context.getLogger().error("Effect execution failed", error));
+                    result.error().ifPresent(error -> 
+                        context.getLogger().error("Effect execution failed", error)
+                    );
                 }
-
-                // Wrap the resulting state in a Roux Effect
-                return com.cajunsystems.roux.Effect.succeed(result.state());
+                
+                // Return the new state
+                return result.state();
             }
         };
         

@@ -3,7 +3,6 @@ package com.cajunsystems;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.Effect;
 import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -151,15 +150,15 @@ public class ThreadPoolFactoryActorTest {
     @Test
     void testStatefulActorWithCustomThreadPoolFactory() throws InterruptedException {
         // For this test, we'll use a simple string message to avoid serialization issues
-        StatefulHandler<RuntimeException, String, String> statefulHandler = new StatefulHandler<>() {
+        StatefulHandler<String, String> statefulHandler = new StatefulHandler<>() {
             @Override
-            public Effect<RuntimeException, String> receive(String message, String state, ActorContext context) {
+            public String receive(String message, String state, ActorContext context) {
                 if ("get-thread-name".equals(message)) {
                     String threadName = Thread.currentThread().getName();
                     // Store the thread name in state for retrieval
-                    return Effect.succeed(threadName);
+                    return threadName;
                 }
-                return Effect.succeed(state);
+                return state;
             }
         };
 

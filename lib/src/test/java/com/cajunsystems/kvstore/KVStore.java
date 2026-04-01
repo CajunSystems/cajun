@@ -2,14 +2,13 @@ package com.cajunsystems.kvstore;
 
 import com.cajunsystems.ActorContext;
 import com.cajunsystems.handler.StatefulHandler;
-import com.cajunsystems.roux.Effect;
 
 import java.util.Map;
 
-public class KVStore implements StatefulHandler<RuntimeException, Map<String, String>, KVCommand> {
+public class KVStore implements StatefulHandler<Map<String, String>, KVCommand> {
 
     @Override
-    public Effect<RuntimeException, Map<String, String>> receive(KVCommand kvCommand, Map<String, String> state, ActorContext context) {
+    public Map<String, String> receive(KVCommand kvCommand, Map<String, String> state, ActorContext context) {
         switch (kvCommand) {
             case KVCommand.Put put -> {
                 System.out.println(STR."PUT: \{put.key()} -> \{put.value()}");
@@ -28,6 +27,6 @@ public class KVStore implements StatefulHandler<RuntimeException, Map<String, St
                 state.remove(delete.key());
             }
         }
-        return Effect.succeed(state);
+        return state;
     }
 }

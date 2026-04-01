@@ -1,34 +1,5 @@
 # Building Actors with Effects
 
-> **⚠️ DEPRECATED — Scheduled for removal**
->
-> The internal `com.cajunsystems.functional.Effect` / `ThrowableEffect` monad described in
-> this guide is **deprecated as of v0.5.0** and will be removed in a future release.
->
-> **Migration path**: Implement [`StatefulHandler<E, State, Message>`](../lib/src/main/java/com/cajunsystems/handler/StatefulHandler.java)
-> and return the **Roux `Effect<E, State>`** from `receive()`. This is the API used
-> everywhere in the codebase today. See the
-> [Behavior Pipeline & Middleware guide](behavior_middleware_guide.md) for the full picture.
->
-> ```java
-> // BEFORE (deprecated)
-> Effect<BankState, String, Void> behavior =
->     Effect.<BankState, String, Void, BankMsg>match()
->         .when(Deposit.class, (state, msg, ctx) -> Effect.modify(s -> ...))
->         .build();
->
-> // AFTER (current API)
-> public class BankHandler implements StatefulHandler<RuntimeException, BankState, BankMsg> {
->     @Override
->     public Effect<RuntimeException, BankState> receive(BankMsg msg, BankState state, ActorContext ctx) {
->         return switch (msg) {
->             case Deposit d  -> Effect.succeed(state.deposit(d.amount()));
->             case Withdraw w -> Effect.succeed(state.withdraw(w.amount()));
->         };
->     }
-> }
-> ```
-
 ## What are Effects?
 
 Think of an **Effect** as a recipe for what your actor should do when it receives a message. Just like a cooking recipe tells you the steps to make a dish, an Effect tells the actor:
