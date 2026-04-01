@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 21 ✅ Complete — Milestone 4 complete
-**Status**: v0.7.0 ready — 629 tests, 0 failures, all audits clean
+**Phase**: 21 ✅ Complete — Milestone 4 archived as v0.7.0
+**Status**: Milestone complete — 629 tests, 0 failures, all audits clean
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-01
 

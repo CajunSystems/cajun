@@ -28,8 +28,9 @@ Fix bridge lifecycle (`ActorEffectRuntime.close()`). New concurrency/resource ex
 
 ---
 
-## Milestone 4: Doc Audit & v0.7.0 Release
-**Phases**: 17–21 | **Status**: In Progress | **Started**: 2026-04-01
+## Milestone 4: Doc Audit & v0.7.0 Release ✅
+**Phases**: 17–21 | **Status**: Complete | **Completed**: 2026-04-01 | **Tagged**: v0.7.0 (after merge)
 
-Audit all docs for stale `Effect<State,Error,Result>` API references. Update root README,
-archive/redirect legacy effect docs, bump version to 0.7.0, tag release.
+Doc audit (25 files), root README rewritten with Roux-native API, 4 legacy effect docs
+archived with redirect headers, `docs/README.md` updated, version bumped 0.4.0 → 0.7.0.
+629 tests passing, clean build.

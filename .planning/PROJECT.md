@@ -68,24 +68,23 @@ The result: one effect type (`Effect<E, A>` from Roux), one execution story, two
 
 ---
 
-## Current State (v0.6.0)
+## Current State (v0.7.0)
 
-Milestones 1, 2, and 3 are complete. Roux is upgraded to v0.2.1:
+All 4 milestones complete. Codebase is clean and release-ready:
 
 - Roux dependency: `com.cajunsystems:roux:0.2.1`
-- `ActorEffectRuntime.close()` is a no-op — executor lifecycle owned by `ActorSystem`
-- All capability handlers use `CapabilityHandler.builder()` pattern (UOE contract)
-- New concurrency primitives tested: `Effects.parAll/race/traverse`, `timeout(Duration)`
-- Roux v0.2.1 scoped-fork capability inheritance verified
-- 11 runnable example files (3 new + 1 rewritten in Milestone 3)
-- `docs/effect-actors/` fully updated for v0.2.x; new `migration.md` guide
-- 383 tests, 0 failures
+- `cajunVersion=0.7.0` — all modules, README install snippets, CHANGELOG
+- All legacy `Effect<State,Error,Result>` docs have redirect/historical headers
+- Root README and `docs/README.md` fully updated for Roux-native API
+- 11 runnable effect actor examples, 4 guides in `docs/effect-actors/`
+- 629 tests, 0 failures (full suite across all modules)
 
-## Requirements Status (v0.6.0)
+## Requirements Status (v0.7.0)
 
 All active requirements complete. See archives:
 - `.planning/milestones/v0.5.0-ROADMAP.md` (Milestones 1 & 2)
 - `.planning/milestones/v0.6.0-ROADMAP.md` (Milestone 3)
+- `.planning/milestones/v0.7.0-ROADMAP.md` (Milestone 4)
 
 ---
-*Last updated: 2026-03-27 after v0.6.0 milestone archive*
+*Last updated: 2026-04-01 after v0.7.0 milestone archive*
