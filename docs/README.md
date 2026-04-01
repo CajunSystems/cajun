@@ -63,6 +63,20 @@ Welcome to the Cajun Actor Framework documentation! This index helps you find th
 
 📈 **[cluster_mode_improvements.md](cluster_mode_improvements.md)** - Recent enhancements
 
+### Effect Actors (Roux)
+⚡ **[effect-actors/getting-started.md](effect-actors/getting-started.md)** - First effect actor
+- `EffectActorBuilder`, `Effect.suspend`, `flatMap`
+- Capability-based logging
+
+📋 **[effect-actors/patterns.md](effect-actors/patterns.md)** - Patterns catalogue
+- Retry, timeout, parallel execution, resource management
+
+🔧 **[effect-actors/capabilities.md](effect-actors/capabilities.md)** - Capabilities guide
+- `Capability<R>`, `CapabilityHandler`, custom capabilities
+
+📦 **[effect-actors/migration.md](effect-actors/migration.md)** - Migration guide
+- Upgrading from old `Effect<State,Error,Result>` API to Roux
+
 ---
 
 ## Advanced Topics
@@ -132,6 +146,12 @@ Welcome to the Cajun Actor Framework documentation! This index helps you find th
 - [actor_batching_optimization.md](actor_batching_optimization.md) - Batching optimization
 - [performance_improvements.md](performance_improvements.md) - Performance tuning
 - [performance_recommendation.md](performance_recommendation.md) - Best practices
+
+### Effect Actors (Roux)
+- [effect-actors/getting-started.md](effect-actors/getting-started.md) - First effect actor
+- [effect-actors/patterns.md](effect-actors/patterns.md) - Patterns catalogue
+- [effect-actors/capabilities.md](effect-actors/capabilities.md) - Capabilities guide
+- [effect-actors/migration.md](effect-actors/migration.md) - Migration guide
 
 ### Advanced Features
 - [cluster_mode.md](cluster_mode.md) - Distributed actors
