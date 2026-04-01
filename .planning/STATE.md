@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 19 ✅ Complete → Phase 20 next
-**Status**: Legacy effect docs archived with redirect headers; docs/README.md updated
+**Phase**: 20 ✅ Complete → Phase 21 next
+**Status**: Version bumped to 0.7.0 — gradle.properties, README snippets, CHANGELOG
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-01
 
@@ -14,7 +14,7 @@
 | 17 | Doc Audit | ✅ Complete |
 | 18 | Update Root README | ✅ Complete |
 | 19 | Archive/Redirect Old Effect Docs | ✅ Complete |
-| 20 | Version Bump | 🔲 Not started |
+| 20 | Version Bump | ✅ Complete |
 | 21 | Release Validation | 🔲 Not started |
 
 ## Milestone 4 Audit Findings (Phase 17)
