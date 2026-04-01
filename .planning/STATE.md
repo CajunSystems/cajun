@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 17 (not yet started)
-**Status**: Milestone created — awaiting first plan
+**Phase**: 17 ✅ Complete → Phase 18 next
+**Status**: Doc audit complete — 5 files need changes, 20 clean
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-01
 
@@ -11,11 +11,17 @@
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 17 | Doc Audit | 🔲 Not started |
+| 17 | Doc Audit | ✅ Complete |
 | 18 | Update Root README | 🔲 Not started |
 | 19 | Archive/Redirect Old Effect Docs | 🔲 Not started |
 | 20 | Version Bump | 🔲 Not started |
 | 21 | Release Validation | 🔲 Not started |
+
+## Milestone 4 Audit Findings (Phase 17)
+- 4 docs need ARCHIVE action: `effect_monad_api.md` (line 12), `throwable_effect_api.md` (line 3), `functional_actor_evolution.md` (line 1), `effect_monad_new_features.md` (line 5)
+- Root `README.md` needs UPDATE: stale `Effect.modify/tell/tellSelf` at lines 965, 969, 973, 1004, 1010, 1011, 1017, 1019 + stale doc links at lines 1042–1043
+- 20 other docs: clean, no changes needed
+- `docs/effect_monad_guide.md`: already has redirect header — no action needed
 
 ## Milestone 3 Phase Progress (archived — v0.6.0)
 
