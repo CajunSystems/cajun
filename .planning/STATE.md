@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 17 ✅ Complete → Phase 18 next
-**Status**: Doc audit complete — 5 files need changes, 20 clean
+**Phase**: 18 ✅ Complete → Phase 19 next
+**Status**: Root README updated — Effect Actor section rewritten with Roux-native API
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-01
 
@@ -12,7 +12,7 @@
 | Phase | Name | Status |
 |-------|------|--------|
 | 17 | Doc Audit | ✅ Complete |
-| 18 | Update Root README | 🔲 Not started |
+| 18 | Update Root README | ✅ Complete |
 | 19 | Archive/Redirect Old Effect Docs | 🔲 Not started |
 | 20 | Version Bump | 🔲 Not started |
 | 21 | Release Validation | 🔲 Not started |
