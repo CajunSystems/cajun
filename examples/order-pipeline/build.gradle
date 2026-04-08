@@ -1,0 +1,47 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.3.0'
+    id 'io.spring.dependency-management' version '1.1.5'
+}
+
+group = 'com.cajunsystems.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['--enable-preview']
+}
+
+tasks.withType(JavaExec).configureEach {
+    jvmArgs '--enable-preview'
+}
+
+tasks.withType(Test).configureEach {
+    jvmArgs '--enable-preview'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Cajun actor system + Spring integration
+    // (substituted from local source by settings.gradle during development)
+    implementation 'com.cajunsystems:cajun'
+    implementation 'com.cajunsystems:cajun-spring'
+
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    // In-memory database for the example
+    runtimeOnly 'com.h2database:h2'
+
+    // Logging
+    implementation 'ch.qos.logback:logback-classic'
+}
