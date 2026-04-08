@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * being spawned. You can also register actors manually after spawning them via
  * {@link com.cajunsystems.ActorSystem}.
  *
- * <p>Inject this bean to look up {@link Pid}s or {@link ActorRef}s by handler class or actor ID:
+ * <p>Inject this bean to look up {@link Pid}s or {@link TypedPid}s by handler class or actor ID:
  *
  * <pre>{@code
  * @Autowired
@@ -23,8 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * // Look up by handler class (registered via @ActorComponent)
  * Pid pid = registry.getByHandlerClass(OrderHandler.class);
  *
- * // Type-safe ActorRef
- * ActorRef<OrderMessage> ref = registry.getActorRef(OrderHandler.class);
+ * // Type-safe TypedPid
+ * TypedPid<OrderMessage> ref = registry.getTypedPid(OrderHandler.class);
  *
  * // Look up by explicit actor ID
  * Pid pid = registry.getByActorId("order-processor");
@@ -73,16 +73,16 @@ public class CajunActorRegistry {
     }
 
     /**
-     * Returns a type-safe {@link ActorRef} for the actor backed by the given handler class.
+     * Returns a {@link TypedPid} for the actor backed by the given handler class.
      *
      * @param handlerClass the handler implementation class
      * @param <Message>    the message type inferred from the handler
-     * @return a new {@link ActorRef} wrapping the registered {@link Pid}
+     * @return a new {@link TypedPid} wrapping the registered {@link Pid}
      * @throws IllegalArgumentException if no actor is registered for that handler class
      */
     @SuppressWarnings("unchecked")
-    public <Message> ActorRef<Message> getActorRef(Class<?> handlerClass) {
-        return new ActorRef<>(getByHandlerClass(handlerClass));
+    public <Message> TypedPid<Message> getTypedPid(Class<?> handlerClass) {
+        return new TypedPid<>(getByHandlerClass(handlerClass));
     }
 
     /**
@@ -110,16 +110,16 @@ public class CajunActorRegistry {
     }
 
     /**
-     * Returns a type-safe {@link ActorRef} for the actor with the given ID.
+     * Returns a {@link TypedPid} for the actor with the given ID.
      *
      * @param actorId   the actor's string identifier
      * @param <Message> the expected message type
-     * @return a new {@link ActorRef} wrapping the registered {@link Pid}
+     * @return a new {@link TypedPid} wrapping the registered {@link Pid}
      * @throws IllegalArgumentException if no actor is registered with that ID
      */
     @SuppressWarnings("unchecked")
-    public <Message> ActorRef<Message> getActorRef(String actorId) {
-        return new ActorRef<>(getByActorId(actorId));
+    public <Message> TypedPid<Message> getTypedPid(String actorId) {
+        return new TypedPid<>(getByActorId(actorId));
     }
 
     /**

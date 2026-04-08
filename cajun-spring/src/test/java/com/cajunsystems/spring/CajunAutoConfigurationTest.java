@@ -6,6 +6,7 @@ import com.cajunsystems.ActorContext;
 import com.cajunsystems.handler.Handler;
 import com.cajunsystems.spring.annotation.ActorComponent;
 import com.cajunsystems.spring.annotation.InjectActor;
+import com.cajunsystems.spring.TypedPid;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -55,7 +56,7 @@ class CajunAutoConfigurationTest {
         Pid greeterPid;
 
         @InjectActor(id = "greeter")
-        ActorRef<String> greeterRef;
+        TypedPid<String> greeterRef;
     }
 
     // ---- Injected Spring beans ----
@@ -93,9 +94,9 @@ class CajunAutoConfigurationTest {
     }
 
     @Test
-    void injectActorByClass_injectsActorRef() {
+    void injectActorByClass_injectsTypedPid() {
         assertNotNull(testService.greeterRef);
-        assertEquals("greeter", testService.greeterRef.getActorId());
+        assertEquals("greeter", testService.greeterRef.actorId());
     }
 
     @Test

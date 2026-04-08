@@ -85,7 +85,7 @@ The handler's Spring-injected dependencies are fully wired before the actor star
 
 ### 3. Inject actor references with `@InjectActor`
 
-Use `@InjectActor` to inject a `Pid` or `ActorRef<T>` for any registered actor into another Spring bean.
+Use `@InjectActor` to inject a `Pid` or `TypedPid<T>` for any registered actor into another Spring bean.
 
 ```java
 @Service
@@ -95,7 +95,7 @@ public class CheckoutService {
     private Pid orderPid;                         // raw Pid
 
     @InjectActor(OrderHandler.class)
-    private ActorRef<OrderMessage> orderActor;    // type-safe wrapper
+    private TypedPid<OrderMessage> orderActor;    // type-safe wrapper
 
     public void checkout(Order order) {
         orderActor.tell(new OrderMessage.Place(order));
@@ -123,19 +123,19 @@ public class NotificationService {
     public void init() {
         Pid pid = registry.getByHandlerClass(OrderHandler.class);
         // or: registry.getByActorId("order-processor")
-        // or: registry.getActorRef("order-processor")  -> ActorRef<T>
+        // or: registry.getTypedPid("order-processor")  -> TypedPid<T>
     }
 }
 ```
 
 ---
 
-## ActorRef\<T\>
+## TypedPid\<T\>
 
-`ActorRef<T>` is a type-safe wrapper around `Pid` that ties the actor's message type to the reference at compile time.
+`TypedPid<T>` is a type-safe wrapper around `Pid` that ties the actor's message type to the reference at compile time.
 
 ```java
-ActorRef<OrderMessage> ref = registry.getActorRef(OrderHandler.class);
+TypedPid<OrderMessage> ref = registry.getTypedPid(OrderHandler.class);
 
 // Tell (fire-and-forget)
 ref.tell(new OrderMessage.Place(order));
@@ -150,10 +150,10 @@ OrderStatus status = ref.<OrderStatus>ask(
 ).get();
 
 // Access the underlying Pid if needed
-Pid pid = ref.getPid();
+Pid pid = ref.pid();
 ```
 
-> `ActorRef<T>` is optional convenience. Everywhere you see `ActorRef<T>` you can use the underlying `Pid` instead.
+> `TypedPid<T>` is optional convenience. Everywhere you see `TypedPid<T>` you can use the underlying `Pid` instead.
 
 ---
 

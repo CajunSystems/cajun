@@ -3,7 +3,7 @@ package com.cajunsystems.spring.annotation;
 import java.lang.annotation.*;
 
 /**
- * Injects a {@link com.cajunsystems.Pid} or {@link com.cajunsystems.spring.ActorRef} for a
+ * Injects a {@link com.cajunsystems.Pid} or {@link com.cajunsystems.spring.TypedPid} for a
  * registered Cajun actor into the annotated field.
  *
  * <p>The actor must already be registered in the {@link com.cajunsystems.spring.CajunActorRegistry}
@@ -19,9 +19,9 @@ import java.lang.annotation.*;
  * @InjectActor(OrderHandler.class)
  * private Pid orderPid;
  *
- * // With ActorRef for type-safe messaging:
+ * // With TypedPid for type-safe messaging:
  * @InjectActor(OrderHandler.class)
- * private ActorRef<OrderMessage> orderActor;
+ * private TypedPid<OrderMessage> orderActor;
  *
  * // By explicit actor ID:
  * @InjectActor(id = "order-processor")

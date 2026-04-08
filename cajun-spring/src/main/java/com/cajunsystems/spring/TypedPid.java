@@ -8,21 +8,21 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A type-safe reference to a Cajun actor, wrapping a {@link Pid}.
+ * A typed wrapper around a {@link Pid} that binds the actor's message type at compile time.
  *
- * <p>{@code ActorRef<Message>} ties the actor's message type to the reference, giving compile-time
- * safety when sending messages. Use it wherever you would otherwise hold a raw {@link Pid}.
+ * <p>Core Cajun uses {@link Pid} as the actor reference — untyped and serializable. {@code TypedPid<Message>}
+ * is a thin Spring-layer convenience that prevents accidentally sending the wrong message type to an actor.
  *
- * <p>Instances are returned by {@link CajunActorRegistry#getActorRef(Class)} and can also be
- * injected directly via the {@code @InjectActor} annotation on fields of type {@code ActorRef}.
+ * <p>Instances are returned by {@link CajunActorRegistry#getTypedPid(Class)} and can be injected
+ * via the {@code @InjectActor} annotation on fields of type {@code TypedPid}:
  *
  * <pre>{@code
  * // Obtain via registry
- * ActorRef<OrderMessage> ref = registry.getActorRef(OrderHandler.class);
+ * TypedPid<OrderMessage> ref = registry.getTypedPid(OrderHandler.class);
  *
  * // Or via field injection
  * @InjectActor(OrderHandler.class)
- * private ActorRef<OrderMessage> orderActor;
+ * private TypedPid<OrderMessage> orderActor;
  *
  * // Send a message
  * orderActor.tell(new OrderMessage.Place(orderId));
@@ -31,20 +31,23 @@ import java.util.concurrent.TimeUnit;
  * OrderMessage.Status status = orderActor
  *     .ask(new OrderMessage.GetStatus(orderId), Duration.ofSeconds(5))
  *     .get();
+ *
+ * // Drop back to raw Pid when needed
+ * Pid raw = orderActor.pid();
  * }</pre>
  *
  * @param <Message> the message type accepted by the referenced actor
  */
-public final class ActorRef<Message> {
+public final class TypedPid<Message> {
 
     private final Pid pid;
 
     /**
-     * Creates an {@code ActorRef} wrapping the given {@link Pid}.
+     * Creates a {@code TypedPid} wrapping the given {@link Pid}.
      *
      * @param pid the underlying actor process identifier; must not be {@code null}
      */
-    public ActorRef(Pid pid) {
+    public TypedPid(Pid pid) {
         this.pid = Objects.requireNonNull(pid, "pid must not be null");
     }
 
@@ -72,8 +75,8 @@ public final class ActorRef<Message> {
      * Sends a request to the actor and returns a {@link Reply} that completes when the actor
      * responds.
      *
-     * @param message  the request message
-     * @param timeout  maximum time to wait for a response
+     * @param message    the request message
+     * @param timeout    maximum time to wait for a response
      * @param <Response> the expected response type
      * @return a {@link Reply} that can be awaited synchronously or asynchronously
      */
@@ -86,7 +89,7 @@ public final class ActorRef<Message> {
      *
      * @return the wrapped {@link Pid}
      */
-    public Pid getPid() {
+    public Pid pid() {
         return pid;
     }
 
@@ -95,14 +98,14 @@ public final class ActorRef<Message> {
      *
      * @return the actor ID
      */
-    public String getActorId() {
+    public String actorId() {
         return pid.actorId();
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof ActorRef<?> other)) return false;
+        if (!(o instanceof TypedPid<?> other)) return false;
         return Objects.equals(pid, other.pid);
     }
 
@@ -113,6 +116,6 @@ public final class ActorRef<Message> {
 
     @Override
     public String toString() {
-        return "ActorRef[" + pid.actorId() + "]";
+        return "TypedPid[" + pid.actorId() + "]";
     }
 }

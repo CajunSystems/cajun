@@ -1,8 +1,8 @@
 package com.cajunsystems.spring.internal;
 
 import com.cajunsystems.Pid;
-import com.cajunsystems.spring.ActorRef;
 import com.cajunsystems.spring.CajunActorRegistry;
+import com.cajunsystems.spring.TypedPid;
 import com.cajunsystems.spring.annotation.InjectActor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +35,7 @@ import java.util.Map;
  * <p>Supported field types:
  * <ul>
  *   <li>{@link Pid} — the raw actor process identifier
- *   <li>{@link ActorRef} — a type-safe wrapper around {@link Pid}
+ *   <li>{@link TypedPid} — a type-safe wrapper around {@link Pid}
  * </ul>
  */
 public class InjectActorBeanPostProcessor implements BeanPostProcessor, SmartInitializingSingleton, Ordered {
@@ -79,13 +79,12 @@ public class InjectActorBeanPostProcessor implements BeanPostProcessor, SmartIni
      */
     @Override
     public void afterSingletonsInstantiated() {
+        int count = pendingInjections.size();
         for (var entry : pendingInjections) {
-            Object bean = entry.getKey();
-            Field field = entry.getValue();
-            injectField(bean, field);
+            injectField(entry.getKey(), entry.getValue());
         }
         pendingInjections.clear();
-        log.debug("Completed @InjectActor field injection for {} field(s).", pendingInjections.size());
+        log.debug("Completed @InjectActor field injection for {} field(s).", count);
     }
 
     /**
@@ -101,10 +100,10 @@ public class InjectActorBeanPostProcessor implements BeanPostProcessor, SmartIni
 
     private void validateFieldType(Field field, String beanName) {
         Class<?> fieldType = field.getType();
-        if (!Pid.class.isAssignableFrom(fieldType) && !ActorRef.class.isAssignableFrom(fieldType)) {
+        if (!Pid.class.isAssignableFrom(fieldType) && !TypedPid.class.isAssignableFrom(fieldType)) {
             throw new BeanCreationException(beanName,
                     "@InjectActor field '" + field.getName() + "' in " + field.getDeclaringClass().getName()
-                            + " must be of type Pid or ActorRef, but was: " + fieldType.getName());
+                            + " must be of type Pid or TypedPid, but was: " + fieldType.getName());
         }
 
         InjectActor annotation = field.getAnnotation(InjectActor.class);
@@ -129,8 +128,8 @@ public class InjectActorBeanPostProcessor implements BeanPostProcessor, SmartIni
         }
 
         Object valueToInject;
-        if (ActorRef.class.isAssignableFrom(field.getType())) {
-            valueToInject = new ActorRef<>(pid);
+        if (TypedPid.class.isAssignableFrom(field.getType())) {
+            valueToInject = new TypedPid<>(pid);
         } else {
             valueToInject = pid;
         }
