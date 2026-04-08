@@ -1,0 +1,18 @@
+pluginManagement {
+    repositories {
+        mavenCentral()
+        maven { url 'https://repo.spring.io/release' }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'cajun-agents'
+
+// Pull cajun and cajun-spring directly from the local source tree.
+// Remove this block and add Maven Central coordinates when using a published release.
+includeBuild('../../') {
+    dependencySubstitution {
+        substitute module('com.cajunsystems:cajun')        using project(':lib')
+        substitute module('com.cajunsystems:cajun-spring') using project(':cajun-spring')
+    }
+}

@@ -1,0 +1,119 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+group = 'com.cajunsystems'
+version = project.findProperty('cajunVersion') ?: '0.7.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withJavadocJar()
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).each {
+    it.options.compilerArgs.add('--enable-preview')
+}
+
+tasks.withType(Javadoc) {
+    options.addBooleanOption('-enable-preview', true)
+    options.addStringOption('source', '21')
+}
+
+dependencies {
+    // Core Cajun library
+    api project(':lib')
+
+    // Spring Boot auto-configuration (provided by user's application)
+    compileOnly 'org.springframework.boot:spring-boot-autoconfigure:3.3.0'
+    compileOnly 'org.springframework:spring-context:6.1.8'
+    compileOnly 'org.springframework:spring-beans:6.1.8'
+
+    // Testing
+    testImplementation libs.junit.jupiter
+    testImplementation 'org.springframework.boot:spring-boot-test:3.3.0'
+    testImplementation 'org.springframework.boot:spring-boot-autoconfigure:3.3.0'
+    testImplementation 'org.springframework:spring-context:6.1.8'
+    testImplementation 'org.springframework:spring-test:6.1.8'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.16'
+}
+
+tasks.named('test') {
+    jvmArgs(['--enable-preview'])
+    useJUnitPlatform()
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            from components.java
+            artifactId = 'cajun-spring'
+
+            pom {
+                name.set('Cajun Spring Integration')
+                description.set('Spring Boot auto-configuration and integration for the Cajun actor system')
+                url.set('https://github.com/cajunsystems/cajun')
+
+                licenses {
+                    license {
+                        name.set('MIT License')
+                        url.set('https://opensource.org/licenses/MIT')
+                    }
+                }
+
+                developers {
+                    developer {
+                        id.set('cajunsystems')
+                        name.set('CajunSystems')
+                        email.set('info@cajunsystems.io')
+                    }
+                }
+
+                scm {
+                    connection.set('scm:git:git://github.com/cajunsystems/cajun.git')
+                    developerConnection.set('scm:git:ssh://github.com:cajunsystems/cajun.git')
+                    url.set('https://github.com/cajunsystems/cajun')
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = 'CentralPortal'
+            url = layout.buildDirectory.dir('repo')
+        }
+    }
+}
+
+def hasSigningCredentials = project.hasProperty('signing.keyId') &&
+        project.hasProperty('signing.password') &&
+        project.hasProperty('signing.secretKeyRingFile')
+
+signing {
+    required {
+        gradle.taskGraph.hasTask('publishMavenJavaPublicationToCentralPortalRepository') && hasSigningCredentials
+    }
+
+    if (hasSigningCredentials) {
+        sign publishing.publications.mavenJava
+    } else {
+        logger.lifecycle("Signing disabled for ${project.path} - missing signing properties")
+    }
+}
+
+tasks.register('createCentralBundle', Zip) {
+    from layout.buildDirectory.dir('repo')
+    archiveFileName = "cajun-spring-${version}-bundle.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    dependsOn 'publishMavenJavaPublicationToCentralPortalRepository'
+}

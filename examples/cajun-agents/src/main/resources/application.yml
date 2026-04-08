@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: cajun-agents
+
+# Cajun actor system — IO_BOUND workload because agents block on LLM HTTP calls.
+# Virtual threads handle the blocking efficiently.
+cajun:
+  thread-pool:
+    workload: IO_BOUND
+
+# Set ANTHROPIC_API_KEY in the environment for real Claude responses.
+# Without it the DemoLlmProvider exercises the full tool-use flow offline.
+anthropic:
+  api-key: ${ANTHROPIC_API_KEY:demo}
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.cajunsystems: INFO
+    com.cajunsystems.example.agents: DEBUG

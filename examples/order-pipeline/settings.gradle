@@ -1,0 +1,19 @@
+pluginManagement {
+    repositories {
+        mavenCentral()
+        maven { url 'https://repo.spring.io/release' }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'order-pipeline'
+
+// Pull cajun and cajun-spring directly from the local source tree so you don't
+// need to publish to mavenLocal first. Remove this block (and add Maven Central
+// coordinates to build.gradle) when using a published release.
+includeBuild('../../') {
+    dependencySubstitution {
+        substitute module('com.cajunsystems:cajun')        using project(':lib')
+        substitute module('com.cajunsystems:cajun-spring') using project(':cajun-spring')
+    }
+}

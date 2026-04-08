@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: order-pipeline
+
+  datasource:
+    url: jdbc:h2:mem:orders;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  h2:
+    console:
+      enabled: true   # browse at http://localhost:8080/h2-console
+
+# -----------------------------------------------------------------------
+# Cajun actor system configuration
+# -----------------------------------------------------------------------
+cajun:
+  thread-pool:
+    # IO_BOUND uses virtual threads — ideal for actors that call
+    # external services (payment gateway, warehouse, notifications).
+    workload: IO_BOUND
+
+  backpressure:
+    # Enable a system-wide default. Individual actors can override
+    # this via @ActorComponent(backpressurePreset = "...").
+    enabled: true
+    strategy: BLOCK
+    warning-threshold: 0.7
+    critical-threshold: 0.9
+    recovery-threshold: 0.5
+
+logging:
+  level:
+    com.cajunsystems.example: INFO
+    com.cajunsystems: WARN
