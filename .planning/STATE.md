@@ -2,9 +2,9 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 30 — Planned (2 plans)
-**Status**: Phase 30 planned — execute 30-1-PLAN.md next
-**Branch**: feature/roux-effect-integration
+**Phase**: 30-1 — Complete, 30-2 next
+**Status**: Phase 30-1 complete — execute 30-2-PLAN.md next
+**Branch**: feature/cluster-improvements
 **Last Updated**: 2026-04-11
 
 ## Milestone 5 Phase Progress
@@ -19,7 +19,7 @@
 | 27 | Observability & Diagnostics | ✅ Complete |
 | 28 | Reliability Hardening | ✅ Complete |
 | 29 | Performance Optimization | ✅ Complete |
-| 30 | Cluster Management API | 📋 Planned (2 plans) |
+| 30 | Cluster Management API | 🔄 In progress (30-1 ✅, 30-2 pending) |
 | 31 | Testing, Documentation & Examples | 🔲 Not started |
 
 ## Milestone 4 Phase Progress (archived — v0.7.0)
@@ -116,6 +116,14 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 30-1)
+- `managementApi` field initialized at end of constructor body (not as a field initializer) — field initializers run before constructor body, so `getMetadataStore()` would return null if initialized via field expression
+- `DefaultClusterManagementApi` takes `ClusterActorSystem` (not `MetadataStore`) — stores both `system` and `metadataStore` for extensibility in plan 30-2
+- `listActors()` uses `CompletableFuture.allOf()` pattern to parallelize per-actor `get()` calls then filter by nodeId
+- `migrateActor` and `drainNode` throw `UnsupportedOperationException` as explicit stubs — implemented in plan 30-2
+- Tests use direct `new ClusterActorSystem(...)` without `start()` — avoids etcd/messaging dependency while still exercising real metadata store lookups
+- `ClusterConfiguration.Builder.build()` delegates to `new ClusterConfiguration(this).build()` — keeps config value object separate from construction logic
 
 ## Decisions Made (Milestone 5 — Phase 29 code review fixes)
 - Double-counted `remoteMessageFailures`: `routeToNode().exceptionally()` skips increment when `messagingSystem instanceof ReliableMessagingSystem` — `doSendMessage()` is the authoritative counter
