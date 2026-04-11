@@ -2,12 +2,8 @@ package com.cajunsystems.cluster;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -167,62 +163,6 @@ class ClusterManagementApiReadTest {
         Set<String> actors = api.listActors("nodeA").join();
         assertEquals(Set.of("actor1", "actor2", "actor3"), actors);
         system.stop();
-    }
-
-    // ── In-memory MetadataStore stub ──────────────────────────────────────────
-
-    private static class InMemoryMetadataStore implements MetadataStore {
-        private final ConcurrentHashMap<String, String> store = new ConcurrentHashMap<>();
-
-        @Override
-        public CompletableFuture<Void> put(String key, String value) {
-            store.put(key, value);
-            return CompletableFuture.completedFuture(null);
-        }
-
-        @Override
-        public CompletableFuture<Optional<String>> get(String key) {
-            return CompletableFuture.completedFuture(Optional.ofNullable(store.get(key)));
-        }
-
-        @Override
-        public CompletableFuture<Void> delete(String key) {
-            store.remove(key);
-            return CompletableFuture.completedFuture(null);
-        }
-
-        @Override
-        public CompletableFuture<List<String>> listKeys(String prefix) {
-            List<String> keys = store.keySet().stream()
-                    .filter(k -> k.startsWith(prefix))
-                    .collect(Collectors.toList());
-            return CompletableFuture.completedFuture(keys);
-        }
-
-        @Override
-        public CompletableFuture<Optional<Lock>> acquireLock(String lockName, long ttlSeconds) {
-            return CompletableFuture.completedFuture(Optional.empty());
-        }
-
-        @Override
-        public CompletableFuture<Long> watch(String key, KeyWatcher watcher) {
-            return CompletableFuture.completedFuture(0L);
-        }
-
-        @Override
-        public CompletableFuture<Void> unwatch(long watchId) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        @Override
-        public CompletableFuture<Void> connect() {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        @Override
-        public CompletableFuture<Void> close() {
-            return CompletableFuture.completedFuture(null);
-        }
     }
 
     // ── NoopMessagingSystem stub ───────────────────────────────────────────────
