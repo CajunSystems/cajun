@@ -232,6 +232,30 @@ public class ClusterActorSystem extends ActorSystem {
         return pid;
     }
 
+    /**
+     * Registers multiple actors in the metadata store in parallel using CompletableFuture.allOf().
+     * Significantly faster than sequential registration for large numbers of actors.
+     *
+     * @param actorIds List of actor IDs to register under this node
+     * @return CompletableFuture that completes when all registrations are done
+     */
+    public CompletableFuture<Void> batchRegisterActors(java.util.List<String> actorIds) {
+        if (actorIds == null || actorIds.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        long start = System.nanoTime();
+        java.util.List<CompletableFuture<Void>> futures = actorIds.stream()
+                .map(actorId -> metadataStore.put(ACTOR_ASSIGNMENT_PREFIX + actorId, systemId)
+                        .exceptionally(ex -> {
+                            logger.error("Failed to batch-register actor '{}': {}", actorId, ex.getMessage());
+                            return null;
+                        }))
+                .toList();
+        return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .thenRun(() -> logger.info("Batch registered {} actors in {}ms",
+                        actorIds.size(), (System.nanoTime() - start) / 1_000_000));
+    }
+
     @Override
     public void shutdown(String actorId) {
         // First remove the actor from the metadata store
