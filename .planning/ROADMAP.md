@@ -258,8 +258,5 @@ Plans:
 **Goal**: Chaos tests, cross-node state recovery tests, serialization migration guide, and production deployment guide.
 
 Plans:
-- 31.1 Chaos tests: kill random nodes under load, verify actors recover state from Redis, verify message delivery guarantees hold
-- 31.2 Cross-node state recovery test: stateful actor accumulates state across 100 messages → node killed → recovered on new node → state verified
-- 31.3 Serialization migration guide: how to move from Java native serialization to Kryo/JSON for existing actors
-- 31.4 Production deployment guide: etcd setup, Redis setup, cluster configuration, persistence configuration, observability
-- 31.5 Runnable cluster example: two-node setup with StatefulActor, Redis persistence, node failure and recovery demonstrated
+- **31-1** Shared test helpers (WatchableInMemoryMetadataStore + InMemoryMessagingSystem) + chaos tests (3 sequential-failure scenarios) + management API lifecycle tests (3 scenarios)
+- **31-2** Docs (rewrite cluster_mode.md, new cluster-deployment.md, cluster-serialization.md) + 100-msg state recovery test (`@Tag("requires-redis")`) + runnable ClusterStatefulRecoveryExample
