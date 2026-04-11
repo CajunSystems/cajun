@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 30-1 — Complete, 30-2 next
-**Status**: Phase 30-1 complete — execute 30-2-PLAN.md next
+**Phase**: 30 — Complete
+**Status**: Phase 30 complete — ready to begin Phase 31 (Testing, Documentation & Examples)
 **Branch**: feature/cluster-improvements
 **Last Updated**: 2026-04-11
 
@@ -19,7 +19,7 @@
 | 27 | Observability & Diagnostics | ✅ Complete |
 | 28 | Reliability Hardening | ✅ Complete |
 | 29 | Performance Optimization | ✅ Complete |
-| 30 | Cluster Management API | 🔄 In progress (30-1 ✅, 30-2 pending) |
+| 30 | Cluster Management API | ✅ Complete |
 | 31 | Testing, Documentation & Examples | 🔲 Not started |
 
 ## Milestone 4 Phase Progress (archived — v0.7.0)
@@ -116,6 +116,12 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 30-2)
+- `migrateActor` validates target against metadata store (not in-memory `knownNodes` cache) — authoritative and testable without calling `start()`
+- `shutdownLocalOnly(actorId)` added to `ClusterActorSystem` (package-private): calls `super.shutdown()` only, skips etcd delete — prevents `ClusterActorSystem.shutdown()` from deleting the new assignment written during migration
+- `drainNode` queries live node list from etcd (not `getKnownNodes()`) for same reason as migrateActor
+- Per-actor failures in `drainNode` are best-effort: logged + swallowed so one failed migration doesn't abort the full drain
 
 ## Decisions Made (Milestone 5 — Phase 30-1)
 - `managementApi` field initialized at end of constructor body (not as a field initializer) — field initializers run before constructor body, so `getMetadataStore()` would return null if initialized via field expression

@@ -243,13 +243,13 @@ Plans:
 
 ---
 
-### Phase 30: Cluster Management API
+### ~~Phase 30: Cluster Management API~~ ✅
 
 **Goal**: Programmatic API for cluster operations — node listing, actor migration, node draining. Config builder for simpler cluster setup.
 
 Plans:
 - ✅ **30-1** `ClusterConfiguration` builder + `ClusterManagementApi` interface + `listNodes`/`listActors` + 10 unit tests
-- **30-2** `migrateActor` + `drainNode` implementations + drain-and-rejoin tests (9 tests)
+- ✅ **30-2** `migrateActor` + `drainNode` implementations + drain-and-rejoin tests (9 tests)
 
 ---
 
