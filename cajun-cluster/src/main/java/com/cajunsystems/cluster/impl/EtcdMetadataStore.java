@@ -30,6 +30,9 @@ import java.util.concurrent.TimeUnit;
 public class EtcdMetadataStore implements MetadataStore {
     
     private final String[] endpoints;
+    private final long keepAliveTimeSeconds;
+    private final long keepAliveTimeoutSeconds;
+    private final boolean keepAliveWithoutCalls;
     private Client client;
     private final Map<Long, Watch.Watcher> watchers = new ConcurrentHashMap<>();
     private final Map<String, EtcdLock> activeLocks = new ConcurrentHashMap<>();
@@ -37,18 +40,39 @@ public class EtcdMetadataStore implements MetadataStore {
     private final ExponentialBackoff backoff = new ExponentialBackoff(100, 30_000, 5, 0.25);
     
     /**
-     * Creates a new EtcdMetadataStore with the specified endpoints.
+     * Creates a new EtcdMetadataStore with the specified endpoints using default keep-alive settings.
      *
      * @param endpoints The etcd endpoints (e.g., "http://localhost:2379")
      */
     public EtcdMetadataStore(String... endpoints) {
+        this(5L, 3L, true, endpoints);
+    }
+
+    /**
+     * Creates a new EtcdMetadataStore with custom gRPC keep-alive settings.
+     *
+     * @param keepAliveTimeSeconds    Interval between keep-alive pings (seconds)
+     * @param keepAliveTimeoutSeconds Timeout waiting for keep-alive ACK (seconds)
+     * @param keepAliveWithoutCalls   Whether to send keep-alives even with no active RPCs
+     * @param endpoints               The etcd endpoints (e.g., "http://localhost:2379")
+     */
+    public EtcdMetadataStore(long keepAliveTimeSeconds, long keepAliveTimeoutSeconds,
+                              boolean keepAliveWithoutCalls, String... endpoints) {
         this.endpoints = endpoints;
+        this.keepAliveTimeSeconds = keepAliveTimeSeconds;
+        this.keepAliveTimeoutSeconds = keepAliveTimeoutSeconds;
+        this.keepAliveWithoutCalls = keepAliveWithoutCalls;
     }
     
     @Override
     public CompletableFuture<Void> connect() {
         return CompletableFuture.runAsync(() -> {
-            client = Client.builder().endpoints(endpoints).build();
+            client = Client.builder()
+                    .endpoints(endpoints)
+                    .keepaliveTime(java.time.Duration.ofSeconds(keepAliveTimeSeconds))
+                    .keepaliveTimeout(java.time.Duration.ofSeconds(keepAliveTimeoutSeconds))
+                    .keepaliveWithoutCalls(keepAliveWithoutCalls)
+                    .build();
         });
     }
     
