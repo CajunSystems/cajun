@@ -258,5 +258,5 @@ Plans:
 **Goal**: Chaos tests, cross-node state recovery tests, serialization migration guide, and production deployment guide.
 
 Plans:
-- **31-1** Shared test helpers (WatchableInMemoryMetadataStore + InMemoryMessagingSystem) + chaos tests (3 sequential-failure scenarios) + management API lifecycle tests (3 scenarios)
+- **31-1** ✅ Shared test helpers (WatchableInMemoryMetadataStore + InMemoryMessagingSystem) + chaos tests (3 sequential-failure scenarios) + management API lifecycle tests (3 scenarios)
 - **31-2** Docs (rewrite cluster_mode.md, new cluster-deployment.md, cluster-serialization.md) + 100-msg state recovery test (`@Tag("requires-redis")`) + runnable ClusterStatefulRecoveryExample

@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 31 — Planned (2 plans)
-**Status**: Phase 31 planned — execute 31-1-PLAN.md next
+**Phase**: 31 — In Progress (1 of 2 plans complete)
+**Status**: 31-1 complete — execute 31-2-PLAN.md next
 **Branch**: feature/cluster-improvements
 **Last Updated**: 2026-04-11
 
@@ -20,7 +20,7 @@
 | 28 | Reliability Hardening | ✅ Complete |
 | 29 | Performance Optimization | ✅ Complete |
 | 30 | Cluster Management API | ✅ Complete |
-| 31 | Testing, Documentation & Examples | 📋 Planned (2 plans) |
+| 31 | Testing, Documentation & Examples | 🔄 In Progress (31-1 ✅, 31-2 pending) |
 
 ## Milestone 4 Phase Progress (archived — v0.7.0)
 
@@ -116,6 +116,15 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 31-1)
+- `ClusterActorSystem.stop()` now suppresses per-actor metadata deletion: actor assignments remain in the store when a node stops, leaving them for the leader to redistribute. Only node key deletion signals departure.
+- `skipMetadataDeleteActors` (ConcurrentHashMap.newKeySet) guards `shutdown(actorId)`: both `shutdownLocalOnly()` during migration and `stop()` during system shutdown mark actors to skip the metadata delete.
+- `ActorSystem.getRegisteredActorIds()` added (protected) so `ClusterActorSystem.stop()` can enumerate local actors without accessing the private `actors` map.
+- `WatchableInMemoryMetadataStore.acquireLock()` uses `putIfAbsent` for atomic check-and-acquire — prevents multiple nodes all winning the leader election race.
+- Chaos and lifecycle test classes are `public class` with `public static class TestActor` — required for cross-package reflective instantiation via `ActorSystem.register()`.
+- `@Tag("slow")` on both `ClusterChaosTest` and `ClusterLifecycleTest` — no external services needed, just time.
+- Lifecycle test 3 (`gracefulShutdown_undrained`) polls up to 30s for leader reassignment — background leader election timer fires at most 15s after system startup.
 
 ## Decisions Made (Milestone 5 — Phase 30-2)
 - `migrateActor` validates target against metadata store (not in-memory `knownNodes` cache) — authoritative and testable without calling `start()`

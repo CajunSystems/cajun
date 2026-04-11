@@ -3,7 +3,7 @@ plan: 31-1
 phase: 31 — Testing, Documentation & Examples
 title: Cluster Integration Tests (chaos + management API lifecycle)
 type: test
-status: pending
+status: complete
 ---
 
 ## Objective
