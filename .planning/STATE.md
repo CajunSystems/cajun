@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 29 — Complete (+ P1 review fixes committed)
-**Status**: Phase 29 + code review P1 fixes complete — ready to begin Phase 30 (Cluster Management API)
+**Phase**: 30 — Planned (2 plans)
+**Status**: Phase 30 planned — execute 30-1-PLAN.md next
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -19,7 +19,7 @@
 | 27 | Observability & Diagnostics | ✅ Complete |
 | 28 | Reliability Hardening | ✅ Complete |
 | 29 | Performance Optimization | ✅ Complete |
-| 30 | Cluster Management API | 🔲 Not started |
+| 30 | Cluster Management API | 📋 Planned (2 plans) |
 | 31 | Testing, Documentation & Examples | 🔲 Not started |
 
 ## Milestone 4 Phase Progress (archived — v0.7.0)

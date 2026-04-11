@@ -248,11 +248,8 @@ Plans:
 **Goal**: Programmatic API for cluster operations — node listing, actor migration, node draining. Config builder for simpler cluster setup.
 
 Plans:
-- 30.1 Implement `ClusterManagementApi`: `listNodes()`, `listActors(nodeId)`, `migrateActor(actorId, targetNodeId)`, `drainNode(nodeId)`
-- 30.2 Implement `ClusterConfiguration` builder — fluent API replacing raw constructor args for `ClusterActorSystem`
-- 30.3 Node drain: stop accepting new actors, migrate existing actors gracefully, signal completion
-- 30.4 Actor migration: move actor assignment in metadata store, trigger recovery on target node, verify state continuity
-- 30.5 Tests: drain-and-rejoin cycle, forced migration with state verification
+- **30-1** `ClusterConfiguration` builder + `ClusterManagementApi` interface + `listNodes`/`listActors` + 10 unit tests
+- **30-2** `migrateActor` + `drainNode` implementations + drain-and-rejoin tests (9 tests)
 
 ---
 
