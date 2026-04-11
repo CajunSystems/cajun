@@ -160,7 +160,7 @@ Plans:
 
 ---
 
-### Phase 24: Redis Persistence Design
+### ~~Phase 24: Redis Persistence Design~~ ✅
 
 **Goal**: Documented schema design for Redis-backed journal and snapshot stores, with evaluated tradeoffs vs existing file and LMDB providers.
 
