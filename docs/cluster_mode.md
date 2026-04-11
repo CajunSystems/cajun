@@ -2,7 +2,8 @@
 
 Cajun's cluster module distributes actors across multiple JVM processes (nodes) using a shared
 metadata store for placement and a pluggable messaging layer for inter-node communication.
-This document covers the features added in Phases 22–30.
+This document covers the full feature set added in Phases 22–30, including the management API,
+observability, reliability enhancements, and cross-node state recovery.
 
 ---
 
@@ -51,8 +52,11 @@ system.stop().get();
 | `MetadataStore` | Distributed KV store: actor assignments, leader election, node heartbeats |
 | `MessagingSystem` | Network transport between nodes; pluggable (TCP, gRPC, etc.) |
 | `ClusterActorSystem` | Extends `ActorSystem`; routes `tell()` transparently to local or remote actors |
+| `RedisPersistenceProvider` | Shared persistence layer for cross-node state recovery |
 | Rendezvous hashing | Deterministic actor-to-node mapping; minimal reshuffling on topology change |
 | Leader election | One node owns reassignment logic; based on a distributed lock in `MetadataStore` |
+| `NodeCircuitBreaker` | Per-node failure detection; fast-fails to unreachable nodes |
+| `ClusterManagementApi` | Programmatic cluster topology control: list, migrate, drain |
 
 ### Actor Placement Flow
 
@@ -67,6 +71,16 @@ system.stop().get();
 The leader acquires a distributed lock (`cajun/leader`) in `MetadataStore`. When a node
 heartbeat disappears, the leader reassigns the departed node's actors using rendezvous hashing
 (excluding the failed node). Leadership is refreshed on every heartbeat interval.
+
+### Cross-Node State Recovery (Phase 26+)
+
+When a `StatefulActor` is reassigned to a new node, state is recovered automatically if all
+nodes share a `RedisPersistenceProvider`. On the target node, `StatefulActor.initializeState()`
+replays the Redis journal (latest snapshot + messages since that snapshot), recovering full
+state before accepting any new messages.
+
+Without shared persistence, actor state is node-local and lost on reassignment. Always configure
+`persistenceProvider(redis)` in production cluster deployments.
 
 ---
 
@@ -91,6 +105,10 @@ ClusterActorSystem system = ClusterConfiguration.builder()
 | `EXACTLY_ONCE` | ACK + retry + deduplication | Financial transactions, idempotency required |
 | `AT_LEAST_ONCE` | ACK + retry, no dedup | General stateful actors, Redis journals deduplicate |
 | `AT_MOST_ONCE` | Fire-and-forget | Metrics, logs, notifications |
+
+The default is `EXACTLY_ONCE` (highest reliability, highest overhead). Choose `AT_LEAST_ONCE`
+for most stateful workloads — the Redis journal provides effective deduplication at the
+application layer.
 
 ---
 
@@ -160,7 +178,18 @@ system.registerActor(actor);
 When the actor is reassigned to a new node, `StatefulActor.initializeState()` replays the
 Redis journal automatically, recovering full state before accepting new messages.
 
-For backend comparison and performance data see [persistence_guide.md](persistence_guide.md).
+### Recovery Guarantee
+
+The recovery contract is:
+
+1. Fetch latest snapshot from Redis (if any).
+2. Replay all journal entries with sequence number greater than the snapshot.
+3. Signal readiness via `initializeState()` completing — the actor begins processing live
+   messages only after recovery is complete.
+
+This means recovery time is proportional to the number of unsnapshotted journal entries.
+Take periodic snapshots to bound recovery time. See [persistence_guide.md](persistence_guide.md)
+for backend comparison and performance data.
 
 ---
 
@@ -168,31 +197,33 @@ For backend comparison and performance data see [persistence_guide.md](persisten
 
 ### ClusterMetrics
 
+`ClusterMetrics` is accessible via `system.getClusterMetrics()`:
+
 ```java
 ClusterMetrics metrics = system.getClusterMetrics();
 
-long localRouted   = metrics.getLocalMessagesRouted();
-long remoteRouted  = metrics.getRemoteMessagesRouted();
-long cacheHits     = metrics.getCacheHits();
-long cacheMisses   = metrics.getCacheMisses();
-double avgLatency  = metrics.getAverageRoutingLatencyNs();
-long nodeJoins     = metrics.getNodeJoinCount();
+long localRouted    = metrics.getLocalMessagesRouted();
+long remoteRouted   = metrics.getRemoteMessagesRouted();
+long cacheHits      = metrics.getCacheHits();
+long cacheMisses    = metrics.getCacheMisses();
+double avgLatencyNs = metrics.getAverageRoutingLatencyNs();
+long nodeJoins      = metrics.getNodeJoinCount();
 long nodeDepartures = metrics.getNodeDepartureCount();
 ```
 
 Use `cacheHits / (cacheHits + cacheMisses)` as a proxy for routing efficiency. A low hit rate
-suggests actors are being reassigned frequently or the TTL is too short.
+suggests actors are being reassigned frequently or the TTL is too short (default: 60 s).
 
 ### Health Check
 
 ```java
 ClusterHealthStatus health = system.healthCheck().get();
 
-boolean isHealthy      = health.healthy();
-boolean isLeader       = health.isLeader();
-boolean persistOk      = health.persistenceHealthy();
-boolean messagingOk    = health.messagingSystemRunning();
-int     knownNodeCount = health.knownNodeCount();
+boolean isHealthy       = health.healthy();
+boolean isLeader        = health.isLeader();
+boolean persistOk       = health.persistenceHealthy();
+boolean messagingOk     = health.messagingSystemRunning();
+int     knownNodeCount  = health.knownNodeCount();
 ```
 
 Integrate `healthCheck()` with your monitoring stack (Kubernetes liveness probe, Prometheus
@@ -222,7 +253,7 @@ messages to that node are rejected immediately (fast-fail) until the reset timeo
 CLOSED → (5 failures) → OPEN → (30s timeout) → HALF-OPEN → (probe succeeds) → CLOSED
 ```
 
-Defaults: `failureThreshold = 5`, `resetTimeoutMs = 30_000`. Configurable per node.
+Defaults: `failureThreshold = 5`, `resetTimeoutMs = 30_000`. These are configurable per node.
 
 ### Exponential Backoff on etcd Operations
 
@@ -232,7 +263,8 @@ double-acquisition.
 
 ### Graceful Degradation
 
-If etcd becomes unreachable, `ClusterActorSystem` falls back to its TTL cache for routing.
+If etcd becomes unreachable, `ClusterActorSystem` falls back to its TTL cache for routing:
+
 - Cache hit → `WARN` log; message delivered using last-known assignment.
 - Cache miss → `ERROR` log; message dropped with an exception.
 
@@ -266,7 +298,8 @@ gRPC-based messaging systems use keep-alive (`keepAliveTime=5s`, `keepAliveTimeo
 
 ## Cluster Management API
 
-`ClusterManagementApi` provides programmatic control over cluster topology:
+`ClusterManagementApi` provides programmatic control over cluster topology and is the primary
+interface for rolling upgrades and manual rebalancing.
 
 ```java
 ClusterManagementApi api = system.getManagementApi();
@@ -289,7 +322,8 @@ api.migrateActor("counter-1", "node-3").get();
 ```
 
 The actor is stopped on its current node; the next `tell()` triggers lazy recovery on `node-3`
-via the shared `PersistenceProvider`.
+via the shared `PersistenceProvider`. If no `PersistenceProvider` is configured, the actor
+starts with `initialState` on the target node (state lost).
 
 ### Drain a Node (Rolling Upgrade)
 
@@ -303,6 +337,17 @@ system2.stop().get();
 
 `drainNode` uses rendezvous hashing to redistribute actors across remaining nodes. Per-actor
 failures are best-effort (logged and skipped) so one stuck actor does not abort the drain.
+
+### Rolling Upgrade Workflow
+
+```
+for each node in cluster:
+    api.drainNode(nodeId).get()          // 1. migrate actors off this node
+    system.stop().get()                  // 2. stop the node gracefully
+    // upgrade JVM / deploy new artifact //
+    system.start().get()                 // 3. restart with new version
+    // actors recover automatically via Redis
+```
 
 ---
 
@@ -369,10 +414,12 @@ actor.tell("Hello from node-1");
 
 - [ ] etcd cluster: 3 or 5 nodes for HA (odd count required for quorum).
 - [ ] Redis: enable both RDB snapshots and AOF for durability. See [cluster-deployment.md](cluster-deployment.md).
-- [ ] `withPersistenceProvider(redis)` configured on every node — prevents state loss on reassignment.
+- [ ] `persistenceProvider(redis)` configured on every node — prevents state loss on reassignment.
 - [ ] `deliveryGuarantee` set explicitly — default is `EXACTLY_ONCE` (highest overhead).
 - [ ] Health check endpoint wired to `system.healthCheck()`.
 - [ ] `ClusterMetrics` exposed to Prometheus / Grafana.
 - [ ] Rolling upgrades: use `api.drainNode(nodeId)` before stopping each node.
 - [ ] Actor IDs are stable across restarts (use semantic IDs, not random UUIDs).
-- [ ] `system.stop().get()` called on JVM shutdown (registers a shutdown hook).
+- [ ] `system.stop().get()` called on JVM shutdown (register a shutdown hook).
+- [ ] `NodeCircuitBreaker` thresholds tuned for your network SLA.
+- [ ] Snapshot intervals configured to bound recovery time on reassignment.
