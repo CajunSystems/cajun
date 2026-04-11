@@ -48,6 +48,8 @@ public class ClusterActorSystem extends ActorSystem {
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
     private PersistenceProvider persistenceProvider; // null = use existing registry default
     private final ClusterManagementApi managementApi;
+    // Actors being shut down locally only (skip metadata deletion — new assignment already written)
+    private final Set<String> skipMetadataDeleteActors = ConcurrentHashMap.newKeySet();
 
     /**
      * Creates a new ClusterActorSystem with the specified configuration.
@@ -193,8 +195,18 @@ public class ClusterActorSystem extends ActorSystem {
                 .thenCompose(v -> messagingSystem.stop())
                 .thenCompose(v -> metadataStore.close())
                 .whenComplete((v, ex) -> {
-                    // Call parent shutdown
-                    super.shutdown();
+                    // Suppress per-actor metadata deletion during system stop.
+                    // When the whole system shuts down, actor assignments should remain
+                    // in the metadata store so the leader can detect orphaned actors and
+                    // reassign them to surviving nodes. The node key deletion above already
+                    // signals departure; individual actor metadata must not be deleted here.
+                    Set<String> localActors = getRegisteredActorIds();
+                    skipMetadataDeleteActors.addAll(localActors);
+                    try {
+                        super.shutdown();
+                    } finally {
+                        skipMetadataDeleteActors.removeAll(localActors);
+                    }
                 });
     }
 
@@ -261,14 +273,18 @@ public class ClusterActorSystem extends ActorSystem {
 
     @Override
     public void shutdown(String actorId) {
-        // First remove the actor from the metadata store
-        metadataStore.delete(ACTOR_ASSIGNMENT_PREFIX + actorId)
-                .exceptionally(ex -> {
-                    logger.error("Failed to unregister actor {} from metadata store", actorId, ex);
-                    return null;
-                });
+        // During shutdownLocalOnly(), Actor.stop() calls system.shutdown(actorId) as part
+        // of its teardown. Skip metadata deletion in that case — the new assignment was
+        // already written and must not be overwritten.
+        if (!skipMetadataDeleteActors.contains(actorId)) {
+            metadataStore.delete(ACTOR_ASSIGNMENT_PREFIX + actorId)
+                    .exceptionally(ex -> {
+                        logger.error("Failed to unregister actor {} from metadata store", actorId, ex);
+                        return null;
+                    });
+        }
 
-        // Then shut down the actor locally
+        // Shut down the actor locally
         super.shutdown(actorId);
     }
 
@@ -701,7 +717,14 @@ public class ClusterActorSystem extends ActorSystem {
      * written to etcd is not overwritten by the usual shutdown path.
      */
     void shutdownLocalOnly(String actorId) {
-        super.shutdown(actorId);
+        // Mark this actor so that the Actor.stop() → system.shutdown(actorId) callback
+        // (triggered during super.shutdown) skips metadata deletion.
+        skipMetadataDeleteActors.add(actorId);
+        try {
+            super.shutdown(actorId);
+        } finally {
+            skipMetadataDeleteActors.remove(actorId);
+        }
     }
 
     public Map<String, String> getActorAssignmentCache() {
