@@ -44,6 +44,10 @@ dependencies {
     // Roux effect system (unified effects for Cajun actors)
     api libs.roux
 
+    // Serialization providers
+    implementation libs.kryo
+    implementation libs.jackson.databind
+
     // Runtime implementation dependencies (logback for logging)
     implementation 'ch.qos.logback:logback-classic:1.5.16'
 
@@ -68,6 +72,9 @@ dependencies {
     // Etcd + gRPC for runtime.cluster EtcdMetadataStore
     implementation 'io.etcd:jetcd-core:0.8.4'
     implementation 'io.grpc:grpc-stub:1.62.2'
+
+    // Redis client (for RedisPersistenceProvider and integration tests)
+    implementation libs.lettuce.core
 
     // Override vulnerable transitive dependencies
     constraints {
@@ -123,7 +130,7 @@ tasks.named('test') {
     jvmArgs(['--enable-preview'])
     useJUnitPlatform {
         // By default, exclude performance tests
-        excludeTags 'performance'
+        excludeTags 'performance', 'requires-redis'
     }
 }
 

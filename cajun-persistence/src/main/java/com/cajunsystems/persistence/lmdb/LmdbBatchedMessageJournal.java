@@ -7,7 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -17,14 +16,14 @@ import java.util.concurrent.CompletionException;
  * LMDB-specific batched message journal that uses a single LMDB write
  * transaction per batch and avoids per-message asynchronous overhead.
  *
- * @param <M> The type of message (must be Serializable)
+ * @param <M> The type of message
  */
-public class LmdbBatchedMessageJournal<M extends Serializable> implements BatchedMessageJournal<M> {
+public class LmdbBatchedMessageJournal<M> implements BatchedMessageJournal<M> {
 
     private static final Logger logger = LoggerFactory.getLogger(LmdbBatchedMessageJournal.class);
 
     private final String actorId;
-    private final LmdbMessageJournal<M> delegate;
+    private final LmdbMessageJournal<M> delegate; // no longer constrained to Serializable
     private volatile int maxBatchSize;
     private volatile long maxBatchDelayMs;
 

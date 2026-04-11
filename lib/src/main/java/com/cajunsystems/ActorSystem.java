@@ -618,8 +618,18 @@ public class ActorSystem {
     }
 
     /**
+     * Returns a snapshot of the currently registered actor IDs.
+     * Subclasses may use this to enumerate actors without accessing the private map.
+     *
+     * @return unmodifiable snapshot of actor IDs at the moment of the call
+     */
+    protected Set<String> getRegisteredActorIds() {
+        return Set.copyOf(actors.keySet());
+    }
+
+    /**
      * Shuts down and removes the actor with the specified ID.
-     * 
+     *
      * @param actorId The ID of the actor to shut down
      */
     public void shutdown(String actorId) {

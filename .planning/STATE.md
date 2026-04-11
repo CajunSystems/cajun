@@ -1,13 +1,28 @@
 # Project State
 
 ## Current Status
-**Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 21 ✅ Complete — Milestone 4 archived as v0.7.0
-**Status**: Milestone complete — 629 tests, 0 failures, all audits clean
-**Branch**: feature/roux-effect-integration
-**Last Updated**: 2026-04-01
+**Milestone**: 5 — Cluster Evaluation & Enhancement
+**Phase**: 31 — Complete (2/2 plans done)
+**Status**: All Phase 31 deliverables shipped — Phase 31 complete
+**Branch**: feature/cluster-improvements
+**Last Updated**: 2026-04-11
 
-## Milestone 4 Phase Progress
+## Milestone 5 Phase Progress
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 22 | Cluster & Persistence Audit | ✅ Complete |
+| 23 | Serialization Framework | ✅ Complete |
+| 24 | Redis Persistence Design | ✅ Complete |
+| 25 | Redis Persistence Provider | ✅ Complete |
+| 26 | Cluster + Shared Persistence Integration | ✅ Complete |
+| 27 | Observability & Diagnostics | ✅ Complete |
+| 28 | Reliability Hardening | ✅ Complete |
+| 29 | Performance Optimization | ✅ Complete |
+| 30 | Cluster Management API | ✅ Complete |
+| 31 | Testing, Documentation & Examples | ✅ Complete (31-1 ✅, 31-2 ✅) |
+
+## Milestone 4 Phase Progress (archived — v0.7.0)
 
 | Phase | Name | Status |
 |-------|------|--------|
@@ -101,6 +116,84 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 31-2)
+- `cluster_mode.md` rewritten from 141 lines to ~300 lines; covers cross-node recovery,
+  ClusterManagementApi rolling upgrade workflow, NodeCircuitBreaker, ClusterMetrics.
+- `cluster-deployment.md` created: etcd HA setup, Redis durability config, JVM bootstrap,
+  Prometheus metrics, rolling upgrade procedure, Kubernetes StatefulSet example.
+- `cluster-serialization.md` created: Kryo vs JSON tradeoffs, schema evolution, Kryo→JSON
+  migration procedure.
+- 100-message test (`testStatefulActorFullLifecycle_100Messages`) added to
+  `StatefulActorClusterStateTest` with `Thread.sleep(2000)` for journal batch flush.
+- `ClusterStatefulRecoveryExample` uses private static inner `SimpleMetadataStore` and
+  `SimpleMessagingSystem` — package-private `WatchableInMemoryMetadataStore` not accessible
+  from `examples` package.
+- `drainNode("system1")` called before stopping system1 in the example, consistent with
+  the rolling-upgrade pattern; actor is manually re-registered on system2 (lazy recovery).
+
+## Decisions Made (Milestone 5 — Phase 31-1)
+- `ClusterActorSystem.stop()` now suppresses per-actor metadata deletion: actor assignments remain in the store when a node stops, leaving them for the leader to redistribute. Only node key deletion signals departure.
+- `skipMetadataDeleteActors` (ConcurrentHashMap.newKeySet) guards `shutdown(actorId)`: both `shutdownLocalOnly()` during migration and `stop()` during system shutdown mark actors to skip the metadata delete.
+- `ActorSystem.getRegisteredActorIds()` added (protected) so `ClusterActorSystem.stop()` can enumerate local actors without accessing the private `actors` map.
+- `WatchableInMemoryMetadataStore.acquireLock()` uses `putIfAbsent` for atomic check-and-acquire — prevents multiple nodes all winning the leader election race.
+- Chaos and lifecycle test classes are `public class` with `public static class TestActor` — required for cross-package reflective instantiation via `ActorSystem.register()`.
+- `@Tag("slow")` on both `ClusterChaosTest` and `ClusterLifecycleTest` — no external services needed, just time.
+- Lifecycle test 3 (`gracefulShutdown_undrained`) polls up to 30s for leader reassignment — background leader election timer fires at most 15s after system startup.
+
+## Decisions Made (Milestone 5 — Phase 30-2)
+- `migrateActor` validates target against metadata store (not in-memory `knownNodes` cache) — authoritative and testable without calling `start()`
+- `shutdownLocalOnly(actorId)` added to `ClusterActorSystem` (package-private): calls `super.shutdown()` only, skips etcd delete — prevents `ClusterActorSystem.shutdown()` from deleting the new assignment written during migration
+- `drainNode` queries live node list from etcd (not `getKnownNodes()`) for same reason as migrateActor
+- Per-actor failures in `drainNode` are best-effort: logged + swallowed so one failed migration doesn't abort the full drain
+
+## Decisions Made (Milestone 5 — Phase 30-1)
+- `managementApi` field initialized at end of constructor body (not as a field initializer) — field initializers run before constructor body, so `getMetadataStore()` would return null if initialized via field expression
+- `DefaultClusterManagementApi` takes `ClusterActorSystem` (not `MetadataStore`) — stores both `system` and `metadataStore` for extensibility in plan 30-2
+- `listActors()` uses `CompletableFuture.allOf()` pattern to parallelize per-actor `get()` calls then filter by nodeId
+- `migrateActor` and `drainNode` throw `UnsupportedOperationException` as explicit stubs — implemented in plan 30-2
+- Tests use direct `new ClusterActorSystem(...)` without `start()` — avoids etcd/messaging dependency while still exercising real metadata store lookups
+- `ClusterConfiguration.Builder.build()` delegates to `new ClusterConfiguration(this).build()` — keeps config value object separate from construction logic
+
+## Decisions Made (Milestone 5 — Phase 29 code review fixes)
+- Double-counted `remoteMessageFailures`: `routeToNode().exceptionally()` skips increment when `messagingSystem instanceof ReliableMessagingSystem` — `doSendMessage()` is the authoritative counter
+- `SerializationException` (RuntimeException) must be caught explicitly before `IOException` in `handleClient()` — otherwise swallowed by executor uncaught handler
+- Jackson `DefaultTyping.EVERYTHING` + `allowIfBaseType(Object)` is RCE-equivalent — replaced with per-prefix `allowIfSubType()` + `NON_FINAL`; `INSTANCE` trusts only `com.cajunsystems.*`, `java.*`, `javax.*`; custom package prefixes via constructor
+
+## Decisions Made (Milestone 5 — Phase 29)
+- `TtlCache` as primary routing path (not fallback): `routeMessage()` checks cache before etcd — cache hit skips etcd entirely; TTL=60s default; watcher-driven invalidation for rebalancing
+- `routeToNode()` private helper extracted — eliminates duplication between cache-hit and etcd-lookup code paths
+- Periodic `cleanupExpired()` uses existing `scheduler` (no new thread pool)
+- gRPC keep-alive: `keepAliveTime=5s`, `keepAliveTimeout=3s`, `keepAliveWithoutCalls=true` — reduces reconnect latency for bursty traffic
+- `batchRegisterActors` uses `CompletableFuture.allOf()` — parallel puts, logs total elapsed time
+
+## Decisions Made (Milestone 5 — Phase 28)
+- `NodeCircuitBreaker` per-node (not per-actor): one node failure blocks all messages to that node; `failureThreshold=5`, `resetTimeoutMs=30s` defaults
+- Circuit breaker implemented with `synchronized` + `volatile` — simpler than lock-free for low-contention send path
+- `ExponentialBackoff` wraps only idempotent etcd ops (`put/get/delete/listKeys`); `acquireLock` excluded (double-acquire risk); watch/connect/close excluded
+- Graceful degradation via `exceptionally()` on `metadataStore.get()` future — zero overhead on happy path; WARN on cache hit, ERROR on cache miss (message dropped)
+- `DegradedRoutingTest` key prefix: `ClusterActorSystem.ACTOR_ASSIGNMENT_PREFIX` is `"cajun/actor/"` — test corrected to match
+
+## Decisions Made (Milestone 5 — Phase 27)
+- `ClusterMetrics` and `PersistenceMetrics` placed in `cajun-core/src/main/java/com/cajunsystems/metrics/` — `ReliableMessagingSystem` is in `cajun-core` so metrics must be co-located
+- `ClusterMetrics` injected into `ReliableMessagingSystem` via optional setter `setClusterMetrics()` with null guards — two copies of `ReliableMessagingSystem` exist (cajun-core + lib), both updated
+- `ClusterHealthStatus` record: `healthy = persistenceHealthy && messagingSystemRunning`; `persistenceHealthy=true` when no provider configured (backward compat)
+- MDC cleared via try-finally in `doSendMessage()` and `handleClient()` — prevents leakage on exception
+- `logback.xml` pattern: `[%X{actorId}][%X{messageId}]` added — empty strings for non-cluster log lines
+
+## Decisions Made (Milestone 5 — Phase 26)
+- `ClusterActorSystem.withPersistenceProvider(PersistenceProvider)` fluent setter; `setupPersistence()` called in `start()` before heartbeat/leader election — no-op if null
+- Persistence health check at startup: WARN log (not fail-fast) to preserve backward compat
+- `StatefulActorClusterStateTest`: @Disabled removed, `@Tag("requires-redis")` added, shared `RedisPersistenceProvider` used for both nodes — test now asserts count=6
+- Original bug-doc test kept `@Disabled` at method level as historical documentation
+- `PersistenceBenchmarkTest`: `@Tag("performance")` only; Redis tests also `@Tag("requires-redis")`; N=500 messages; no latency SLA assertions
+
+## Decisions Made (Milestone 5 — Phase 25)
+- Redis journal key: `{prefix}:journal:{actorId}` (actorId in `{}` for Cluster co-location); seq counter: `{prefix}:journal:{actorId}:seq`
+- Redis snapshot key: `{prefix}:snapshot:{actorId}` — single key per actor, overwrite semantics
+- `RedisPersistenceProvider` defaults to `JavaSerializationProvider`; integration tests use `KryoSerializationProvider` explicitly
+- Mocking Lettuce `RedisFuture` in tests: use concrete anonymous `RedisFuture` implementation wrapping `CompletableFuture` — avoids Mockito strict-stubbing issues with default `CompletionStage` interface methods
+- Integration tests tagged `@Tag("requires-redis")` — excluded from default Gradle test task in both `cajun-persistence` and `lib`
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)

@@ -3,10 +3,14 @@ package com.cajunsystems.cluster;
 import com.cajunsystems.Actor;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
+import com.cajunsystems.metrics.ClusterMetrics;
+import com.cajunsystems.persistence.PersistenceProvider;
+import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,19 +29,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ClusterActorSystem extends ActorSystem {
 
     private static final Logger logger = LoggerFactory.getLogger(ClusterActorSystem.class);
-    private static final String ACTOR_ASSIGNMENT_PREFIX = "cajun/actor/";
-    private static final String NODE_PREFIX = "cajun/node/";
+    static final String ACTOR_ASSIGNMENT_PREFIX = "cajun/actor/";
+    static final String NODE_PREFIX = "cajun/node/";
     private static final String LEADER_KEY = "cajun/leader";
     private static final long HEARTBEAT_INTERVAL_SECONDS = 5;
+    private static final long ACTOR_CACHE_TTL_MS = 60_000; // 60-second TTL
 
     private final String systemId;
+    private final ClusterMetrics clusterMetrics;
     private final MetadataStore metadataStore;
     private final MessagingSystem messagingSystem;
     private final ScheduledExecutorService scheduler;
     private final Set<String> knownNodes = ConcurrentHashMap.newKeySet();
+    // Local cache of actor→node assignments with TTL-based expiry
+    private final TtlCache<String, String> actorAssignmentCache = new TtlCache<>(ACTOR_CACHE_TTL_MS);
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private MetadataStore.Lock leaderLock;
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
+    private PersistenceProvider persistenceProvider; // null = use existing registry default
+    private final ClusterManagementApi managementApi;
+    // Actors being shut down locally only (skip metadata deletion — new assignment already written)
+    private final Set<String> skipMetadataDeleteActors = ConcurrentHashMap.newKeySet();
 
     /**
      * Creates a new ClusterActorSystem with the specified configuration.
@@ -49,17 +61,21 @@ public class ClusterActorSystem extends ActorSystem {
     public ClusterActorSystem(String systemId, MetadataStore metadataStore, MessagingSystem messagingSystem) {
         super(true); // Use shared executor
         this.systemId = systemId;
+        this.clusterMetrics = new ClusterMetrics(systemId);
         this.metadataStore = metadataStore;
         this.messagingSystem = messagingSystem;
         this.scheduler = new ScheduledThreadPoolExecutor(1);
 
         // Set default delivery guarantee if messaging system supports it
-        if (messagingSystem instanceof ReliableMessagingSystem) {
-            ((ReliableMessagingSystem) messagingSystem).setDefaultDeliveryGuarantee(defaultDeliveryGuarantee);
+        if (messagingSystem instanceof ReliableMessagingSystem rms) {
+            rms.setDefaultDeliveryGuarantee(defaultDeliveryGuarantee);
+            rms.setClusterMetrics(clusterMetrics);
         }
 
         // Register message handler for remote actor messages
         messagingSystem.registerMessageHandler(this::handleRemoteMessage);
+
+        this.managementApi = new DefaultClusterManagementApi(this);
     }
 
     /**
@@ -84,6 +100,8 @@ public class ClusterActorSystem extends ActorSystem {
                 .thenCompose(v -> messagingSystem.start())
                 .thenCompose(v -> registerNode())
                 .thenRun(() -> {
+                    setupPersistence();  // register shared persistence provider before accepting actors
+
                     // Start heartbeat
                     scheduler.scheduleAtFixedRate(
                             this::sendHeartbeat,
@@ -106,6 +124,7 @@ public class ClusterActorSystem extends ActorSystem {
                         public void onPut(String key, String value) {
                             String nodeId = key.substring(NODE_PREFIX.length());
                             knownNodes.add(nodeId);
+                            clusterMetrics.incrementNodeJoinCount();
                             logger.info("Node joined: {}", nodeId);
                         }
 
@@ -113,6 +132,7 @@ public class ClusterActorSystem extends ActorSystem {
                         public void onDelete(String key) {
                             String nodeId = key.substring(NODE_PREFIX.length());
                             knownNodes.remove(nodeId);
+                            clusterMetrics.incrementNodeDepartureCount();
                             logger.info("Node left: {}", nodeId);
 
                             // If we're the leader, reassign actors from the departed node
@@ -121,6 +141,30 @@ public class ClusterActorSystem extends ActorSystem {
                             }
                         }
                     });
+
+                    // Watch actor assignment changes — drive cache eviction and real-time updates
+                    metadataStore.watch(ACTOR_ASSIGNMENT_PREFIX, new MetadataStore.KeyWatcher() {
+                        @Override
+                        public void onPut(String key, String value) {
+                            String watchedActorId = key.substring(ACTOR_ASSIGNMENT_PREFIX.length());
+                            actorAssignmentCache.put(watchedActorId, value);
+                            logger.debug("Actor assignment updated via watcher: '{}' → node '{}'", watchedActorId, value);
+                        }
+                        @Override
+                        public void onDelete(String key) {
+                            String watchedActorId = key.substring(ACTOR_ASSIGNMENT_PREFIX.length());
+                            actorAssignmentCache.invalidate(watchedActorId);
+                            logger.debug("Actor assignment evicted via watcher: '{}'", watchedActorId);
+                        }
+                    });
+
+                    // Schedule periodic TTL cleanup every 30 seconds
+                    scheduler.scheduleAtFixedRate(
+                            actorAssignmentCache::cleanupExpired,
+                            30,
+                            30,
+                            TimeUnit.SECONDS
+                    );
                 });
     }
 
@@ -151,8 +195,18 @@ public class ClusterActorSystem extends ActorSystem {
                 .thenCompose(v -> messagingSystem.stop())
                 .thenCompose(v -> metadataStore.close())
                 .whenComplete((v, ex) -> {
-                    // Call parent shutdown
-                    super.shutdown();
+                    // Suppress per-actor metadata deletion during system stop.
+                    // When the whole system shuts down, actor assignments should remain
+                    // in the metadata store so the leader can detect orphaned actors and
+                    // reassign them to surviving nodes. The node key deletion above already
+                    // signals departure; individual actor metadata must not be deleted here.
+                    Set<String> localActors = getRegisteredActorIds();
+                    skipMetadataDeleteActors.addAll(localActors);
+                    try {
+                        super.shutdown();
+                    } finally {
+                        skipMetadataDeleteActors.removeAll(localActors);
+                    }
                 });
     }
 
@@ -193,16 +247,44 @@ public class ClusterActorSystem extends ActorSystem {
         return pid;
     }
 
+    /**
+     * Registers multiple actors in the metadata store in parallel using CompletableFuture.allOf().
+     * Significantly faster than sequential registration for large numbers of actors.
+     *
+     * @param actorIds List of actor IDs to register under this node
+     * @return CompletableFuture that completes when all registrations are done
+     */
+    public CompletableFuture<Void> batchRegisterActors(java.util.List<String> actorIds) {
+        if (actorIds == null || actorIds.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        long start = System.nanoTime();
+        java.util.List<CompletableFuture<Void>> futures = actorIds.stream()
+                .map(actorId -> metadataStore.put(ACTOR_ASSIGNMENT_PREFIX + actorId, systemId)
+                        .exceptionally(ex -> {
+                            logger.error("Failed to batch-register actor '{}': {}", actorId, ex.getMessage());
+                            return null;
+                        }))
+                .toList();
+        return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .thenRun(() -> logger.info("Batch registered {} actors in {}ms",
+                        actorIds.size(), (System.nanoTime() - start) / 1_000_000));
+    }
+
     @Override
     public void shutdown(String actorId) {
-        // First remove the actor from the metadata store
-        metadataStore.delete(ACTOR_ASSIGNMENT_PREFIX + actorId)
-                .exceptionally(ex -> {
-                    logger.error("Failed to unregister actor {} from metadata store", actorId, ex);
-                    return null;
-                });
+        // During shutdownLocalOnly(), Actor.stop() calls system.shutdown(actorId) as part
+        // of its teardown. Skip metadata deletion in that case — the new assignment was
+        // already written and must not be overwritten.
+        if (!skipMetadataDeleteActors.contains(actorId)) {
+            metadataStore.delete(ACTOR_ASSIGNMENT_PREFIX + actorId)
+                    .exceptionally(ex -> {
+                        logger.error("Failed to unregister actor {} from metadata store", actorId, ex);
+                        return null;
+                    });
+        }
 
-        // Then shut down the actor locally
+        // Shut down the actor locally
         super.shutdown(actorId);
     }
 
@@ -235,52 +317,33 @@ public class ClusterActorSystem extends ActorSystem {
         Actor<Message> actor = (Actor<Message>) getActor(new Pid(actorId, this));
         if (actor != null) {
             // Actor is local, deliver the message directly
+            clusterMetrics.incrementLocalMessagesRouted();
             actor.tell(message);
             return;
         }
 
-        // Actor is not local, look up its location in the metadata store
+        // Check assignment cache before going to metadata store (primary fast path)
+        Optional<String> cachedNodeId = actorAssignmentCache.get(actorId);
+        if (cachedNodeId.isPresent()) {
+            clusterMetrics.incrementCacheHit();
+            routeToNode(actorId, cachedNodeId.get(), message, deliveryGuarantee);
+            return;
+        }
+
+        // Cache miss — look up in metadata store
+        clusterMetrics.incrementCacheMiss();
         metadataStore.get(ACTOR_ASSIGNMENT_PREFIX + actorId)
                 .thenAccept(optionalNodeId -> {
                     if (optionalNodeId.isPresent()) {
                         String nodeId = optionalNodeId.get();
-                        if (!nodeId.equals(systemId)) {
-                            // Actor is on another node, forward the message
-                            if (messagingSystem instanceof ReliableMessagingSystem) {
-                                // Use the reliable messaging system with the specified delivery guarantee
-                                ((ReliableMessagingSystem) messagingSystem).sendMessage(
-                                        nodeId, actorId, message, deliveryGuarantee)
-                                    .exceptionally(ex -> {
-                                        logger.error("Failed to send message to actor {} on node {}", 
-                                                    actorId, nodeId, ex);
-                                        return null;
-                                    });
-                            } else {
-                                // Fall back to the standard messaging system
-                                messagingSystem.sendMessage(nodeId, actorId, message)
-                                    .exceptionally(ex -> {
-                                        logger.error("Failed to send message to actor {} on node {}", 
-                                                    actorId, nodeId, ex);
-                                        return null;
-                                    });
-                            }
-                        } else {
-                            // Actor is registered to this node but not found locally
-                            // Try to get the actor again (it might have been created since our first check)
-                            Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
-                            if (localActor != null) {
-                                // Actor is now available locally, deliver the message directly
-                                localActor.tell(message);
-                            } else {
-                                logger.warn("Actor {} is registered to this node but not found locally", actorId);
-                            }
-                        }
+                        actorAssignmentCache.put(actorId, nodeId);
+                        routeToNode(actorId, nodeId, message, deliveryGuarantee);
                     } else {
-                        logger.warn("Actor {} not found in the cluster", actorId);
+                        logger.warn("Actor '{}' not found in cluster metadata store — not yet registered or already deregistered", actorId);
                     }
                 })
                 .exceptionally(ex -> {
-                    logger.error("Failed to look up actor {} in metadata store", actorId, ex);
+                    logger.error("Metadata store unreachable and no cached assignment for actor '{}' — message dropped", actorId);
                     return null;
                 });
     }
@@ -335,6 +398,43 @@ public class ClusterActorSystem extends ActorSystem {
             actor.tell(message);
         } else {
             logger.warn("Received message for unknown actor: {}", actorId);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private <Message> void routeToNode(String actorId, String nodeId, Message message,
+                                        DeliveryGuarantee deliveryGuarantee) {
+        if (nodeId.equals(systemId)) {
+            Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
+            if (localActor != null) {
+                clusterMetrics.incrementLocalMessagesRouted();
+                localActor.tell(message);
+            } else {
+                logger.warn("Actor '{}' is registered to node '{}' (this node) but not found in local actor registry — it may still be initializing",
+                        actorId, systemId);
+            }
+        } else {
+            long routeStart = System.nanoTime();
+            clusterMetrics.incrementRemoteMessagesRouted();
+            CompletableFuture<Void> sendFuture;
+            if (messagingSystem instanceof ReliableMessagingSystem rms) {
+                sendFuture = rms.sendMessage(nodeId, actorId, message, deliveryGuarantee);
+            } else {
+                sendFuture = messagingSystem.sendMessage(nodeId, actorId, message);
+            }
+            sendFuture
+                .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
+                .exceptionally(ex -> {
+                    // ReliableMessagingSystem already increments remoteMessageFailures at the
+                    // transport layer in doSendMessage(). Only increment here for other
+                    // messaging system implementations to avoid double-counting.
+                    if (!(messagingSystem instanceof ReliableMessagingSystem)) {
+                        clusterMetrics.incrementRemoteMessageFailures();
+                    }
+                    logger.error("Failed to send message to actor '{}' on node '{}': {}",
+                            actorId, nodeId, ex.getMessage(), ex);
+                    return null;
+                });
         }
     }
 
@@ -588,6 +688,69 @@ public class ClusterActorSystem extends ActorSystem {
     }
 
     /**
+     * Gets the cluster metrics for this actor system.
+     *
+     * @return The ClusterMetrics instance
+     */
+    public ClusterMetrics getClusterMetrics() {
+        return clusterMetrics;
+    }
+
+    /**
+     * Returns the management API for programmatic cluster operations.
+     */
+    public ClusterManagementApi getManagementApi() {
+        return managementApi;
+    }
+
+    /**
+     * Invalidates the local actor-assignment cache entry for the given actor.
+     * Called by plan 30-2 after a migration or drain operation updates the assignment.
+     */
+    void invalidateActorAssignmentCache(String actorId) {
+        actorAssignmentCache.invalidate(actorId);
+    }
+
+    /**
+     * Stops the actor's local mailbox without deleting its cluster assignment from the
+     * metadata store. Used by the management API during migration so the new assignment
+     * written to etcd is not overwritten by the usual shutdown path.
+     */
+    void shutdownLocalOnly(String actorId) {
+        // Mark this actor so that the Actor.stop() → system.shutdown(actorId) callback
+        // (triggered during super.shutdown) skips metadata deletion.
+        skipMetadataDeleteActors.add(actorId);
+        try {
+            super.shutdown(actorId);
+        } finally {
+            skipMetadataDeleteActors.remove(actorId);
+        }
+    }
+
+    public Map<String, String> getActorAssignmentCache() {
+        return actorAssignmentCache.snapshot();
+    }
+
+    /**
+     * Returns a health check snapshot for this cluster node.
+     *
+     * @return A ClusterHealthStatus record reflecting current node health
+     */
+    public ClusterHealthStatus healthCheck() {
+        boolean persistenceHealthy = persistenceProvider == null || persistenceProvider.isHealthy();
+        String persistenceProviderName = persistenceProvider == null ? null : persistenceProvider.getProviderName();
+        boolean messagingRunning = messagingSystem != null;
+        return ClusterHealthStatus.of(
+                systemId,
+                isLeader.get(),
+                knownNodes.size(),
+                messagingRunning,
+                persistenceHealthy,
+                persistenceProviderName
+        );
+    }
+
+    /**
      * Sets the default delivery guarantee for messages sent by this actor system.
      *
      * @param deliveryGuarantee The delivery guarantee to use by default
@@ -611,5 +774,34 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public DeliveryGuarantee getDefaultDeliveryGuarantee() {
         return defaultDeliveryGuarantee;
+    }
+
+    /**
+     * Configures a shared persistence provider for this cluster node.
+     * Registered in {@link PersistenceProviderRegistry} and set as the default
+     * during {@link #start()}. All {@link com.cajunsystems.StatefulActor}s spawned
+     * on this node will use this provider.
+     */
+    public ClusterActorSystem withPersistenceProvider(PersistenceProvider provider) {
+        this.persistenceProvider = provider;
+        return this;
+    }
+
+    private void setupPersistence() {
+        if (persistenceProvider == null) {
+            return;
+        }
+        PersistenceProviderRegistry registry = PersistenceProviderRegistry.getInstance();
+        registry.registerProvider(persistenceProvider);
+        registry.setDefaultProvider(persistenceProvider.getProviderName());
+        if (!persistenceProvider.isHealthy()) {
+            logger.warn(
+                "Persistence provider '{}' reports unhealthy at cluster startup — " +
+                "StatefulActors may fail to recover state",
+                persistenceProvider.getProviderName());
+        } else {
+            logger.info("Persistence provider '{}' configured and healthy",
+                persistenceProvider.getProviderName());
+        }
     }
 }

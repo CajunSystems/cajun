@@ -3,6 +3,8 @@ package com.cajunsystems.persistence.lmdb;
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.JournalException;
 import com.cajunsystems.persistence.MessageJournal;
+import com.cajunsystems.serialization.JavaSerializationProvider;
+import com.cajunsystems.serialization.SerializationProvider;
 import org.lmdbjava.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,23 +35,47 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * @param <T> The type of messages stored
  * @since 0.2.0
  */
-public class LmdbMessageJournal<T extends Serializable> implements MessageJournal<T> {
+public class LmdbMessageJournal<T> implements MessageJournal<T> {
     private static final Logger logger = LoggerFactory.getLogger(LmdbMessageJournal.class);
 
     private final String actorId;
     private final Env<ByteBuffer> env;
     private final Dbi<ByteBuffer> db;
     private final String keyPrefix;
+    private final SerializationProvider provider;
 
     // Buffer pools for better performance
     private static final int KEY_BUFFER_SIZE = 256;
     private static final int VALUE_BUFFER_SIZE = 64 * 1024; // 64KB
 
+    /**
+     * Creates a new LmdbMessageJournal using {@link JavaSerializationProvider} for backward compatibility.
+     */
     public LmdbMessageJournal(String actorId, Env<ByteBuffer> env, Dbi<ByteBuffer> db) {
+        this(actorId, env, db, JavaSerializationProvider.INSTANCE);
+    }
+
+    /**
+     * Creates a new LmdbMessageJournal with a custom serialization provider.
+     *
+     * @param actorId  The actor ID this journal is bound to
+     * @param env      The LMDB environment
+     * @param db       The LMDB database handle
+     * @param provider The serialization provider for encoding/decoding journal entries
+     */
+    public LmdbMessageJournal(String actorId, Env<ByteBuffer> env, Dbi<ByteBuffer> db, SerializationProvider provider) {
         this.actorId = actorId;
         this.env = env;
         this.db = db;
         this.keyPrefix = "actor:" + actorId + ":seq:";
+        this.provider = provider;
+    }
+
+    /**
+     * Returns the serialization provider used by this journal.
+     */
+    public SerializationProvider getSerializationProvider() {
+        return provider;
     }
 
     // Async MessageJournal API
@@ -296,21 +322,17 @@ public class LmdbMessageJournal<T extends Serializable> implements MessageJourna
     // Serialization helpers
 
     private byte[] serializeEntry(JournalEntry<T> entry) throws IOException {
-        try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
-             ObjectOutputStream oos = new ObjectOutputStream(bos)) {
-            oos.writeObject(entry);
-            return bos.toByteArray();
+        try {
+            return provider.serialize(entry);
+        } catch (Exception e) {
+            throw new IOException("Failed to serialize journal entry for actor " + actorId, e);
         }
     }
 
     @SuppressWarnings("unchecked")
     private JournalEntry<T> deserializeEntry(byte[] bytes) throws IOException {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
-             ObjectInputStream ois = new ObjectInputStream(bis)) {
-            JournalEntry<T> entry = (JournalEntry<T>) ois.readObject();
-            return entry;
-        } catch (ClassNotFoundException e) {
-            throw new JournalException.CorruptedDataException("Failed to deserialize journal entry - class not found", -1, e);
+        try {
+            return (JournalEntry<T>) provider.deserialize(bytes, JournalEntry.class);
         } catch (Exception e) {
             throw new JournalException.CorruptedDataException("Failed to deserialize journal entry - invalid data format", -1, e);
         }
