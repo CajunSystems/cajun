@@ -3,6 +3,8 @@ package com.cajunsystems.cluster;
 import com.cajunsystems.Actor;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
+import com.cajunsystems.persistence.PersistenceProvider;
+import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +40,7 @@ public class ClusterActorSystem extends ActorSystem {
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private MetadataStore.Lock leaderLock;
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
+    private PersistenceProvider persistenceProvider; // null = use existing registry default
 
     /**
      * Creates a new ClusterActorSystem with the specified configuration.
@@ -84,6 +87,8 @@ public class ClusterActorSystem extends ActorSystem {
                 .thenCompose(v -> messagingSystem.start())
                 .thenCompose(v -> registerNode())
                 .thenRun(() -> {
+                    setupPersistence();  // register shared persistence provider before accepting actors
+
                     // Start heartbeat
                     scheduler.scheduleAtFixedRate(
                             this::sendHeartbeat,
@@ -611,5 +616,34 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public DeliveryGuarantee getDefaultDeliveryGuarantee() {
         return defaultDeliveryGuarantee;
+    }
+
+    /**
+     * Configures a shared persistence provider for this cluster node.
+     * Registered in {@link PersistenceProviderRegistry} and set as the default
+     * during {@link #start()}. All {@link com.cajunsystems.StatefulActor}s spawned
+     * on this node will use this provider.
+     */
+    public ClusterActorSystem withPersistenceProvider(PersistenceProvider provider) {
+        this.persistenceProvider = provider;
+        return this;
+    }
+
+    private void setupPersistence() {
+        if (persistenceProvider == null) {
+            return;
+        }
+        PersistenceProviderRegistry registry = PersistenceProviderRegistry.getInstance();
+        registry.registerProvider(persistenceProvider);
+        registry.setDefaultProvider(persistenceProvider.getProviderName());
+        if (!persistenceProvider.isHealthy()) {
+            logger.warn(
+                "Persistence provider '{}' reports unhealthy at cluster startup — " +
+                "StatefulActors may fail to recover state",
+                persistenceProvider.getProviderName());
+        } else {
+            logger.info("Persistence provider '{}' configured and healthy",
+                persistenceProvider.getProviderName());
+        }
     }
 }
