@@ -44,6 +44,10 @@ dependencies {
     // Roux effect system (unified effects for Cajun actors)
     api libs.roux
 
+    // Serialization providers
+    implementation libs.kryo
+    implementation libs.jackson.databind
+
     // Runtime implementation dependencies (logback for logging)
     implementation 'ch.qos.logback:logback-classic:1.5.16'
 
