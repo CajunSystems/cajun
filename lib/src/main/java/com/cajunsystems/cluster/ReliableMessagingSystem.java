@@ -198,7 +198,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
                 doSendMessage(targetSystemId, address, actorId, message, messageId, deliveryGuarantee);
 
             } catch (Exception e) {
-                logger.error("Failed to send message to {}:{}", address.host, address.port, e);
+                logger.error("Failed to send message to actor '{}' on node '{}' ({}:{}): {}", actorId, targetSystemId, address.host, address.port, e.getMessage(), e);
                 throw new RuntimeException("Failed to send message", e);
             }
         }, executor);
@@ -221,7 +221,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
 
         NodeAddress address = nodeAddresses.get(targetSystemId);
         if (address == null) {
-            logger.error("Cannot retry message to unknown system: {}", targetSystemId);
+            logger.error("Cannot retry message '{}' to actor '{}' — unknown node '{}'", messageId, actorId, targetSystemId);
             return;
         }
 
@@ -230,7 +230,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
             Message typedMessage = (Message) message;
             doSendMessage(targetSystemId, address, actorId, typedMessage, messageId, DeliveryGuarantee.AT_LEAST_ONCE);
         } catch (Exception e) {
-            logger.error("Failed to retry message to {}:{}", address.host, address.port, e);
+            logger.error("Failed to retry message '{}' to actor '{}' on node '{}' ({}:{}): {}", messageId, actorId, targetSystemId, address.host, address.port, e.getMessage(), e);
         }
     }
 
@@ -431,7 +431,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
             }
 
         } catch (IOException e) {
-            logger.error("Error handling client connection", e);
+            logger.error("Error handling client connection from {}:{}: {}", clientSocket.getInetAddress(), clientSocket.getPort(), e.getMessage(), e);
         }
     }
 

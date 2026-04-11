@@ -296,11 +296,11 @@ public class ClusterActorSystem extends ActorSystem {
                                 clusterMetrics.incrementLocalMessagesRouted();
                                 localActor.tell(message);
                             } else {
-                                logger.warn("Actor {} is registered to this node but not found locally", actorId);
+                                logger.warn("Actor '{}' is registered to node '{}' (this node) but not found in local actor registry — it may still be initializing", actorId, systemId);
                             }
                         }
                     } else {
-                        logger.warn("Actor {} not found in the cluster", actorId);
+                        logger.warn("Actor '{}' not found in cluster metadata store — not yet registered or already deregistered", actorId);
                     }
                 })
                 .exceptionally(ex -> {
