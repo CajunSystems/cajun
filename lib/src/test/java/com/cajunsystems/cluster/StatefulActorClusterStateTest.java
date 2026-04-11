@@ -617,4 +617,103 @@ public class StatefulActorClusterStateTest {
         assertEquals(6, countFromSystem2.get(),
                 "State recovered from Redis: 5 from system1 + 1 from system2");
     }
+
+    /**
+     * Verifies that full state is preserved across a simulated node failure when 100 messages
+     * have been journaled to Redis.
+     *
+     * <h3>Scenario</h3>
+     * <ol>
+     *   <li>Start {@code system1}; register {@code CounterActor} backed by Redis.</li>
+     *   <li>Send 100 {@link CounterMessage.Increment} messages; verify count == 100.</li>
+     *   <li>Stop {@code system1} (simulates node failure).</li>
+     *   <li>Start {@code system2}; re-register the same actor ID with the same Redis store.</li>
+     *   <li>{@code initializeState()} replays all 100 journal entries → count recovered to 100.</li>
+     *   <li>Send 1 more increment; verify count == 101.</li>
+     * </ol>
+     */
+    @Test
+    @Tag("requires-redis")
+    void testStatefulActorFullLifecycle_100Messages() throws Exception {
+
+        InMemoryMetadataStore sharedMetadataStore = new InMemoryMetadataStore();
+
+        // ---- Step 1: Start system1 ----
+        InMemoryMessagingSystem ms1 = new InMemoryMessagingSystem("system1");
+        system1 = new ClusterActorSystem("system1", sharedMetadataStore, ms1);
+        system1.start().get(5, TimeUnit.SECONDS);
+        Thread.sleep(500); // allow leader election to settle
+
+        // ---- Step 2: Register CounterActor on system1 with Redis storage ----
+        BatchedMessageJournal<CounterMessage> journal1 =
+                redisProvider.createBatchedMessageJournal(actorId);
+        SnapshotStore<CounterState> snapshot1 =
+                redisProvider.createSnapshotStore(actorId);
+        CounterActor counter1 = new CounterActor(
+                system1, actorId, new CounterState(0), journal1, snapshot1);
+        counter1.start();
+        system1.registerActor(counter1);
+        sharedMetadataStore.put("cajun/actor/" + actorId, "system1").get(1, TimeUnit.SECONDS);
+        assertTrue(counter1.waitForInit(2000), "Counter actor should initialize within 2 s");
+
+        // ---- Step 3: Send 100 increments ----
+        for (int i = 0; i < 100; i++) {
+            counter1.tell(new CounterMessage.Increment());
+        }
+        // Allow messages to be processed and batched journal entries flushed to Redis
+        Thread.sleep(2000);
+
+        // ---- Verify count == 100 on system1 ----
+        CountDownLatch latch1 = new CountDownLatch(1);
+        AtomicInteger countFromSystem1 = new AtomicInteger(-1);
+        ReplyCollector collector1 = new ReplyCollector(
+                system1, "collector-1-" + UUID.randomUUID(), latch1, countFromSystem1);
+        collector1.start();
+        system1.registerActor(collector1);
+        counter1.tell(new CounterMessage.GetCount(collector1.self()));
+        assertTrue(latch1.await(5, TimeUnit.SECONDS),
+                "Should receive count reply from system1");
+        assertEquals(100, countFromSystem1.get(),
+                "Pre-condition: count should be 100 after 100 increments on system1");
+
+        // ---- Step 4: Stop system1 (simulate node failure) ----
+        system1.stop().get(5, TimeUnit.SECONDS);
+        system1 = null;
+        Thread.sleep(500);
+
+        // ---- Step 5: Start system2 with the SAME metadata store ----
+        InMemoryMessagingSystem ms2 = new InMemoryMessagingSystem("system2");
+        system2 = new ClusterActorSystem("system2", sharedMetadataStore, ms2);
+        system2.start().get(5, TimeUnit.SECONDS);
+        Thread.sleep(2000); // allow leader election and actor reassignment
+
+        // ---- Step 6: Re-register CounterActor on system2 with SAME Redis storage ----
+        BatchedMessageJournal<CounterMessage> journal2 =
+                redisProvider.createBatchedMessageJournal(actorId);
+        SnapshotStore<CounterState> snapshot2 =
+                redisProvider.createSnapshotStore(actorId);
+        CounterActor counter2 = new CounterActor(
+                system2, actorId, new CounterState(0), journal2, snapshot2);
+        counter2.start();
+        system2.registerActor(counter2);
+        assertTrue(counter2.waitForInit(5000),
+                "Counter actor on system2 should initialize and recover 100 messages from Redis");
+
+        // ---- Step 7: Send 1 more increment via system2 ----
+        counter2.tell(new CounterMessage.Increment());
+        Thread.sleep(800);
+
+        // ---- Step 8: Assert count == 101 ----
+        CountDownLatch latch2 = new CountDownLatch(1);
+        AtomicInteger countFromSystem2 = new AtomicInteger(-1);
+        ReplyCollector collector2 = new ReplyCollector(
+                system2, "collector-2-" + UUID.randomUUID(), latch2, countFromSystem2);
+        collector2.start();
+        system2.registerActor(collector2);
+        counter2.tell(new CounterMessage.GetCount(collector2.self()));
+        assertTrue(latch2.await(5, TimeUnit.SECONDS),
+                "Should receive count reply from system2");
+        assertEquals(101, countFromSystem2.get(),
+                "Full lifecycle: 100 messages recovered from Redis + 1 new = 101");
+    }
 }
