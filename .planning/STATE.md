@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 27 — Not started
-**Status**: Phase 26 complete — ready to begin Phase 27 (Observability & Diagnostics)
+**Phase**: 27 — Planned
+**Status**: Phase 27 plan written (27-1-PLAN.md) — ready to execute
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -16,7 +16,7 @@
 | 24 | Redis Persistence Design | ✅ Complete |
 | 25 | Redis Persistence Provider | ✅ Complete |
 | 26 | Cluster + Shared Persistence Integration | ✅ Complete |
-| 27 | Observability & Diagnostics | 🔲 Not started |
+| 27 | Observability & Diagnostics | 📋 Planned |
 | 28 | Reliability Hardening | 🔲 Not started |
 | 29 | Performance Optimization | 🔲 Not started |
 | 30 | Cluster Management API | 🔲 Not started |
