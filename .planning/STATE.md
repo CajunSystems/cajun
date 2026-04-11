@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 29 — Complete
-**Status**: Phase 29 complete — ready to begin Phase 30 (Cluster Management API)
+**Phase**: 29 — Complete (+ P1 review fixes committed)
+**Status**: Phase 29 + code review P1 fixes complete — ready to begin Phase 30 (Cluster Management API)
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -116,6 +116,11 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 29 code review fixes)
+- Double-counted `remoteMessageFailures`: `routeToNode().exceptionally()` skips increment when `messagingSystem instanceof ReliableMessagingSystem` — `doSendMessage()` is the authoritative counter
+- `SerializationException` (RuntimeException) must be caught explicitly before `IOException` in `handleClient()` — otherwise swallowed by executor uncaught handler
+- Jackson `DefaultTyping.EVERYTHING` + `allowIfBaseType(Object)` is RCE-equivalent — replaced with per-prefix `allowIfSubType()` + `NON_FINAL`; `INSTANCE` trusts only `com.cajunsystems.*`, `java.*`, `javax.*`; custom package prefixes via constructor
 
 ## Decisions Made (Milestone 5 — Phase 29)
 - `TtlCache` as primary routing path (not fallback): `routeMessage()` checks cache before etcd — cache hit skips etcd entirely; TTL=60s default; watcher-driven invalidation for rebalancing

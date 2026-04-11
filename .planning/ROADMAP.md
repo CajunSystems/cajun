@@ -236,6 +236,11 @@ Plans:
 - 29.4 Profile hot paths under load — identify any remaining bottlenecks in routing or messaging
 - 29.5 Benchmarks: routing throughput and latency with and without caching; registration time with batch vs sequential
 
+**Code review P1 fixes** (commit `159fc2c`, plan `29-2`):
+- Fix double-counted `remoteMessageFailures` in `routeToNode().exceptionally()`
+- Catch `SerializationException` explicitly in `handleClient()` (both RMS copies)
+- Fix Jackson RCE: replace `DefaultTyping.EVERYTHING` + `allowIfBaseType(Object)` with trusted package prefixes + `NON_FINAL` in `JsonSerializationProvider`
+
 ---
 
 ### Phase 30: Cluster Management API
