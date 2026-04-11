@@ -212,7 +212,7 @@ Plans:
 
 ---
 
-### Phase 28: Reliability Hardening
+### ~~Phase 28: Reliability Hardening~~ ✅
 
 **Goal**: Circuit breaker for node-to-node calls; exponential backoff for metadata store operations; graceful degradation when etcd is unavailable.
 

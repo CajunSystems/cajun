@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 28 — Planned
-**Status**: Phase 28 plan written (28-1-PLAN.md) — ready to execute
+**Phase**: 28 — Complete
+**Status**: Phase 28 complete — ready to begin Phase 29 (Performance Optimization)
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -17,7 +17,7 @@
 | 25 | Redis Persistence Provider | ✅ Complete |
 | 26 | Cluster + Shared Persistence Integration | ✅ Complete |
 | 27 | Observability & Diagnostics | ✅ Complete |
-| 28 | Reliability Hardening | 📋 Planned |
+| 28 | Reliability Hardening | ✅ Complete |
 | 29 | Performance Optimization | 🔲 Not started |
 | 30 | Cluster Management API | 🔲 Not started |
 | 31 | Testing, Documentation & Examples | 🔲 Not started |
@@ -116,6 +116,13 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 28)
+- `NodeCircuitBreaker` per-node (not per-actor): one node failure blocks all messages to that node; `failureThreshold=5`, `resetTimeoutMs=30s` defaults
+- Circuit breaker implemented with `synchronized` + `volatile` — simpler than lock-free for low-contention send path
+- `ExponentialBackoff` wraps only idempotent etcd ops (`put/get/delete/listKeys`); `acquireLock` excluded (double-acquire risk); watch/connect/close excluded
+- Graceful degradation via `exceptionally()` on `metadataStore.get()` future — zero overhead on happy path; WARN on cache hit, ERROR on cache miss (message dropped)
+- `DegradedRoutingTest` key prefix: `ClusterActorSystem.ACTOR_ASSIGNMENT_PREFIX` is `"cajun/actor/"` — test corrected to match
 
 ## Decisions Made (Milestone 5 — Phase 27)
 - `ClusterMetrics` and `PersistenceMetrics` placed in `cajun-core/src/main/java/com/cajunsystems/metrics/` — `ReliableMessagingSystem` is in `cajun-core` so metrics must be co-located
