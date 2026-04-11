@@ -130,7 +130,7 @@ tasks.named('test') {
     jvmArgs(['--enable-preview'])
     useJUnitPlatform {
         // By default, exclude performance tests
-        excludeTags 'performance'
+        excludeTags 'performance', 'requires-redis'
     }
 }
 
