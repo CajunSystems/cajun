@@ -1,13 +1,28 @@
 # Project State
 
 ## Current Status
-**Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 21 ✅ Complete — Milestone 4 archived as v0.7.0
-**Status**: Milestone complete — 629 tests, 0 failures, all audits clean
+**Milestone**: 5 — Cluster Evaluation & Enhancement
+**Phase**: 22 — Not started
+**Status**: Milestone defined — ready to begin Phase 22 (Cluster & Persistence Audit)
 **Branch**: feature/roux-effect-integration
-**Last Updated**: 2026-04-01
+**Last Updated**: 2026-04-11
 
-## Milestone 4 Phase Progress
+## Milestone 5 Phase Progress
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 22 | Cluster & Persistence Audit | 🔲 Not started |
+| 23 | Serialization Framework | 🔲 Not started |
+| 24 | Redis Persistence Design | 🔲 Not started |
+| 25 | Redis Persistence Provider | 🔲 Not started |
+| 26 | Cluster + Shared Persistence Integration | 🔲 Not started |
+| 27 | Observability & Diagnostics | 🔲 Not started |
+| 28 | Reliability Hardening | 🔲 Not started |
+| 29 | Performance Optimization | 🔲 Not started |
+| 30 | Cluster Management API | 🔲 Not started |
+| 31 | Testing, Documentation & Examples | 🔲 Not started |
+
+## Milestone 4 Phase Progress (archived — v0.7.0)
 
 | Phase | Name | Status |
 |-------|------|--------|
