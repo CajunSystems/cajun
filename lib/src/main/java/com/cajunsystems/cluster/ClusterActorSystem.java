@@ -616,6 +616,25 @@ public class ClusterActorSystem extends ActorSystem {
     }
 
     /**
+     * Returns a health check snapshot for this cluster node.
+     *
+     * @return A ClusterHealthStatus record reflecting current node health
+     */
+    public ClusterHealthStatus healthCheck() {
+        boolean persistenceHealthy = persistenceProvider == null || persistenceProvider.isHealthy();
+        String persistenceProviderName = persistenceProvider == null ? null : persistenceProvider.getProviderName();
+        boolean messagingRunning = messagingSystem != null;
+        return ClusterHealthStatus.of(
+                systemId,
+                isLeader.get(),
+                knownNodes.size(),
+                messagingRunning,
+                persistenceHealthy,
+                persistenceProviderName
+        );
+    }
+
+    /**
      * Sets the default delivery guarantee for messages sent by this actor system.
      *
      * @param deliveryGuarantee The delivery guarantee to use by default
