@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * No external services required.
  */
 @Tag("slow")
-class ClusterChaosTest {
+public class ClusterChaosTest {
 
     private WatchableInMemoryMetadataStore metadataStore;
     private final List<ClusterActorSystem> startedSystems = new ArrayList<>();
@@ -236,7 +236,7 @@ class ClusterChaosTest {
     /**
      * Minimal test actor — no-op receive; only routing behaviour is tested.
      */
-    private static class TestActor extends Actor<Object> {
+    public static class TestActor extends Actor<Object> {
 
         public TestActor(ActorSystem system, String actorId) {
             super(system, actorId);

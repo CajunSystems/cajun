@@ -64,11 +64,12 @@ class WatchableInMemoryMetadataStore implements MetadataStore {
     @Override
     public CompletableFuture<Optional<Lock>> acquireLock(String lockName, long ttlSeconds) {
         return CompletableFuture.supplyAsync(() -> {
-            if (locks.containsKey(lockName)) {
+            InMemoryLock lock = new InMemoryLock(lockName);
+            // putIfAbsent is atomic — only the first caller wins the lock
+            Lock existing = locks.putIfAbsent(lockName, lock);
+            if (existing != null) {
                 return Optional.empty();
             }
-            InMemoryLock lock = new InMemoryLock(lockName);
-            locks.put(lockName, lock);
             return Optional.of((Lock) lock);
         });
     }
