@@ -695,6 +695,15 @@ public class ClusterActorSystem extends ActorSystem {
         actorAssignmentCache.invalidate(actorId);
     }
 
+    /**
+     * Stops the actor's local mailbox without deleting its cluster assignment from the
+     * metadata store. Used by the management API during migration so the new assignment
+     * written to etcd is not overwritten by the usual shutdown path.
+     */
+    void shutdownLocalOnly(String actorId) {
+        super.shutdown(actorId);
+    }
+
     public Map<String, String> getActorAssignmentCache() {
         return actorAssignmentCache.snapshot();
     }

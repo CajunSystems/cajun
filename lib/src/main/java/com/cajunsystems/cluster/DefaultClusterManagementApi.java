@@ -76,10 +76,12 @@ class DefaultClusterManagementApi implements ClusterManagementApi {
                                             // Invalidate local TTL cache immediately
                                             system.invalidateActorAssignmentCache(actorId);
 
-                                            // If the actor is running locally, stop it so its
-                                            // state is persisted and lazily recovered on the target
+                                            // If the actor is running locally, stop the mailbox
+                                            // WITHOUT deleting from etcd — the new assignment we
+                                            // just wrote must not be overwritten by ClusterActorSystem
+                                            // .shutdown() which also deletes the etcd entry.
                                             if (system.getSystemId().equals(sourceNodeId)) {
-                                                system.shutdown(actorId);
+                                                system.shutdownLocalOnly(actorId);
                                             }
                                         });
                             });
