@@ -29,6 +29,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
     private final String systemId;
     private final int port;
     private final Map<String, NodeAddress> nodeAddresses = new ConcurrentHashMap<>();
+    private final Map<String, NodeCircuitBreaker> circuitBreakers = new ConcurrentHashMap<>();
     private final ExecutorService executor;
     private ServerSocket serverSocket;
     private volatile boolean running = false;
@@ -203,6 +204,10 @@ public class ReliableMessagingSystem implements MessagingSystem {
         }, executor);
     }
 
+    private NodeCircuitBreaker getOrCreateCircuitBreaker(String nodeId) {
+        return circuitBreakers.computeIfAbsent(nodeId, NodeCircuitBreaker::new);
+    }
+
     /**
      * Retries sending a message (used by the MessageTracker).
      *
@@ -245,6 +250,12 @@ public class ReliableMessagingSystem implements MessagingSystem {
             String targetSystemId, NodeAddress address, String actorId,
             Message message, String messageId, DeliveryGuarantee deliveryGuarantee) throws IOException {
 
+        NodeCircuitBreaker cb = getOrCreateCircuitBreaker(targetSystemId);
+        if (!cb.isCallPermitted()) {
+            if (clusterMetrics != null) clusterMetrics.incrementRemoteMessageFailures();
+            throw new CircuitBreakerOpenException(targetSystemId);
+        }
+
         if (clusterMetrics != null) clusterMetrics.incrementRemoteMessagesSent();
 
         MDC.put("targetSystem", targetSystemId);
@@ -280,7 +291,9 @@ public class ReliableMessagingSystem implements MessagingSystem {
                     messageTracker.acknowledgeMessage(messageId);
                 }
             }
+            cb.recordSuccess();
         } catch (IOException e) {
+            cb.recordFailure();
             if (clusterMetrics != null) clusterMetrics.incrementRemoteMessageFailures();
             throw e;
         } finally {
@@ -420,6 +433,10 @@ public class ReliableMessagingSystem implements MessagingSystem {
         } catch (IOException e) {
             logger.error("Error handling client connection", e);
         }
+    }
+
+    public NodeCircuitBreaker getCircuitBreakerForNode(String nodeId) {
+        return circuitBreakers.get(nodeId);
     }
 
     /**
