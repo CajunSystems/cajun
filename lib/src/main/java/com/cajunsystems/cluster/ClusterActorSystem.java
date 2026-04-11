@@ -29,8 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ClusterActorSystem extends ActorSystem {
 
     private static final Logger logger = LoggerFactory.getLogger(ClusterActorSystem.class);
-    private static final String ACTOR_ASSIGNMENT_PREFIX = "cajun/actor/";
-    private static final String NODE_PREFIX = "cajun/node/";
+    static final String ACTOR_ASSIGNMENT_PREFIX = "cajun/actor/";
+    static final String NODE_PREFIX = "cajun/node/";
     private static final String LEADER_KEY = "cajun/leader";
     private static final long HEARTBEAT_INTERVAL_SECONDS = 5;
     private static final long ACTOR_CACHE_TTL_MS = 60_000; // 60-second TTL
