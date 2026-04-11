@@ -1,13 +1,28 @@
 # Project State
 
 ## Current Status
-**Milestone**: 4 — Doc Audit & v0.7.0 Release
-**Phase**: 21 ✅ Complete — Milestone 4 archived as v0.7.0
-**Status**: Milestone complete — 629 tests, 0 failures, all audits clean
+**Milestone**: 5 — Cluster Evaluation & Enhancement
+**Phase**: 29 — Planned
+**Status**: Phase 29 plan written (29-1-PLAN.md) — ready to execute
 **Branch**: feature/roux-effect-integration
-**Last Updated**: 2026-04-01
+**Last Updated**: 2026-04-11
 
-## Milestone 4 Phase Progress
+## Milestone 5 Phase Progress
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 22 | Cluster & Persistence Audit | ✅ Complete |
+| 23 | Serialization Framework | ✅ Complete |
+| 24 | Redis Persistence Design | ✅ Complete |
+| 25 | Redis Persistence Provider | ✅ Complete |
+| 26 | Cluster + Shared Persistence Integration | ✅ Complete |
+| 27 | Observability & Diagnostics | ✅ Complete |
+| 28 | Reliability Hardening | ✅ Complete |
+| 29 | Performance Optimization | 📋 Planned |
+| 30 | Cluster Management API | 🔲 Not started |
+| 31 | Testing, Documentation & Examples | 🔲 Not started |
+
+## Milestone 4 Phase Progress (archived — v0.7.0)
 
 | Phase | Name | Status |
 |-------|------|--------|
@@ -101,6 +116,34 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 28)
+- `NodeCircuitBreaker` per-node (not per-actor): one node failure blocks all messages to that node; `failureThreshold=5`, `resetTimeoutMs=30s` defaults
+- Circuit breaker implemented with `synchronized` + `volatile` — simpler than lock-free for low-contention send path
+- `ExponentialBackoff` wraps only idempotent etcd ops (`put/get/delete/listKeys`); `acquireLock` excluded (double-acquire risk); watch/connect/close excluded
+- Graceful degradation via `exceptionally()` on `metadataStore.get()` future — zero overhead on happy path; WARN on cache hit, ERROR on cache miss (message dropped)
+- `DegradedRoutingTest` key prefix: `ClusterActorSystem.ACTOR_ASSIGNMENT_PREFIX` is `"cajun/actor/"` — test corrected to match
+
+## Decisions Made (Milestone 5 — Phase 27)
+- `ClusterMetrics` and `PersistenceMetrics` placed in `cajun-core/src/main/java/com/cajunsystems/metrics/` — `ReliableMessagingSystem` is in `cajun-core` so metrics must be co-located
+- `ClusterMetrics` injected into `ReliableMessagingSystem` via optional setter `setClusterMetrics()` with null guards — two copies of `ReliableMessagingSystem` exist (cajun-core + lib), both updated
+- `ClusterHealthStatus` record: `healthy = persistenceHealthy && messagingSystemRunning`; `persistenceHealthy=true` when no provider configured (backward compat)
+- MDC cleared via try-finally in `doSendMessage()` and `handleClient()` — prevents leakage on exception
+- `logback.xml` pattern: `[%X{actorId}][%X{messageId}]` added — empty strings for non-cluster log lines
+
+## Decisions Made (Milestone 5 — Phase 26)
+- `ClusterActorSystem.withPersistenceProvider(PersistenceProvider)` fluent setter; `setupPersistence()` called in `start()` before heartbeat/leader election — no-op if null
+- Persistence health check at startup: WARN log (not fail-fast) to preserve backward compat
+- `StatefulActorClusterStateTest`: @Disabled removed, `@Tag("requires-redis")` added, shared `RedisPersistenceProvider` used for both nodes — test now asserts count=6
+- Original bug-doc test kept `@Disabled` at method level as historical documentation
+- `PersistenceBenchmarkTest`: `@Tag("performance")` only; Redis tests also `@Tag("requires-redis")`; N=500 messages; no latency SLA assertions
+
+## Decisions Made (Milestone 5 — Phase 25)
+- Redis journal key: `{prefix}:journal:{actorId}` (actorId in `{}` for Cluster co-location); seq counter: `{prefix}:journal:{actorId}:seq`
+- Redis snapshot key: `{prefix}:snapshot:{actorId}` — single key per actor, overwrite semantics
+- `RedisPersistenceProvider` defaults to `JavaSerializationProvider`; integration tests use `KryoSerializationProvider` explicitly
+- Mocking Lettuce `RedisFuture` in tests: use concrete anonymous `RedisFuture` implementation wrapping `CompletableFuture` — avoids Mockito strict-stubbing issues with default `CompletionStage` interface methods
+- Integration tests tagged `@Tag("requires-redis")` — excluded from default Gradle test task in both `cajun-persistence` and `lib`
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)

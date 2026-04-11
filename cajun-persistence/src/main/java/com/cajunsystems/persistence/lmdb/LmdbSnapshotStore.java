@@ -2,6 +2,8 @@ package com.cajunsystems.persistence.lmdb;
 
 import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.serialization.JavaSerializationProvider;
+import com.cajunsystems.serialization.SerializationProvider;
 import org.lmdbjava.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,13 +39,14 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * @param <S> The type of state stored
  * @since 0.2.0
  */
-public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<S> {
+public class LmdbSnapshotStore<S> implements SnapshotStore<S> {
     private static final Logger logger = LoggerFactory.getLogger(LmdbSnapshotStore.class);
 
     private final String actorId;
     private final Env<ByteBuffer> env;
     private final Dbi<ByteBuffer> db;
     private final String keyPrefix;
+    private final SerializationProvider provider;
 
     // Buffer configuration
     private static final int KEY_BUFFER_SIZE = 256;
@@ -52,11 +55,34 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
     // Retention configuration
     private int maxSnapshotsToKeep = 3; // Keep last 3 snapshots by default
 
+    /**
+     * Creates a new LmdbSnapshotStore using {@link JavaSerializationProvider} for backward compatibility.
+     */
     public LmdbSnapshotStore(String actorId, Env<ByteBuffer> env, Dbi<ByteBuffer> db) {
+        this(actorId, env, db, JavaSerializationProvider.INSTANCE);
+    }
+
+    /**
+     * Creates a new LmdbSnapshotStore with a custom serialization provider.
+     *
+     * @param actorId  The actor ID this store is bound to
+     * @param env      The LMDB environment
+     * @param db       The LMDB database handle
+     * @param provider The serialization provider for encoding/decoding snapshot entries
+     */
+    public LmdbSnapshotStore(String actorId, Env<ByteBuffer> env, Dbi<ByteBuffer> db, SerializationProvider provider) {
         this.actorId = actorId;
         this.env = env;
         this.db = db;
         this.keyPrefix = "actor:" + actorId + ":snapshot:";
+        this.provider = provider;
+    }
+
+    /**
+     * Returns the serialization provider used by this snapshot store.
+     */
+    public SerializationProvider getSerializationProvider() {
+        return provider;
     }
 
     /**
@@ -327,20 +353,19 @@ public class LmdbSnapshotStore<S extends Serializable> implements SnapshotStore<
     // Serialization helpers
 
     private byte[] serializeSnapshot(SnapshotEntry<S> snapshot) throws IOException {
-        try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
-             ObjectOutputStream oos = new ObjectOutputStream(bos)) {
-            oos.writeObject(snapshot);
-            return bos.toByteArray();
+        try {
+            return provider.serialize(snapshot);
+        } catch (Exception e) {
+            throw new IOException("Failed to serialize snapshot for actor " + actorId, e);
         }
     }
 
     @SuppressWarnings("unchecked")
     private SnapshotEntry<S> deserializeSnapshot(byte[] bytes) throws IOException {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
-             ObjectInputStream ois = new ObjectInputStream(bis)) {
-            return (SnapshotEntry<S>) ois.readObject();
-        } catch (ClassNotFoundException e) {
-            throw new IOException("Failed to deserialize snapshot", e);
+        try {
+            return (SnapshotEntry<S>) provider.deserialize(bytes, SnapshotEntry.class);
+        } catch (Exception e) {
+            throw new IOException("Failed to deserialize snapshot for actor " + actorId, e);
         }
     }
 }
