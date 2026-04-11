@@ -6,6 +6,7 @@ import com.cajunsystems.serialization.JavaSerializationProvider;
 import com.cajunsystems.serialization.SerializationProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -246,6 +247,9 @@ public class ReliableMessagingSystem implements MessagingSystem {
 
         if (clusterMetrics != null) clusterMetrics.incrementRemoteMessagesSent();
 
+        MDC.put("targetSystem", targetSystemId);
+        MDC.put("actorId", actorId);
+        if (messageId != null) MDC.put("messageId", messageId);
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(address.host, address.port), 5000);
 
@@ -279,6 +283,10 @@ public class ReliableMessagingSystem implements MessagingSystem {
         } catch (IOException e) {
             if (clusterMetrics != null) clusterMetrics.incrementRemoteMessageFailures();
             throw e;
+        } finally {
+            MDC.remove("targetSystem");
+            MDC.remove("actorId");
+            MDC.remove("messageId");
         }
     }
 
@@ -357,6 +365,10 @@ public class ReliableMessagingSystem implements MessagingSystem {
 
             if (clusterMetrics != null) clusterMetrics.incrementRemoteMessagesReceived();
 
+            MDC.put("sourceSystem", remoteMessage.sourceSystemId);
+            MDC.put("actorId", remoteMessage.actorId);
+            if (remoteMessage.messageId != null) MDC.put("messageId", remoteMessage.messageId);
+            try {
             String messageId = remoteMessage.messageId;
             DeliveryGuarantee deliveryGuarantee = remoteMessage.deliveryGuarantee;
 
@@ -398,6 +410,11 @@ public class ReliableMessagingSystem implements MessagingSystem {
                 out.writeInt(ackBytes.length);
                 out.write(ackBytes);
                 out.flush();
+            }
+            } finally {
+                MDC.remove("sourceSystem");
+                MDC.remove("actorId");
+                MDC.remove("messageId");
             }
 
         } catch (IOException e) {
