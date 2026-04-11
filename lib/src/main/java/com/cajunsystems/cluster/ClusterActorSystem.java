@@ -3,6 +3,7 @@ package com.cajunsystems.cluster;
 import com.cajunsystems.Actor;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
+import com.cajunsystems.metrics.ClusterMetrics;
 import com.cajunsystems.persistence.PersistenceProvider;
 import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
@@ -33,6 +34,7 @@ public class ClusterActorSystem extends ActorSystem {
     private static final long HEARTBEAT_INTERVAL_SECONDS = 5;
 
     private final String systemId;
+    private final ClusterMetrics clusterMetrics;
     private final MetadataStore metadataStore;
     private final MessagingSystem messagingSystem;
     private final ScheduledExecutorService scheduler;
@@ -52,13 +54,15 @@ public class ClusterActorSystem extends ActorSystem {
     public ClusterActorSystem(String systemId, MetadataStore metadataStore, MessagingSystem messagingSystem) {
         super(true); // Use shared executor
         this.systemId = systemId;
+        this.clusterMetrics = new ClusterMetrics(systemId);
         this.metadataStore = metadataStore;
         this.messagingSystem = messagingSystem;
         this.scheduler = new ScheduledThreadPoolExecutor(1);
 
         // Set default delivery guarantee if messaging system supports it
-        if (messagingSystem instanceof ReliableMessagingSystem) {
-            ((ReliableMessagingSystem) messagingSystem).setDefaultDeliveryGuarantee(defaultDeliveryGuarantee);
+        if (messagingSystem instanceof ReliableMessagingSystem rms) {
+            rms.setDefaultDeliveryGuarantee(defaultDeliveryGuarantee);
+            rms.setClusterMetrics(clusterMetrics);
         }
 
         // Register message handler for remote actor messages
@@ -111,6 +115,7 @@ public class ClusterActorSystem extends ActorSystem {
                         public void onPut(String key, String value) {
                             String nodeId = key.substring(NODE_PREFIX.length());
                             knownNodes.add(nodeId);
+                            clusterMetrics.incrementNodeJoinCount();
                             logger.info("Node joined: {}", nodeId);
                         }
 
@@ -118,6 +123,7 @@ public class ClusterActorSystem extends ActorSystem {
                         public void onDelete(String key) {
                             String nodeId = key.substring(NODE_PREFIX.length());
                             knownNodes.remove(nodeId);
+                            clusterMetrics.incrementNodeDepartureCount();
                             logger.info("Node left: {}", nodeId);
 
                             // If we're the leader, reassign actors from the departed node
@@ -240,6 +246,7 @@ public class ClusterActorSystem extends ActorSystem {
         Actor<Message> actor = (Actor<Message>) getActor(new Pid(actorId, this));
         if (actor != null) {
             // Actor is local, deliver the message directly
+            clusterMetrics.incrementLocalMessagesRouted();
             actor.tell(message);
             return;
         }
@@ -251,20 +258,26 @@ public class ClusterActorSystem extends ActorSystem {
                         String nodeId = optionalNodeId.get();
                         if (!nodeId.equals(systemId)) {
                             // Actor is on another node, forward the message
+                            long routeStart = System.nanoTime();
+                            clusterMetrics.incrementRemoteMessagesRouted();
                             if (messagingSystem instanceof ReliableMessagingSystem) {
                                 // Use the reliable messaging system with the specified delivery guarantee
                                 ((ReliableMessagingSystem) messagingSystem).sendMessage(
                                         nodeId, actorId, message, deliveryGuarantee)
+                                    .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
                                     .exceptionally(ex -> {
-                                        logger.error("Failed to send message to actor {} on node {}", 
+                                        clusterMetrics.incrementRemoteMessageFailures();
+                                        logger.error("Failed to send message to actor {} on node {}",
                                                     actorId, nodeId, ex);
                                         return null;
                                     });
                             } else {
                                 // Fall back to the standard messaging system
                                 messagingSystem.sendMessage(nodeId, actorId, message)
+                                    .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
                                     .exceptionally(ex -> {
-                                        logger.error("Failed to send message to actor {} on node {}", 
+                                        clusterMetrics.incrementRemoteMessageFailures();
+                                        logger.error("Failed to send message to actor {} on node {}",
                                                     actorId, nodeId, ex);
                                         return null;
                                     });
@@ -275,6 +288,7 @@ public class ClusterActorSystem extends ActorSystem {
                             Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
                             if (localActor != null) {
                                 // Actor is now available locally, deliver the message directly
+                                clusterMetrics.incrementLocalMessagesRouted();
                                 localActor.tell(message);
                             } else {
                                 logger.warn("Actor {} is registered to this node but not found locally", actorId);
@@ -590,6 +604,15 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public MetadataStore getMetadataStore() {
         return metadataStore;
+    }
+
+    /**
+     * Gets the cluster metrics for this actor system.
+     *
+     * @return The ClusterMetrics instance
+     */
+    public ClusterMetrics getClusterMetrics() {
+        return clusterMetrics;
     }
 
     /**

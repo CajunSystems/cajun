@@ -1,6 +1,7 @@
 package com.cajunsystems.cluster;
 
 import com.cajunsystems.config.ThreadPoolFactory;
+import com.cajunsystems.metrics.ClusterMetrics;
 import com.cajunsystems.serialization.JavaSerializationProvider;
 import com.cajunsystems.serialization.SerializationProvider;
 import org.slf4j.Logger;
@@ -35,6 +36,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
     private DeliveryGuarantee defaultDeliveryGuarantee;
     private final ThreadPoolFactory threadPoolConfig;
     private final SerializationProvider provider;
+    private ClusterMetrics clusterMetrics;
 
     /**
      * Creates a new ReliableMessagingSystem with EXACTLY_ONCE as the default delivery guarantee.
@@ -116,6 +118,16 @@ public class ReliableMessagingSystem implements MessagingSystem {
      */
     public void setDefaultDeliveryGuarantee(DeliveryGuarantee deliveryGuarantee) {
         this.defaultDeliveryGuarantee = deliveryGuarantee;
+    }
+
+    /**
+     * Sets the cluster metrics instance for this messaging system.
+     * Optional — if not set, no metrics are recorded.
+     *
+     * @param metrics The ClusterMetrics instance to use
+     */
+    public void setClusterMetrics(ClusterMetrics metrics) {
+        this.clusterMetrics = metrics;
     }
 
     /**
@@ -232,6 +244,8 @@ public class ReliableMessagingSystem implements MessagingSystem {
             String targetSystemId, NodeAddress address, String actorId,
             Message message, String messageId, DeliveryGuarantee deliveryGuarantee) throws IOException {
 
+        if (clusterMetrics != null) clusterMetrics.incrementRemoteMessagesSent();
+
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(address.host, address.port), 5000);
 
@@ -262,6 +276,9 @@ public class ReliableMessagingSystem implements MessagingSystem {
                     messageTracker.acknowledgeMessage(messageId);
                 }
             }
+        } catch (IOException e) {
+            if (clusterMetrics != null) clusterMetrics.incrementRemoteMessageFailures();
+            throw e;
         }
     }
 
@@ -337,6 +354,8 @@ public class ReliableMessagingSystem implements MessagingSystem {
             int msgLen = in.readInt();
             byte[] msgBytes = in.readNBytes(msgLen);
             RemoteMessage<?> remoteMessage = provider.deserialize(msgBytes, RemoteMessage.class);
+
+            if (clusterMetrics != null) clusterMetrics.incrementRemoteMessagesReceived();
 
             String messageId = remoteMessage.messageId;
             DeliveryGuarantee deliveryGuarantee = remoteMessage.deliveryGuarantee;
