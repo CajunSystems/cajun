@@ -199,7 +199,7 @@ Plans:
 
 ---
 
-### Phase 27: Observability & Diagnostics
+### ~~Phase 27: Observability & Diagnostics~~ ✅
 
 **Goal**: Metrics API exposing throughput, latency, and cluster health; structured logging throughout cluster and persistence code.
 

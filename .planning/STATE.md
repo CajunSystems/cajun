@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 27 — Planned
-**Status**: Phase 27 plan written (27-1-PLAN.md) — ready to execute
+**Phase**: 27 — Complete
+**Status**: Phase 27 complete — ready to begin Phase 28 (Reliability Hardening)
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -16,7 +16,7 @@
 | 24 | Redis Persistence Design | ✅ Complete |
 | 25 | Redis Persistence Provider | ✅ Complete |
 | 26 | Cluster + Shared Persistence Integration | ✅ Complete |
-| 27 | Observability & Diagnostics | 📋 Planned |
+| 27 | Observability & Diagnostics | ✅ Complete |
 | 28 | Reliability Hardening | 🔲 Not started |
 | 29 | Performance Optimization | 🔲 Not started |
 | 30 | Cluster Management API | 🔲 Not started |
@@ -116,6 +116,13 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 27)
+- `ClusterMetrics` and `PersistenceMetrics` placed in `cajun-core/src/main/java/com/cajunsystems/metrics/` — `ReliableMessagingSystem` is in `cajun-core` so metrics must be co-located
+- `ClusterMetrics` injected into `ReliableMessagingSystem` via optional setter `setClusterMetrics()` with null guards — two copies of `ReliableMessagingSystem` exist (cajun-core + lib), both updated
+- `ClusterHealthStatus` record: `healthy = persistenceHealthy && messagingSystemRunning`; `persistenceHealthy=true` when no provider configured (backward compat)
+- MDC cleared via try-finally in `doSendMessage()` and `handleClient()` — prevents leakage on exception
+- `logback.xml` pattern: `[%X{actorId}][%X{messageId}]` added — empty strings for non-cluster log lines
 
 ## Decisions Made (Milestone 5 — Phase 26)
 - `ClusterActorSystem.withPersistenceProvider(PersistenceProvider)` fluent setter; `setupPersistence()` called in `start()` before heartbeat/leader election — no-op if null
