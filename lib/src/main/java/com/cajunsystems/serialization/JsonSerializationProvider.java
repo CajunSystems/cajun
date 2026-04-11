@@ -11,23 +11,45 @@ import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
  * <p>Includes full type information so polymorphic types (sealed interfaces, etc.)
  * round-trip correctly. Best for debugging and cross-language interop;
  * prefer {@code KryoSerializationProvider} for performance-critical paths.
+ *
+ * <p><strong>Security note</strong>: polymorphic deserialization is restricted to
+ * explicitly trusted package prefixes. The default {@link #INSTANCE} trusts only
+ * {@code com.cajunsystems.*}, {@code java.*}, and {@code javax.*}. If your actor
+ * messages live in other packages, create a custom instance:
+ * <pre>
+ *   new JsonSerializationProvider("com.cajunsystems.", "com.example.myapp.")
+ * </pre>
  */
 public class JsonSerializationProvider implements SerializationProvider {
 
-    public static final JsonSerializationProvider INSTANCE = new JsonSerializationProvider();
+    /**
+     * Default instance — trusts {@code com.cajunsystems.*}, {@code java.*},
+     * and {@code javax.*} package prefixes only.
+     */
+    public static final JsonSerializationProvider INSTANCE =
+            new JsonSerializationProvider("com.cajunsystems.", "java.", "javax.");
 
     private final ObjectMapper mapper;
 
-    public JsonSerializationProvider() {
+    /**
+     * Creates a provider that restricts polymorphic deserialization to the given
+     * package prefixes. Always includes {@code java.*} and {@code javax.*}.
+     *
+     * @param trustedPackagePrefixes package prefixes whose subtypes may be instantiated
+     *                               during deserialization (e.g. {@code "com.example."})
+     */
+    public JsonSerializationProvider(String... trustedPackagePrefixes) {
+        BasicPolymorphicTypeValidator.Builder pvtBuilder =
+                BasicPolymorphicTypeValidator.builder();
+        for (String pkg : trustedPackagePrefixes) {
+            pvtBuilder.allowIfSubType(pkg);
+        }
         this.mapper = JsonMapper.builder()
-            .activateDefaultTyping(
-                BasicPolymorphicTypeValidator.builder()
-                    .allowIfBaseType(Object.class)
-                    .build(),
-                ObjectMapper.DefaultTyping.EVERYTHING
-            )
-            .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
-            .build();
+                .activateDefaultTyping(
+                        pvtBuilder.build(),
+                        ObjectMapper.DefaultTyping.NON_FINAL)
+                .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
+                .build();
     }
 
     @Override
@@ -36,7 +58,7 @@ public class JsonSerializationProvider implements SerializationProvider {
             return mapper.writeValueAsBytes(object);
         } catch (Exception e) {
             throw new SerializationException(
-                "JSON serialization failed for " + object.getClass().getName(), e);
+                    "JSON serialization failed for " + object.getClass().getName(), e);
         }
     }
 
@@ -47,7 +69,7 @@ public class JsonSerializationProvider implements SerializationProvider {
             return mapper.readValue(bytes, type);
         } catch (Exception e) {
             throw new SerializationException(
-                "JSON deserialization failed for type " + type.getName(), e);
+                    "JSON deserialization failed for type " + type.getName(), e);
         }
     }
 

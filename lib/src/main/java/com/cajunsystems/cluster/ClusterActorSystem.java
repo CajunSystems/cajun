@@ -406,7 +406,12 @@ public class ClusterActorSystem extends ActorSystem {
             sendFuture
                 .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
                 .exceptionally(ex -> {
-                    clusterMetrics.incrementRemoteMessageFailures();
+                    // ReliableMessagingSystem already increments remoteMessageFailures at the
+                    // transport layer in doSendMessage(). Only increment here for other
+                    // messaging system implementations to avoid double-counting.
+                    if (!(messagingSystem instanceof ReliableMessagingSystem)) {
+                        clusterMetrics.incrementRemoteMessageFailures();
+                    }
                     logger.error("Failed to send message to actor '{}' on node '{}': {}",
                             actorId, nodeId, ex.getMessage(), ex);
                     return null;

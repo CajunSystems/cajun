@@ -3,6 +3,7 @@ package com.cajunsystems.cluster;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.metrics.ClusterMetrics;
 import com.cajunsystems.serialization.KryoSerializationProvider;
+import com.cajunsystems.serialization.SerializationException;
 import com.cajunsystems.serialization.SerializationProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -430,6 +431,9 @@ public class ReliableMessagingSystem implements MessagingSystem {
                 MDC.remove("messageId");
             }
 
+        } catch (SerializationException e) {
+            logger.error("Deserialization/serialization error for message from {}:{}: {}",
+                    clientSocket.getInetAddress(), clientSocket.getPort(), e.getMessage(), e);
         } catch (IOException e) {
             logger.error("Error handling client connection from {}:{}: {}", clientSocket.getInetAddress(), clientSocket.getPort(), e.getMessage(), e);
         }
