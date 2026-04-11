@@ -47,6 +47,7 @@ public class ClusterActorSystem extends ActorSystem {
     private MetadataStore.Lock leaderLock;
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
     private PersistenceProvider persistenceProvider; // null = use existing registry default
+    private final ClusterManagementApi managementApi;
 
     /**
      * Creates a new ClusterActorSystem with the specified configuration.
@@ -71,6 +72,8 @@ public class ClusterActorSystem extends ActorSystem {
 
         // Register message handler for remote actor messages
         messagingSystem.registerMessageHandler(this::handleRemoteMessage);
+
+        this.managementApi = new DefaultClusterManagementApi(this);
     }
 
     /**
@@ -675,6 +678,21 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public ClusterMetrics getClusterMetrics() {
         return clusterMetrics;
+    }
+
+    /**
+     * Returns the management API for programmatic cluster operations.
+     */
+    public ClusterManagementApi getManagementApi() {
+        return managementApi;
+    }
+
+    /**
+     * Invalidates the local actor-assignment cache entry for the given actor.
+     * Called by plan 30-2 after a migration or drain operation updates the assignment.
+     */
+    void invalidateActorAssignmentCache(String actorId) {
+        actorAssignmentCache.invalidate(actorId);
     }
 
     public Map<String, String> getActorAssignmentCache() {
