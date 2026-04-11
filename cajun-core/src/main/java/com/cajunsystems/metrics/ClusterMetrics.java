@@ -13,6 +13,8 @@ public class ClusterMetrics {
     private final AtomicLong routingLatencyCount = new AtomicLong(0);
     private final AtomicLong nodeJoinCount = new AtomicLong(0);
     private final AtomicLong nodeDepartureCount = new AtomicLong(0);
+    private final AtomicLong cacheHits = new AtomicLong(0);
+    private final AtomicLong cacheMisses = new AtomicLong(0);
 
     public ClusterMetrics(String nodeId) { this.nodeId = nodeId; }
 
@@ -27,6 +29,8 @@ public class ClusterMetrics {
     }
     public void incrementNodeJoinCount() { nodeJoinCount.incrementAndGet(); }
     public void incrementNodeDepartureCount() { nodeDepartureCount.incrementAndGet(); }
+    public void incrementCacheHit() { cacheHits.incrementAndGet(); }
+    public void incrementCacheMiss() { cacheMisses.incrementAndGet(); }
 
     public String getNodeId() { return nodeId; }
     public long getLocalMessagesRouted() { return localMessagesRouted.get(); }
@@ -36,6 +40,8 @@ public class ClusterMetrics {
     public long getRemoteMessageFailures() { return remoteMessageFailures.get(); }
     public long getNodeJoinCount() { return nodeJoinCount.get(); }
     public long getNodeDepartureCount() { return nodeDepartureCount.get(); }
+    public long getCacheHits() { return cacheHits.get(); }
+    public long getCacheMisses() { return cacheMisses.get(); }
     public long getAverageRoutingLatencyNs() {
         long count = routingLatencyCount.get();
         return count == 0 ? 0 : totalRoutingLatencyNs.get() / count;
@@ -50,6 +56,8 @@ public class ClusterMetrics {
                 + ", failures=" + getRemoteMessageFailures()
                 + ", avgRoutingLatencyNs=" + getAverageRoutingLatencyNs()
                 + ", nodeJoins=" + getNodeJoinCount()
-                + ", nodeDepartures=" + getNodeDepartureCount() + '}';
+                + ", nodeDepartures=" + getNodeDepartureCount()
+                + ", cacheHits=" + getCacheHits()
+                + ", cacheMisses=" + getCacheMisses() + '}';
     }
 }

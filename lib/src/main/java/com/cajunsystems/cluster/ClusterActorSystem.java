@@ -9,7 +9,6 @@ import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -34,6 +33,7 @@ public class ClusterActorSystem extends ActorSystem {
     private static final String NODE_PREFIX = "cajun/node/";
     private static final String LEADER_KEY = "cajun/leader";
     private static final long HEARTBEAT_INTERVAL_SECONDS = 5;
+    private static final long ACTOR_CACHE_TTL_MS = 60_000; // 60-second TTL
 
     private final String systemId;
     private final ClusterMetrics clusterMetrics;
@@ -41,8 +41,8 @@ public class ClusterActorSystem extends ActorSystem {
     private final MessagingSystem messagingSystem;
     private final ScheduledExecutorService scheduler;
     private final Set<String> knownNodes = ConcurrentHashMap.newKeySet();
-    // Local cache of actor→node assignments; used as fallback when metadata store is unreachable
-    private final Map<String, String> actorAssignmentCache = new ConcurrentHashMap<>();
+    // Local cache of actor→node assignments with TTL-based expiry
+    private final TtlCache<String, String> actorAssignmentCache = new TtlCache<>(ACTOR_CACHE_TTL_MS);
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private MetadataStore.Lock leaderLock;
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
@@ -136,6 +136,30 @@ public class ClusterActorSystem extends ActorSystem {
                             }
                         }
                     });
+
+                    // Watch actor assignment changes — drive cache eviction and real-time updates
+                    metadataStore.watch(ACTOR_ASSIGNMENT_PREFIX, new MetadataStore.KeyWatcher() {
+                        @Override
+                        public void onPut(String key, String value) {
+                            String watchedActorId = key.substring(ACTOR_ASSIGNMENT_PREFIX.length());
+                            actorAssignmentCache.put(watchedActorId, value);
+                            logger.debug("Actor assignment updated via watcher: '{}' → node '{}'", watchedActorId, value);
+                        }
+                        @Override
+                        public void onDelete(String key) {
+                            String watchedActorId = key.substring(ACTOR_ASSIGNMENT_PREFIX.length());
+                            actorAssignmentCache.invalidate(watchedActorId);
+                            logger.debug("Actor assignment evicted via watcher: '{}'", watchedActorId);
+                        }
+                    });
+
+                    // Schedule periodic TTL cleanup every 30 seconds
+                    scheduler.scheduleAtFixedRate(
+                            actorAssignmentCache::cleanupExpired,
+                            30,
+                            30,
+                            TimeUnit.SECONDS
+                    );
                 });
     }
 
@@ -255,78 +279,28 @@ public class ClusterActorSystem extends ActorSystem {
             return;
         }
 
-        // Actor is not local, look up its location in the metadata store
+        // Check assignment cache before going to metadata store (primary fast path)
+        Optional<String> cachedNodeId = actorAssignmentCache.get(actorId);
+        if (cachedNodeId.isPresent()) {
+            clusterMetrics.incrementCacheHit();
+            routeToNode(actorId, cachedNodeId.get(), message, deliveryGuarantee);
+            return;
+        }
+
+        // Cache miss — look up in metadata store
+        clusterMetrics.incrementCacheMiss();
         metadataStore.get(ACTOR_ASSIGNMENT_PREFIX + actorId)
                 .thenAccept(optionalNodeId -> {
                     if (optionalNodeId.isPresent()) {
                         String nodeId = optionalNodeId.get();
-                        actorAssignmentCache.put(actorId, nodeId);  // update cache on successful lookup
-                        if (!nodeId.equals(systemId)) {
-                            // Actor is on another node, forward the message
-                            long routeStart = System.nanoTime();
-                            clusterMetrics.incrementRemoteMessagesRouted();
-                            if (messagingSystem instanceof ReliableMessagingSystem) {
-                                // Use the reliable messaging system with the specified delivery guarantee
-                                ((ReliableMessagingSystem) messagingSystem).sendMessage(
-                                        nodeId, actorId, message, deliveryGuarantee)
-                                    .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
-                                    .exceptionally(ex -> {
-                                        clusterMetrics.incrementRemoteMessageFailures();
-                                        logger.error("Failed to send message to actor {} on node {}",
-                                                    actorId, nodeId, ex);
-                                        return null;
-                                    });
-                            } else {
-                                // Fall back to the standard messaging system
-                                messagingSystem.sendMessage(nodeId, actorId, message)
-                                    .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
-                                    .exceptionally(ex -> {
-                                        clusterMetrics.incrementRemoteMessageFailures();
-                                        logger.error("Failed to send message to actor {} on node {}",
-                                                    actorId, nodeId, ex);
-                                        return null;
-                                    });
-                            }
-                        } else {
-                            // Actor is registered to this node but not found locally
-                            // Try to get the actor again (it might have been created since our first check)
-                            Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
-                            if (localActor != null) {
-                                // Actor is now available locally, deliver the message directly
-                                clusterMetrics.incrementLocalMessagesRouted();
-                                localActor.tell(message);
-                            } else {
-                                logger.warn("Actor '{}' is registered to node '{}' (this node) but not found in local actor registry — it may still be initializing", actorId, systemId);
-                            }
-                        }
+                        actorAssignmentCache.put(actorId, nodeId);
+                        routeToNode(actorId, nodeId, message, deliveryGuarantee);
                     } else {
                         logger.warn("Actor '{}' not found in cluster metadata store — not yet registered or already deregistered", actorId);
                     }
                 })
                 .exceptionally(ex -> {
-                    String cachedNodeId = actorAssignmentCache.get(actorId);
-                    if (cachedNodeId != null) {
-                        logger.warn("Metadata store unreachable for actor '{}' — using cached assignment to node '{}' (degraded mode)",
-                                actorId, cachedNodeId);
-                        Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
-                        if (localActor != null) {
-                            clusterMetrics.incrementLocalMessagesRouted();
-                            localActor.tell(message);
-                        } else if (!cachedNodeId.equals(systemId)) {
-                            long routeStart = System.nanoTime();
-                            clusterMetrics.incrementRemoteMessagesRouted();
-                            messagingSystem.sendMessage(cachedNodeId, actorId, message)
-                                .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
-                                .exceptionally(sendEx -> {
-                                    clusterMetrics.incrementRemoteMessageFailures();
-                                    logger.error("Degraded-mode send failed for actor '{}' on node '{}': {}",
-                                            actorId, cachedNodeId, sendEx.getMessage());
-                                    return null;
-                                });
-                        }
-                    } else {
-                        logger.error("Metadata store unreachable and no cached assignment for actor '{}' — message dropped", actorId);
-                    }
+                    logger.error("Metadata store unreachable and no cached assignment for actor '{}' — message dropped", actorId);
                     return null;
                 });
     }
@@ -381,6 +355,38 @@ public class ClusterActorSystem extends ActorSystem {
             actor.tell(message);
         } else {
             logger.warn("Received message for unknown actor: {}", actorId);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private <Message> void routeToNode(String actorId, String nodeId, Message message,
+                                        DeliveryGuarantee deliveryGuarantee) {
+        if (nodeId.equals(systemId)) {
+            Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
+            if (localActor != null) {
+                clusterMetrics.incrementLocalMessagesRouted();
+                localActor.tell(message);
+            } else {
+                logger.warn("Actor '{}' is registered to node '{}' (this node) but not found in local actor registry — it may still be initializing",
+                        actorId, systemId);
+            }
+        } else {
+            long routeStart = System.nanoTime();
+            clusterMetrics.incrementRemoteMessagesRouted();
+            CompletableFuture<Void> sendFuture;
+            if (messagingSystem instanceof ReliableMessagingSystem rms) {
+                sendFuture = rms.sendMessage(nodeId, actorId, message, deliveryGuarantee);
+            } else {
+                sendFuture = messagingSystem.sendMessage(nodeId, actorId, message);
+            }
+            sendFuture
+                .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
+                .exceptionally(ex -> {
+                    clusterMetrics.incrementRemoteMessageFailures();
+                    logger.error("Failed to send message to actor '{}' on node '{}': {}",
+                            actorId, nodeId, ex.getMessage(), ex);
+                    return null;
+                });
         }
     }
 
@@ -643,7 +649,7 @@ public class ClusterActorSystem extends ActorSystem {
     }
 
     public Map<String, String> getActorAssignmentCache() {
-        return Collections.unmodifiableMap(actorAssignmentCache);
+        return actorAssignmentCache.snapshot();
     }
 
     /**
