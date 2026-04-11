@@ -3,11 +3,10 @@ package com.cajunsystems.persistence.filesystem;
 import com.cajunsystems.persistence.BatchedMessageJournal;
 import com.cajunsystems.persistence.JournalEntry;
 import com.cajunsystems.persistence.TruncationCapableJournal;
+import com.cajunsystems.serialization.SerializationProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.FileOutputStream;
-import java.io.ObjectOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -67,6 +66,24 @@ public class BatchedFileMessageJournal<M> extends FileMessageJournal<M> implemen
      */
     public BatchedFileMessageJournal(String journalDirPath) {
         this(Paths.get(journalDirPath));
+    }
+
+    /**
+     * Creates a new BatchedFileMessageJournal with the specified directory and serialization provider.
+     *
+     * @param journalDir The directory to store journal files in
+     * @param provider   The serialization provider to use
+     */
+    public BatchedFileMessageJournal(Path journalDir, SerializationProvider provider) {
+        super(journalDir, provider);
+        // Start the background flush task
+        scheduler = Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r, "journal-flush-scheduler");
+            t.setDaemon(true);
+            return t;
+        });
+        scheduler.scheduleAtFixedRate(this::flushAllBatches,
+                maxBatchDelayMs, maxBatchDelayMs, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -255,11 +272,10 @@ public class BatchedFileMessageJournal<M> extends FileMessageJournal<M> implemen
                         // Create journal entry
                         JournalEntry<M> journalEntry = new JournalEntry<>(seqNum, actorId, entry.getMessage(), Instant.now());
 
-                        // Write to file
+                        // Write to file using provider
                         Path entryFile = actorJournalDir.resolve(String.format("%020d.journal", seqNum));
-                        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(entryFile.toFile()))) {
-                            oos.writeObject(journalEntry);
-                        }
+                        byte[] bytes = getSerializationProvider().serialize(journalEntry);
+                        Files.write(entryFile, bytes);
 
                         // Complete the future with the sequence number
                         entry.getFuture().complete(seqNum);
