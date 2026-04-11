@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 25 — Not started
-**Status**: Phase 24 complete — ready to begin Phase 25 (Redis Persistence Provider)
+**Phase**: 26 — Not started
+**Status**: Phase 25 complete — ready to begin Phase 26 (Cluster + Shared Persistence Integration)
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -14,7 +14,7 @@
 | 22 | Cluster & Persistence Audit | ✅ Complete |
 | 23 | Serialization Framework | ✅ Complete |
 | 24 | Redis Persistence Design | ✅ Complete |
-| 25 | Redis Persistence Provider | 🔲 Not started |
+| 25 | Redis Persistence Provider | ✅ Complete |
 | 26 | Cluster + Shared Persistence Integration | 🔲 Not started |
 | 27 | Observability & Diagnostics | 🔲 Not started |
 | 28 | Reliability Hardening | 🔲 Not started |
@@ -116,6 +116,13 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 25)
+- Redis journal key: `{prefix}:journal:{actorId}` (actorId in `{}` for Cluster co-location); seq counter: `{prefix}:journal:{actorId}:seq`
+- Redis snapshot key: `{prefix}:snapshot:{actorId}` — single key per actor, overwrite semantics
+- `RedisPersistenceProvider` defaults to `JavaSerializationProvider`; integration tests use `KryoSerializationProvider` explicitly
+- Mocking Lettuce `RedisFuture` in tests: use concrete anonymous `RedisFuture` implementation wrapping `CompletableFuture` — avoids Mockito strict-stubbing issues with default `CompletionStage` interface methods
+- Integration tests tagged `@Tag("requires-redis")` — excluded from default Gradle test task in both `cajun-persistence` and `lib`
 
 ## Decisions Made (Milestone 2)
 - Audience: Cajun library users (self-contained, easy to run)

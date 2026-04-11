@@ -173,7 +173,7 @@ Plans:
 
 ---
 
-### Phase 25: Redis Persistence Provider
+### ~~Phase 25: Redis Persistence Provider~~ ✅
 
 **Goal**: `RedisPersistenceProvider`, `RedisMessageJournal`, and `RedisSnapshotStore` implemented, tested, and registered in `PersistenceProviderRegistry`. Uses `SerializationProvider` from Phase 23.
 
