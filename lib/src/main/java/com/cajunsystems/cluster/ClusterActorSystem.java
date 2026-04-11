@@ -9,7 +9,9 @@ import com.cajunsystems.persistence.PersistenceProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -39,6 +41,8 @@ public class ClusterActorSystem extends ActorSystem {
     private final MessagingSystem messagingSystem;
     private final ScheduledExecutorService scheduler;
     private final Set<String> knownNodes = ConcurrentHashMap.newKeySet();
+    // Local cache of actor→node assignments; used as fallback when metadata store is unreachable
+    private final Map<String, String> actorAssignmentCache = new ConcurrentHashMap<>();
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private MetadataStore.Lock leaderLock;
     private DeliveryGuarantee defaultDeliveryGuarantee = DeliveryGuarantee.EXACTLY_ONCE;
@@ -256,6 +260,7 @@ public class ClusterActorSystem extends ActorSystem {
                 .thenAccept(optionalNodeId -> {
                     if (optionalNodeId.isPresent()) {
                         String nodeId = optionalNodeId.get();
+                        actorAssignmentCache.put(actorId, nodeId);  // update cache on successful lookup
                         if (!nodeId.equals(systemId)) {
                             // Actor is on another node, forward the message
                             long routeStart = System.nanoTime();
@@ -299,7 +304,29 @@ public class ClusterActorSystem extends ActorSystem {
                     }
                 })
                 .exceptionally(ex -> {
-                    logger.error("Failed to look up actor {} in metadata store", actorId, ex);
+                    String cachedNodeId = actorAssignmentCache.get(actorId);
+                    if (cachedNodeId != null) {
+                        logger.warn("Metadata store unreachable for actor '{}' — using cached assignment to node '{}' (degraded mode)",
+                                actorId, cachedNodeId);
+                        Actor<Message> localActor = (Actor<Message>) getActor(new Pid(actorId, this));
+                        if (localActor != null) {
+                            clusterMetrics.incrementLocalMessagesRouted();
+                            localActor.tell(message);
+                        } else if (!cachedNodeId.equals(systemId)) {
+                            long routeStart = System.nanoTime();
+                            clusterMetrics.incrementRemoteMessagesRouted();
+                            messagingSystem.sendMessage(cachedNodeId, actorId, message)
+                                .thenRun(() -> clusterMetrics.recordRoutingLatency(System.nanoTime() - routeStart))
+                                .exceptionally(sendEx -> {
+                                    clusterMetrics.incrementRemoteMessageFailures();
+                                    logger.error("Degraded-mode send failed for actor '{}' on node '{}': {}",
+                                            actorId, cachedNodeId, sendEx.getMessage());
+                                    return null;
+                                });
+                        }
+                    } else {
+                        logger.error("Metadata store unreachable and no cached assignment for actor '{}' — message dropped", actorId);
+                    }
                     return null;
                 });
     }
@@ -613,6 +640,10 @@ public class ClusterActorSystem extends ActorSystem {
      */
     public ClusterMetrics getClusterMetrics() {
         return clusterMetrics;
+    }
+
+    public Map<String, String> getActorAssignmentCache() {
+        return Collections.unmodifiableMap(actorAssignmentCache);
     }
 
     /**
