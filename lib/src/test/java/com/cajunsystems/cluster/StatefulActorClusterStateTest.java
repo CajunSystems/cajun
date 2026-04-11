@@ -4,17 +4,23 @@ import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.StatefulActor;
 import com.cajunsystems.persistence.BatchedMessageJournal;
+import com.cajunsystems.persistence.MessageJournal;
 import com.cajunsystems.persistence.MockBatchedMessageJournal;
 import com.cajunsystems.persistence.MockSnapshotStore;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.persistence.redis.RedisPersistenceProvider;
+import com.cajunsystems.serialization.KryoSerializationProvider;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -60,7 +66,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       no cross-node access possible</li>
  * </ul>
  */
-@Disabled("BUG: StatefulActor state is not recovered after cluster reassignment — to be fixed in Phase 26")
+@Tag("requires-redis")
 public class StatefulActorClusterStateTest {
 
     // -------------------------------------------------------------------------
@@ -326,8 +332,20 @@ public class StatefulActorClusterStateTest {
     // Test lifecycle
     // -------------------------------------------------------------------------
 
+    private static final String REDIS_URI = "redis://localhost:6379";
+    private static final String KEY_PREFIX = "cajun-cluster-test";
+
     private ClusterActorSystem system1;
     private ClusterActorSystem system2;
+    private RedisPersistenceProvider redisProvider;
+    private String actorId;
+
+    @BeforeEach
+    void setUpRedis() {
+        actorId = "counter-" + UUID.randomUUID();
+        redisProvider = new RedisPersistenceProvider(REDIS_URI, KEY_PREFIX,
+            KryoSerializationProvider.INSTANCE);
+    }
 
     @AfterEach
     void tearDown() {
@@ -338,6 +356,18 @@ public class StatefulActorClusterStateTest {
         if (system2 != null) {
             try { system2.stop().get(5, TimeUnit.SECONDS); } catch (Exception ignored) {}
             system2 = null;
+        }
+        if (redisProvider != null) {
+            try {
+                MessageJournal<CounterMessage> j = redisProvider.createMessageJournal(actorId);
+                j.truncateBefore(actorId, Long.MAX_VALUE).get(5, TimeUnit.SECONDS);
+                SnapshotStore<CounterState> s = redisProvider.createSnapshotStore(actorId);
+                s.deleteSnapshots(actorId).get(5, TimeUnit.SECONDS);
+                j.close();
+                s.close();
+            } catch (Exception ignored) {}
+            redisProvider.close();
+            redisProvider = null;
         }
     }
 
@@ -376,6 +406,7 @@ public class StatefulActorClusterStateTest {
      * {@code PersistenceProvider} that is accessible to all nodes, ensuring that
      * reassigned actors recover their full state on the new node.</p>
      */
+    @org.junit.jupiter.api.Disabled("Historical bug documentation")
     @Test
     void testStatefulActorStateLostOnClusterReassignment() throws Exception {
 
@@ -475,5 +506,115 @@ public class StatefulActorClusterStateTest {
                 "Expected count=6 (5 from system1 + 1 from system2) but was " +
                 countFromSystem2.get() + ". " +
                 "Root cause: persistence is node-local; no shared store exists yet.");
+    }
+
+    // -------------------------------------------------------------------------
+    // The Fixed Test (Phase 26)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Demonstrates state recovery when a {@link StatefulActor} is reassigned to a new cluster
+     * node AND both nodes share a Redis-backed persistence provider.
+     *
+     * <h3>Scenario</h3>
+     * <ol>
+     *   <li>Start {@code system1} backed by a shared {@link InMemoryMetadataStore}.</li>
+     *   <li>Register {@code CounterActor} (UUID id) on {@code system1} with Redis-backed
+     *       journal and snapshot store from {@code redisProvider}.</li>
+     *   <li>Send 5 {@link CounterMessage.Increment} messages; verify count == 5.</li>
+     *   <li>Stop {@code system1} (simulates node failure).</li>
+     *   <li>Start {@code system2} with the <em>same</em> metadata store.</li>
+     *   <li>Register a new {@code CounterActor} on {@code system2} with the <em>same</em>
+     *       Redis-backed journal and snapshot store — same Redis keys as system1.</li>
+     *   <li>StatefulActor recovery replays the 5 journal messages from Redis → count=5.</li>
+     *   <li>Send 1 more {@link CounterMessage.Increment} via {@code system2}.</li>
+     *   <li>Assert count == 6.</li>
+     * </ol>
+     */
+    @Test
+    void testStatefulActorStateRecoveredViaRedis() throws Exception {
+
+        // Shared metadata store — both nodes use this for actor placement and leader election
+        InMemoryMetadataStore sharedMetadataStore = new InMemoryMetadataStore();
+
+        // ---- Step 1: Start system1 ----
+        InMemoryMessagingSystem ms1 = new InMemoryMessagingSystem("system1");
+        system1 = new ClusterActorSystem("system1", sharedMetadataStore, ms1);
+        system1.start().get(5, TimeUnit.SECONDS);
+        Thread.sleep(500); // allow leader election to settle
+
+        // ---- Step 2: Register CounterActor on system1 with SHARED Redis storage ----
+        BatchedMessageJournal<CounterMessage> journal1 =
+                redisProvider.createBatchedMessageJournal(actorId);
+        SnapshotStore<CounterState> snapshot1 =
+                redisProvider.createSnapshotStore(actorId);
+        CounterActor counter1 = new CounterActor(
+                system1, actorId, new CounterState(0), journal1, snapshot1);
+        counter1.start();
+        system1.registerActor(counter1);
+        sharedMetadataStore.put("cajun/actor/" + actorId, "system1").get(1, TimeUnit.SECONDS);
+        assertTrue(counter1.waitForInit(2000), "Counter actor should initialize within 2 s");
+
+        // ---- Step 3: Send 5 increments and verify count == 5 ----
+        for (int i = 0; i < 5; i++) {
+            counter1.tell(new CounterMessage.Increment());
+        }
+        Thread.sleep(800); // allow messages to be processed and journaled to Redis
+
+        CountDownLatch latch1 = new CountDownLatch(1);
+        AtomicInteger countFromSystem1 = new AtomicInteger(-1);
+        ReplyCollector collector1 = new ReplyCollector(
+                system1, "collector-1-" + UUID.randomUUID(), latch1, countFromSystem1);
+        collector1.start();
+        system1.registerActor(collector1);
+        counter1.tell(new CounterMessage.GetCount(collector1.self()));
+        assertTrue(latch1.await(3, TimeUnit.SECONDS),
+                "Should receive count reply from system1");
+        assertEquals(5, countFromSystem1.get(),
+                "Pre-condition: count should be 5 after 5 increments on system1");
+
+        // ---- Step 4: Stop system1 (simulate node failure) ----
+        system1.stop().get(5, TimeUnit.SECONDS);
+        system1 = null;
+        Thread.sleep(500); // allow node-departure events to propagate
+
+        // ---- Step 5: Start system2 with the SAME metadata store ----
+        InMemoryMessagingSystem ms2 = new InMemoryMessagingSystem("system2");
+        system2 = new ClusterActorSystem("system2", sharedMetadataStore, ms2);
+        system2.start().get(5, TimeUnit.SECONDS);
+        Thread.sleep(2000); // allow leader election and actor reassignment
+
+        // ---- Step 6: Register CounterActor on system2 with SAME Redis storage ----
+        // KEY FIX: Using the same Redis journal/snapshot (same actorId, same Redis keys)
+        // means StatefulActor.initializeState() will replay the 5 messages from Redis
+        // and recover count=5 before accepting new messages.
+        BatchedMessageJournal<CounterMessage> journal2 =
+                redisProvider.createBatchedMessageJournal(actorId);
+        SnapshotStore<CounterState> snapshot2 =
+                redisProvider.createSnapshotStore(actorId);
+        CounterActor counter2 = new CounterActor(
+                system2, actorId, new CounterState(0), journal2, snapshot2);
+        counter2.start();
+        system2.registerActor(counter2);
+        assertTrue(counter2.waitForInit(5000), "Counter actor on system2 should initialize");
+
+        // ---- Step 7: Send 1 more increment via system2 ----
+        counter2.tell(new CounterMessage.Increment());
+        Thread.sleep(800);
+
+        // ---- Step 8: Assert count == 6 ----
+        // system2 recovered 5 messages from Redis, then incremented once more → 6
+        CountDownLatch latch2 = new CountDownLatch(1);
+        AtomicInteger countFromSystem2 = new AtomicInteger(-1);
+        ReplyCollector collector2 = new ReplyCollector(
+                system2, "collector-2-" + UUID.randomUUID(), latch2, countFromSystem2);
+        collector2.start();
+        system2.registerActor(collector2);
+        counter2.tell(new CounterMessage.GetCount(collector2.self()));
+        assertTrue(latch2.await(3, TimeUnit.SECONDS),
+                "Should receive count reply from system2");
+
+        assertEquals(6, countFromSystem2.get(),
+                "State recovered from Redis: 5 from system1 + 1 from system2");
     }
 }
