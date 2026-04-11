@@ -1,5 +1,6 @@
 package com.cajunsystems.cluster.impl;
 
+import com.cajunsystems.cluster.ExponentialBackoff;
 import com.cajunsystems.cluster.MetadataStore;
 import io.etcd.jetcd.ByteSequence;
 import io.etcd.jetcd.Client;
@@ -33,6 +34,7 @@ public class EtcdMetadataStore implements MetadataStore {
     private final Map<Long, Watch.Watcher> watchers = new ConcurrentHashMap<>();
     private final Map<String, EtcdLock> activeLocks = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = new ScheduledThreadPoolExecutor(1);
+    private final ExponentialBackoff backoff = new ExponentialBackoff(100, 30_000, 5, 0.25);
     
     /**
      * Creates a new EtcdMetadataStore with the specified endpoints.
@@ -87,51 +89,54 @@ public class EtcdMetadataStore implements MetadataStore {
     
     @Override
     public CompletableFuture<Void> put(String key, String value) {
-        ByteSequence keyBytes = ByteSequence.from(key, StandardCharsets.UTF_8);
-        ByteSequence valueBytes = ByteSequence.from(value, StandardCharsets.UTF_8);
-        
-        return client.getKVClient().put(keyBytes, valueBytes)
-                .thenApply(putResponse -> null);
+        return backoff.withRetry(() -> {
+            ByteSequence keyBytes = ByteSequence.from(key, StandardCharsets.UTF_8);
+            ByteSequence valueBytes = ByteSequence.from(value, StandardCharsets.UTF_8);
+            return client.getKVClient().put(keyBytes, valueBytes)
+                    .thenApply(putResponse -> (Void) null);
+        }, scheduler);
     }
     
     @Override
     public CompletableFuture<Optional<String>> get(String key) {
-        ByteSequence keyBytes = ByteSequence.from(key, StandardCharsets.UTF_8);
-        
-        return client.getKVClient().get(keyBytes)
-                .thenApply(getResponse -> {
-                    if (getResponse.getKvs().isEmpty()) {
-                        return Optional.empty();
-                    }
-                    
-                    ByteSequence value = getResponse.getKvs().get(0).getValue();
-                    return Optional.of(value.toString(StandardCharsets.UTF_8));
-                });
+        return backoff.withRetry(() -> {
+            ByteSequence keyBytes = ByteSequence.from(key, StandardCharsets.UTF_8);
+            return client.getKVClient().get(keyBytes)
+                    .thenApply(getResponse -> {
+                        if (getResponse.getKvs().isEmpty()) {
+                            return Optional.<String>empty();
+                        }
+                        ByteSequence value = getResponse.getKvs().get(0).getValue();
+                        return Optional.of(value.toString(StandardCharsets.UTF_8));
+                    });
+        }, scheduler);
     }
     
     @Override
     public CompletableFuture<Void> delete(String key) {
-        ByteSequence keyBytes = ByteSequence.from(key, StandardCharsets.UTF_8);
-        
-        return client.getKVClient().delete(keyBytes)
-                .thenApply(deleteResponse -> null);
+        return backoff.withRetry(() -> {
+            ByteSequence keyBytes = ByteSequence.from(key, StandardCharsets.UTF_8);
+            return client.getKVClient().delete(keyBytes)
+                    .thenApply(deleteResponse -> (Void) null);
+        }, scheduler);
     }
     
     @Override
     public CompletableFuture<List<String>> listKeys(String prefix) {
-        ByteSequence prefixBytes = ByteSequence.from(prefix, StandardCharsets.UTF_8);
-        GetOption option = GetOption.builder()
-                .isPrefix(true)
-                .build();
-        
-        return client.getKVClient().get(prefixBytes, option)
-                .thenApply(getResponse -> {
-                    List<String> keys = new ArrayList<>();
-                    for (KeyValue kv : getResponse.getKvs()) {
-                        keys.add(kv.getKey().toString(StandardCharsets.UTF_8));
-                    }
-                    return keys;
-                });
+        return backoff.withRetry(() -> {
+            ByteSequence prefixBytes = ByteSequence.from(prefix, StandardCharsets.UTF_8);
+            GetOption option = GetOption.builder()
+                    .isPrefix(true)
+                    .build();
+            return client.getKVClient().get(prefixBytes, option)
+                    .thenApply(getResponse -> {
+                        List<String> keys = new ArrayList<>();
+                        for (KeyValue kv : getResponse.getKvs()) {
+                            keys.add(kv.getKey().toString(StandardCharsets.UTF_8));
+                        }
+                        return keys;
+                    });
+        }, scheduler);
     }
     
     @Override
