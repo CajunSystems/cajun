@@ -73,6 +73,9 @@ dependencies {
     implementation 'io.etcd:jetcd-core:0.8.4'
     implementation 'io.grpc:grpc-stub:1.62.2'
 
+    // Redis client (for RedisPersistenceProvider and integration tests)
+    implementation libs.lettuce.core
+
     // Override vulnerable transitive dependencies
     constraints {
         implementation('ch.qos.logback:logback-core:1.5.16') {
