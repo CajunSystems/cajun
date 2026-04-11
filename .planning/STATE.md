@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 26 — Not started
-**Status**: Phase 25 complete — ready to begin Phase 26 (Cluster + Shared Persistence Integration)
+**Phase**: 27 — Not started
+**Status**: Phase 26 complete — ready to begin Phase 27 (Observability & Diagnostics)
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -15,7 +15,7 @@
 | 23 | Serialization Framework | ✅ Complete |
 | 24 | Redis Persistence Design | ✅ Complete |
 | 25 | Redis Persistence Provider | ✅ Complete |
-| 26 | Cluster + Shared Persistence Integration | 🔲 Not started |
+| 26 | Cluster + Shared Persistence Integration | ✅ Complete |
 | 27 | Observability & Diagnostics | 🔲 Not started |
 | 28 | Reliability Hardening | 🔲 Not started |
 | 29 | Performance Optimization | 🔲 Not started |
@@ -116,6 +116,13 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 26)
+- `ClusterActorSystem.withPersistenceProvider(PersistenceProvider)` fluent setter; `setupPersistence()` called in `start()` before heartbeat/leader election — no-op if null
+- Persistence health check at startup: WARN log (not fail-fast) to preserve backward compat
+- `StatefulActorClusterStateTest`: @Disabled removed, `@Tag("requires-redis")` added, shared `RedisPersistenceProvider` used for both nodes — test now asserts count=6
+- Original bug-doc test kept `@Disabled` at method level as historical documentation
+- `PersistenceBenchmarkTest`: `@Tag("performance")` only; Redis tests also `@Tag("requires-redis")`; N=500 messages; no latency SLA assertions
 
 ## Decisions Made (Milestone 5 — Phase 25)
 - Redis journal key: `{prefix}:journal:{actorId}` (actorId in `{}` for Cluster co-location); seq counter: `{prefix}:journal:{actorId}:seq`

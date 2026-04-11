@@ -186,7 +186,7 @@ Plans:
 
 ---
 
-### Phase 26: Cluster + Shared Persistence Integration
+### ~~Phase 26: Cluster + Shared Persistence Integration~~ ✅
 
 **Goal**: `ClusterActorSystem` uses Redis-backed persistence so StatefulActors recover their full state when reassigned to a new node. `PidRehydrator` verified cross-node. Benchmark Redis vs LMDB vs file.
 
