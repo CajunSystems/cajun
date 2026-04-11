@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 29 — Planned
-**Status**: Phase 29 plan written (29-1-PLAN.md) — ready to execute
+**Phase**: 29 — Complete
+**Status**: Phase 29 complete — ready to begin Phase 30 (Cluster Management API)
 **Branch**: feature/roux-effect-integration
 **Last Updated**: 2026-04-11
 
@@ -18,7 +18,7 @@
 | 26 | Cluster + Shared Persistence Integration | ✅ Complete |
 | 27 | Observability & Diagnostics | ✅ Complete |
 | 28 | Reliability Hardening | ✅ Complete |
-| 29 | Performance Optimization | 📋 Planned |
+| 29 | Performance Optimization | ✅ Complete |
 | 30 | Cluster Management API | 🔲 Not started |
 | 31 | Testing, Documentation & Examples | 🔲 Not started |
 
@@ -116,6 +116,13 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 29)
+- `TtlCache` as primary routing path (not fallback): `routeMessage()` checks cache before etcd — cache hit skips etcd entirely; TTL=60s default; watcher-driven invalidation for rebalancing
+- `routeToNode()` private helper extracted — eliminates duplication between cache-hit and etcd-lookup code paths
+- Periodic `cleanupExpired()` uses existing `scheduler` (no new thread pool)
+- gRPC keep-alive: `keepAliveTime=5s`, `keepAliveTimeout=3s`, `keepAliveWithoutCalls=true` — reduces reconnect latency for bursty traffic
+- `batchRegisterActors` uses `CompletableFuture.allOf()` — parallel puts, logs total elapsed time
 
 ## Decisions Made (Milestone 5 — Phase 28)
 - `NodeCircuitBreaker` per-node (not per-actor): one node failure blocks all messages to that node; `failureThreshold=5`, `resetTimeoutMs=30s` defaults

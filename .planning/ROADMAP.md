@@ -225,7 +225,7 @@ Plans:
 
 ---
 
-### Phase 29: Performance Optimization
+### ~~Phase 29: Performance Optimization~~ ✅
 
 **Goal**: Local actor-location cache reduces etcd round-trips; EtcdMetadataStore uses connection pooling; batch actor registration on startup.
 
