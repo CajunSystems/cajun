@@ -3,6 +3,8 @@ package com.cajunsystems.serialization;
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
+import com.esotericsoftware.kryo.util.DefaultInstantiatorStrategy;
+import org.objenesis.strategy.StdInstantiatorStrategy;
 
 import java.io.ByteArrayOutputStream;
 
@@ -22,6 +24,10 @@ public class KryoSerializationProvider implements SerializationProvider {
         Kryo kryo = new Kryo();
         kryo.setRegistrationRequired(false);
         kryo.setReferences(true);
+        // Use Objenesis for instantiation so classes without no-arg constructors (including
+        // Java records and final classes) can be deserialized without modification.
+        // Falls back to default (no-arg constructor) strategy first.
+        kryo.setInstantiatorStrategy(new DefaultInstantiatorStrategy(new StdInstantiatorStrategy()));
         return kryo;
     });
 
