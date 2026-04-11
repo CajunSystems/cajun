@@ -147,7 +147,7 @@ Plans:
 
 ---
 
-### Phase 23: Serialization Framework
+### ~~Phase 23: Serialization Framework~~ ✅
 
 **Goal**: Pluggable `SerializationProvider` interface with Kryo and JSON implementations, wired into `ReliableMessagingSystem`, `FileMessageJournal`, and `LmdbMessageJournal`. Message types no longer required to implement `Serializable`.
 
