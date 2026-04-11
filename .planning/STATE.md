@@ -2,8 +2,8 @@
 
 ## Current Status
 **Milestone**: 5 — Cluster Evaluation & Enhancement
-**Phase**: 31 — In Progress (1 of 2 plans complete)
-**Status**: 31-1 complete — execute 31-2-PLAN.md next
+**Phase**: 31 — Complete (2/2 plans done)
+**Status**: All Phase 31 deliverables shipped — Phase 31 complete
 **Branch**: feature/cluster-improvements
 **Last Updated**: 2026-04-11
 
@@ -20,7 +20,7 @@
 | 28 | Reliability Hardening | ✅ Complete |
 | 29 | Performance Optimization | ✅ Complete |
 | 30 | Cluster Management API | ✅ Complete |
-| 31 | Testing, Documentation & Examples | 🔄 In Progress (31-1 ✅, 31-2 pending) |
+| 31 | Testing, Documentation & Examples | ✅ Complete (31-1 ✅, 31-2 ✅) |
 
 ## Milestone 4 Phase Progress (archived — v0.7.0)
 
@@ -116,6 +116,21 @@
 - `Effect.generate(ctx -> ..., handler)` = handler baked into effect; no `withCapabilityHandler()` needed
 - `Effect.generate()` requires `.widen()` on the handler — pass `handler.widen()`, not the raw handler
 - `CapabilityHandler.compose(h1, h2, h3)` accepts raw unwidened handlers; returns `CapabilityHandler<Capability<?>>`
+
+## Decisions Made (Milestone 5 — Phase 31-2)
+- `cluster_mode.md` rewritten from 141 lines to ~300 lines; covers cross-node recovery,
+  ClusterManagementApi rolling upgrade workflow, NodeCircuitBreaker, ClusterMetrics.
+- `cluster-deployment.md` created: etcd HA setup, Redis durability config, JVM bootstrap,
+  Prometheus metrics, rolling upgrade procedure, Kubernetes StatefulSet example.
+- `cluster-serialization.md` created: Kryo vs JSON tradeoffs, schema evolution, Kryo→JSON
+  migration procedure.
+- 100-message test (`testStatefulActorFullLifecycle_100Messages`) added to
+  `StatefulActorClusterStateTest` with `Thread.sleep(2000)` for journal batch flush.
+- `ClusterStatefulRecoveryExample` uses private static inner `SimpleMetadataStore` and
+  `SimpleMessagingSystem` — package-private `WatchableInMemoryMetadataStore` not accessible
+  from `examples` package.
+- `drainNode("system1")` called before stopping system1 in the example, consistent with
+  the rolling-upgrade pattern; actor is manually re-registered on system2 (lazy recovery).
 
 ## Decisions Made (Milestone 5 — Phase 31-1)
 - `ClusterActorSystem.stop()` now suppresses per-actor metadata deletion: actor assignments remain in the store when a node stops, leaving them for the leader to redistribute. Only node key deletion signals departure.
