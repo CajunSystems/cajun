@@ -84,6 +84,12 @@ public interface PersistenceProvider {
     boolean isHealthy();
 
     /**
+     * Releases any resources held by this provider (connections, thread pools, etc.).
+     * Providers that hold no resources may leave this as the default no-op.
+     */
+    default void close() {}
+
+    /**
      * List all actor IDs that have persisted state (snapshots or journals).
      * This method scans the persistence storage and returns actor IDs based on
      * file/directory names, WITHOUT loading the actual state data.

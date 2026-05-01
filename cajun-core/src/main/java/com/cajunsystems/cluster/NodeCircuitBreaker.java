@@ -10,9 +10,9 @@ public class NodeCircuitBreaker {
     private final int failureThreshold;
     private final long resetTimeoutMs;
 
-    private volatile State state = State.CLOSED;
+    private State state = State.CLOSED;
     private final AtomicInteger failureCount = new AtomicInteger(0);
-    private volatile long openedAt = 0;
+    private long openedAt = 0;
 
     public NodeCircuitBreaker(String nodeId) {
         this(nodeId, 5, 30_000);

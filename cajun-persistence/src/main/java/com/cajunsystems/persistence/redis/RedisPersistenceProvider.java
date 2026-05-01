@@ -25,7 +25,7 @@ import io.lettuce.core.codec.StringCodec;
  *
  * @since 0.5.0
  */
-public class RedisPersistenceProvider implements PersistenceProvider {
+public class RedisPersistenceProvider implements PersistenceProvider, AutoCloseable {
 
     private static final String DEFAULT_KEY_PREFIX = "cajun";
     private static final int DEFAULT_MAX_BATCH_SIZE = 100;
@@ -148,8 +148,10 @@ public class RedisPersistenceProvider implements PersistenceProvider {
 
     /**
      * Closes the Redis connection and shuts down the client.
-     * Call this during application shutdown.
+     * Called automatically when used in a try-with-resources block,
+     * or explicitly during application shutdown.
      */
+    @Override
     public void close() {
         connection.close();
         client.shutdown();

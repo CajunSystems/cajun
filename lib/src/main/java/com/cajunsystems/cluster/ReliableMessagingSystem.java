@@ -2,7 +2,7 @@ package com.cajunsystems.cluster;
 
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.metrics.ClusterMetrics;
-import com.cajunsystems.serialization.KryoSerializationProvider;
+import com.cajunsystems.serialization.JavaSerializationProvider;
 import com.cajunsystems.serialization.SerializationException;
 import com.cajunsystems.serialization.SerializationProvider;
 import org.slf4j.Logger;
@@ -71,7 +71,7 @@ public class ReliableMessagingSystem implements MessagingSystem {
      * @param threadPoolConfig The thread pool configuration to use
      */
     public ReliableMessagingSystem(String systemId, int port, DeliveryGuarantee defaultDeliveryGuarantee, ThreadPoolFactory threadPoolConfig) {
-        this(systemId, port, defaultDeliveryGuarantee, threadPoolConfig, KryoSerializationProvider.INSTANCE);
+        this(systemId, port, defaultDeliveryGuarantee, threadPoolConfig, JavaSerializationProvider.INSTANCE);
     }
 
     /**

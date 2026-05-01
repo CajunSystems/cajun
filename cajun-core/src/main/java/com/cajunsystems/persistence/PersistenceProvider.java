@@ -91,8 +91,14 @@ public interface PersistenceProvider {
     
     /**
      * Checks if the persistence provider is healthy and operational.
-     * 
+     *
      * @return true if the provider is healthy, false otherwise
      */
     boolean isHealthy();
+
+    /**
+     * Releases any resources held by this provider (connections, thread pools, etc.).
+     * Providers that hold no resources may leave this as the default no-op.
+     */
+    default void close() {}
 }
