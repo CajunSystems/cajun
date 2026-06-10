@@ -9,7 +9,7 @@ import com.cajunsystems.Actor;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.config.BackpressureConfig;
-import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.mailbox.config.ResizableMailboxConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

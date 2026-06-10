@@ -1,6 +1,6 @@
 package com.cajunsystems;
 
-import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.mailbox.config.ResizableMailboxConfig;
 import com.cajunsystems.persistence.*;
 import com.cajunsystems.test.TempPersistenceExtension;
 import org.junit.jupiter.api.*;

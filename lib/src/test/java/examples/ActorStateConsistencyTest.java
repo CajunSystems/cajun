@@ -8,7 +8,7 @@ package examples;
 import com.cajunsystems.ActorSystem;
 import com.cajunsystems.Pid;
 import com.cajunsystems.config.BackpressureConfig;
-import com.cajunsystems.config.ResizableMailboxConfig;
+import com.cajunsystems.mailbox.config.ResizableMailboxConfig;
 import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.Handler;
 import org.slf4j.Logger;

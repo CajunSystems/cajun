@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.cajunsystems'
-version = project.findProperty('cajunVersion') ?: '0.4.0'
+version = project.findProperty('cajunVersion') ?: '0.8.0'
 
 repositories {
     mavenCentral()
@@ -34,15 +34,15 @@ dependencies {
     api project(':cajun-mailbox')
     api project(':cajun-persistence')
 
-    // Optionally depend on cluster (users can exclude if not needed)
-    compileOnly project(':cajun-cluster')
+    // Roux effect system (unified effects for Cajun actors)
+    api libs.roux
 
     // Testing
     testImplementation libs.junit.jupiter
     testImplementation 'org.mockito:mockito-core:5.7.0'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    testRuntimeOnly 'ch.qos.logback:logback-classic:1.4.11'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.16'
 }
 
 tasks.named('test') {

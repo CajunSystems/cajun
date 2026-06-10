@@ -1,27 +1,36 @@
 package com.cajunsystems.persistence;
 
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Registry for persistence providers.
  * This class manages the available persistence providers and provides a default provider.
+ * <p>
+ * Providers are discovered automatically via {@link ServiceLoader}: any jar on the classpath
+ * that declares a {@code META-INF/services/com.cajunsystems.persistence.PersistenceProvider}
+ * entry is registered when the registry is first used. The {@code cajun-persistence} module
+ * registers the default "filesystem" provider this way. Additional providers can be
+ * registered programmatically via {@link #registerProvider(PersistenceProvider)}.
  */
 public class PersistenceProviderRegistry {
-    
+
     // Singleton instance
     private static PersistenceProviderRegistry instance;
-    
+
     // Map of provider name to provider instance
     private final Map<String, PersistenceProvider> providers = new ConcurrentHashMap<>();
-    
+
     // The default provider name
     private String defaultProviderName = "filesystem";
-    
+
     /**
      * Private constructor to enforce singleton pattern.
+     * Discovers and registers providers available on the classpath.
      */
     private PersistenceProviderRegistry() {
+        ServiceLoader.load(PersistenceProvider.class).forEach(this::registerProvider);
     }
     
     /**

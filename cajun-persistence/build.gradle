@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.cajunsystems'
-version = project.findProperty('cajunVersion') ?: '0.4.0'
+version = project.findProperty('cajunVersion') ?: '0.8.0'
 
 repositories {
     mavenCentral()
@@ -17,16 +17,6 @@ java {
     }
     withJavadocJar()
     withSourcesJar()
-}
-
-sourceSets {
-    main {
-        java {
-            exclude 'module-info.java'
-            exclude 'com/cajunsystems/persistence/ActorSystemPersistenceExtension.java'
-            exclude 'com/cajunsystems/persistence/ActorSystemPersistenceHelper.java'
-        }
-    }
 }
 
 // Task to create a bundle for Central Portal upload

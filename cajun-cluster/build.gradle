@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.cajunsystems'
-version = project.findProperty('cajunVersion') ?: '0.4.0'
+version = project.findProperty('cajunVersion') ?: '0.8.0'
 
 repositories {
     mavenCentral()
@@ -17,15 +17,6 @@ java {
     }
     withJavadocJar()
     withSourcesJar()
-}
-
-sourceSets {
-    main {
-        java {
-            exclude 'module-info.java'
-            exclude 'com/cajunsystems/cluster/impl/ClusterFactory.java'
-        }
-    }
 }
 
 // Task to create a bundle for Central Portal upload
@@ -46,8 +37,8 @@ tasks.withType(Javadoc).configureEach {
 }
 
 dependencies {
-    // Depends on core
-    api project(':cajun-core')
+    // Cluster extends the actor system runtime
+    api project(':cajun-system')
 
     // Etcd for leader election and coordination
     implementation 'io.etcd:jetcd-core:0.8.4'

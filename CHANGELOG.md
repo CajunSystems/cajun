@@ -5,6 +5,62 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-10
+
+### Changed (BREAKING)
+
+- **Completed the modular split of the codebase.** All production code now lives in
+  focused modules; the `lib` module no longer contains any classes of its own:
+  - `cajun-core` — persistence SPI, cluster SPI, `ThreadPoolFactory`
+  - `cajun-mailbox` — `Mailbox`, `LinkedMailbox`, `MpscMailbox`, `com.cajunsystems.mailbox.config.*`
+  - `cajun-persistence` — file system and LMDB persistence backends
+    (`com.cajunsystems.persistence.filesystem.*`, `com.cajunsystems.persistence.lmdb.*`)
+  - `cajun-system` — the actor runtime: `ActorSystem`, `Actor`, `StatefulActor`, handlers,
+    builders, backpressure, metrics, and the Roux effect integration
+  - `cajun-cluster` — `ClusterActorSystem` and the etcd/direct-TCP cluster runtime
+    (`com.cajunsystems.cluster.impl.*`); now depends on `cajun-system`
+- **`com.cajunsystems:cajun` is now a backward-compatibility aggregator.** It contains no
+  classes and depends on all modules, so existing consumers keep compiling and running
+  without changes (aside from the removals listed below). New projects should depend on
+  `cajun-system` (plus `cajun-cluster` if needed).
+- `ActorSystem` gained `routeMessage(actorId, message, deliveryGuarantee)` overloads
+  (no-op guarantee locally, honored by `ClusterActorSystem`), removing `Pid`'s direct
+  dependency on the cluster module.
+- The default "filesystem" persistence provider is now registered via
+  `java.util.ServiceLoader` (declared by `cajun-persistence`) instead of being
+  hard-wired into `PersistenceProviderRegistry`.
+- Merged the previously diverged duplicate sources between `lib` and the modules:
+  `MpscMailbox` (memory-pressure monitoring), `PersistenceProvider`
+  (`createBatchedMessageJournalSerializable` + `listPersistedActors`),
+  `FileSystemPersistenceProvider`, and the truncation-capable file journal
+  implementations are now single-sourced in their modules.
+
+### Removed (BREAKING)
+
+- Deprecated-for-removal classes scheduled to go away since 0.4.0:
+  `com.cajunsystems.config.MailboxConfig`, `com.cajunsystems.config.ResizableMailboxConfig`,
+  `com.cajunsystems.config.MailboxProvider`, `com.cajunsystems.config.DefaultMailboxProvider`.
+  Use the `com.cajunsystems.mailbox.config.*` equivalents.
+- Legacy runtime packages that duplicated module code under old names:
+  `com.cajunsystems.runtime.persistence.*` (use `com.cajunsystems.persistence.filesystem.*`)
+  and `com.cajunsystems.runtime.cluster.*` (use `com.cajunsystems.cluster.impl.*`).
+- The `cajun` jar no longer ships a `logback.xml` resource (it could override consumers'
+  logging configuration); logback itself is now a `runtimeOnly` dependency of the
+  aggregator only.
+- Unused `commons-math3` and `guava` dependencies dropped from the published POMs.
+
+### Migration
+
+| Old | New |
+|-----|-----|
+| `com.cajunsystems:cajun` (all-in-one) | `cajun-system` (+ `cajun-cluster` for clustering), or keep `cajun` aggregator |
+| `com.cajunsystems.config.MailboxConfig` | `com.cajunsystems.mailbox.config.MailboxConfig` |
+| `com.cajunsystems.config.ResizableMailboxConfig` | `com.cajunsystems.mailbox.config.ResizableMailboxConfig` |
+| `com.cajunsystems.runtime.persistence.PersistenceFactory` | `com.cajunsystems.persistence.filesystem.PersistenceFactory` |
+| `com.cajunsystems.runtime.cluster.ClusterFactory` | `com.cajunsystems.cluster.impl.ClusterFactory` |
+| `com.cajunsystems.runtime.cluster.EtcdMetadataStore` | `com.cajunsystems.cluster.impl.EtcdMetadataStore` |
+| `com.cajunsystems.runtime.cluster.DirectMessagingSystem` | `com.cajunsystems.cluster.impl.DirectMessagingSystem` |
+
 ## [0.7.0] - 2026-04-01
 
 ### Added
