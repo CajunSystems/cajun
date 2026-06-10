@@ -2634,7 +2634,7 @@ For complete benchmark details, analysis, and methodology, see:
    - [x] Adaptive snapshot strategy with time-based and change-count-based options
    - [ ] Customizable backends for snapshots and Write-Ahead Log (WAL)
    - [ ] RocksDB backend for state persistence
-   - [ ] Segregation of runtime implementations (file store, in-memory store, etc.) from the actor system
+   - [x] Segregation of runtime implementations (file store, in-memory store, etc.) from the actor system (v0.8.0 modular split: `cajun-core` SPI vs `cajun-persistence` backends)
 5. Backpressure and load management
    - [x] Integrated backpressure support in StatefulActor
    - [x] Configurable mailbox capacity for backpressure control
