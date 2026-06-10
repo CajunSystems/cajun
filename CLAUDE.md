@@ -28,8 +28,8 @@ Cajun is a high-performance, distributed actor system for Java 21+ that provides
 
 ### Java Configuration
 - **Java Version**: 21+ with `--enable-preview` flag (automatically configured in Gradle)
-- **Main Module**: `lib/` contains the actor system implementation
-- **Source Layout**: Standard Gradle structure under `lib/src/main/java/com/cajunsystems/`
+- **Module Layout**: production code lives in `cajun-core`, `cajun-mailbox`, `cajun-persistence`, `cajun-system`, and `cajun-cluster`; `lib/` is a backward-compatibility aggregator that publishes the `com.cajunsystems:cajun` artifact and hosts the integration/example test suite
+- **Source Layout**: Standard Gradle structure under `<module>/src/main/java/com/cajunsystems/`
 
 ## Architecture Overview
 
@@ -66,21 +66,42 @@ Cajun is a high-performance, distributed actor system for Java 21+ that provides
 - **Configuration**: `BackpressureBuilder` with fluent API and preset configurations
 - **Monitoring**: Event tracking with callbacks and metrics
 
-### Package Organization
+### Module and Package Organization
 ```
-com.cajunsystems/
-├── core/                   # Core abstractions and interfaces
-├── handler/                # Handler interfaces and adapters
-├── internal/              # Internal actor implementations
-├── builder/               # Fluent builder APIs
-├── persistence/           # Persistence abstractions
-│   └── impl/             # Concrete persistence providers
-├── cluster/              # Clustering support
-├── backpressure/         # Backpressure management
-├── config/               # Configuration classes
-└── runtime/              # Runtime implementations
-    ├── cluster/          # Cluster runtime components
-    └── persistence/      # Persistence runtime components
+cajun-core/                       # Zero-dependency abstractions (slf4j only)
+└── com.cajunsystems
+    ├── config/                   # ThreadPoolFactory
+    ├── persistence/              # Persistence SPI (MessageJournal, SnapshotStore, PersistenceProvider, ...)
+    └── cluster/                  # Cluster SPI (MetadataStore, MessagingSystem, RendezvousHashing, ...)
+
+cajun-mailbox/                    # Mailbox implementations (JCTools)
+└── com.cajunsystems.mailbox      # Mailbox, LinkedMailbox, MpscMailbox
+    └── config/                   # MailboxConfig, ResizableMailboxConfig, MailboxProvider, strategies
+
+cajun-persistence/                # Persistence backends (registers default provider via ServiceLoader)
+└── com.cajunsystems.persistence
+    ├── filesystem/               # File-based journal/snapshot implementations + PersistenceFactory
+    ├── lmdb/                     # LMDB-based implementations
+    └── impl/                     # FileSystemPersistenceProvider
+
+cajun-system/                     # The actor runtime (depends on core, mailbox, persistence, roux)
+└── com.cajunsystems              # ActorSystem, Actor, StatefulActor, Pid, ...
+    ├── handler/                  # Handler interfaces and adapters
+    ├── internal/                 # Internal actor implementations
+    ├── builder/                  # Fluent builder APIs
+    ├── backpressure/             # Backpressure management
+    ├── functional/               # Roux effect integration
+    ├── metrics/                  # Actor metrics
+    ├── config/                   # BackpressureConfig
+    └── persistence/              # ActorSystem persistence glue (PidRehydrator, helpers)
+
+cajun-cluster/                    # Clustering (depends on cajun-system, etcd, gRPC)
+└── com.cajunsystems.cluster      # ClusterActorSystem
+    └── impl/                     # EtcdMetadataStore, DirectMessagingSystem, ClusterFactory
+
+lib/                              # Backward-compat aggregator (`com.cajunsystems:cajun`), integration tests
+test-utils/                       # Test helpers published as cajun-test-utils
+benchmarks/                       # JMH benchmarks
 ```
 
 ## Development Patterns

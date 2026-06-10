@@ -160,11 +160,16 @@ Get up and running with Cajun in just a few minutes!
 
 ### Installation
 
-Cajun is available on Maven Central. Add it to your project using Gradle:
+Cajun is available on Maven Central as a set of focused modules. Most applications
+only need `cajun-system`, which brings in the core abstractions, mailboxes, and
+persistence transitively:
 
 ```gradle
 dependencies {
-    implementation 'com.cajunsystems:cajun:0.7.0'
+    implementation 'com.cajunsystems:cajun-system:0.8.0'
+
+    // Optional: clustering support (requires an etcd instance)
+    implementation 'com.cajunsystems:cajun-cluster:0.8.0'
 }
 ```
 
@@ -173,9 +178,29 @@ Or with Maven:
 ```xml
 <dependency>
     <groupId>com.cajunsystems</groupId>
-    <artifactId>cajun</artifactId>
-    <version>0.7.0</version>
+    <artifactId>cajun-system</artifactId>
+    <version>0.8.0</version>
 </dependency>
+```
+
+#### Available modules
+
+| Artifact | Contents |
+|----------|----------|
+| `cajun-core` | Core abstractions: persistence SPI, cluster SPI, thread pool configuration |
+| `cajun-mailbox` | Mailbox implementations (`LinkedMailbox`, JCTools-based `MpscMailbox`) and mailbox configuration |
+| `cajun-persistence` | File system and LMDB persistence backends |
+| `cajun-system` | The actor system runtime: `ActorSystem`, actors, handlers, builders, backpressure, effects |
+| `cajun-cluster` | Distributed actor system (`ClusterActorSystem`, etcd metadata store) |
+| `cajun` | Backward-compatibility aggregator that depends on all of the above |
+
+Existing projects can keep using the original aggregate artifact, which now simply
+pulls in all modules:
+
+```gradle
+dependencies {
+    implementation 'com.cajunsystems:cajun:0.8.0'
+}
 ```
 
 **Note**: Since Cajun uses Java preview features, you need to enable preview features in your build:

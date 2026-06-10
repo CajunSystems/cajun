@@ -14,8 +14,8 @@ import com.cajunsystems.cluster.ClusterActorSystem;
 import com.cajunsystems.cluster.DeliveryGuarantee;
 import com.cajunsystems.cluster.MessagingSystem;
 import com.cajunsystems.cluster.MetadataStore;
-import com.cajunsystems.runtime.cluster.ClusterFactory;
-import com.cajunsystems.runtime.cluster.DirectMessagingSystem;
+import com.cajunsystems.cluster.impl.ClusterFactory;
+import com.cajunsystems.cluster.impl.DirectMessagingSystem;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;

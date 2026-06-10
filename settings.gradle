@@ -19,7 +19,9 @@ include('cajun-persistence')
 include('cajun-cluster')
 include('cajun-system')
 
-// Legacy lib module (for backward compatibility - deprecated in v0.2.0, will be removed in v0.5.0)
+// Backward-compatibility aggregator: publishes the original `com.cajunsystems:cajun`
+// artifact (no classes of its own, depends on all modules) and hosts the
+// integration/example test suite.
 include('lib')
 
 // Supporting modules
