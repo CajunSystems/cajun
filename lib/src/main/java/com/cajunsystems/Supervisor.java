@@ -117,10 +117,14 @@ public final class Supervisor {
         switch (parent.getSupervisionStrategy()) {
             case RESUME -> {
                 logger.debug("Actor {} allowing child {} to resume after error", parent.getActorId(), child.getActorId());
+                // Restore registry membership BEFORE (re)starting so there is no window in which
+                // the mailbox loop is running but the system cannot route to the actor. A message
+                // that arrives after registration but before the loop starts is buffered in the
+                // mailbox and processed once the loop runs.
+                reregisterChild(child);
                 if (!child.isRunning()) {
                     child.start();
                 }
-                reregisterChild(child);
                 parent.addChild(child);
                 notifyChildRestarted(parent, child);
             }
@@ -129,8 +133,10 @@ public final class Supervisor {
                 if (child.isRunning()) {
                     child.stop();
                 }
-                child.start();
+                // Restore registry membership BEFORE starting so no message routed during startup
+                // is dropped; a message arriving now is buffered in the mailbox until the loop runs.
                 reregisterChild(child);
+                child.start();
                 parent.addChild(child);
                 notifyChildRestarted(parent, child);
             }

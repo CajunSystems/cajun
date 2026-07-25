@@ -358,18 +358,36 @@ public class StatefulActorBuilder<State, Message> {
         Pid pid = spawn();
         Actor<?> actor = system.getActor(pid);
         if (actor instanceof StatefulHandlerActor<?, ?> statefulActor) {
+            boolean ready;
             try {
-                if (!statefulActor.waitForStateInitialization(timeout.toMillis())) {
-                    throw new IllegalStateException(
-                            "Actor " + pid.actorId() + " did not become ready within " + timeout);
-                }
+                ready = statefulActor.waitForStateInitialization(timeout.toMillis());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                // Clean up the started actor before throwing: the caller never receives the PID,
+                // so leaving it running/registered would leak an actor it cannot reference.
+                stopQuietly(actor);
                 throw new IllegalStateException(
                         "Interrupted while awaiting readiness of actor " + pid.actorId(), e);
             }
+            if (!ready) {
+                stopQuietly(actor);
+                throw new IllegalStateException(
+                        "Actor " + pid.actorId() + " did not become ready within " + timeout);
+            }
         }
         return pid;
+    }
+
+    /**
+     * Stops an actor while swallowing any secondary failure, used to clean up after a failed
+     * {@link #spawnAndAwaitReady(Duration)} so the original cause is not masked.
+     */
+    private static void stopQuietly(Actor<?> actor) {
+        try {
+            actor.stop();
+        } catch (RuntimeException stopFailure) {
+            // Best-effort cleanup; do not mask the readiness failure being thrown by the caller.
+        }
     }
 
     /**
