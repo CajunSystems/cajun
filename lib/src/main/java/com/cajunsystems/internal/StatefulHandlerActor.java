@@ -115,6 +115,16 @@ public class StatefulHandlerActor<State, Message> extends StatefulActor<State, M
         return handler.onError(message, getState(), exception, context);
     }
 
+    @Override
+    protected void onChildFailed(Actor<?> child, Throwable cause) {
+        handler.onChildFailed(child.self(), cause, new StatefulActorContext(this));
+    }
+
+    @Override
+    protected void onChildRestarted(Actor<?> child) {
+        handler.onChildRestarted(child.self(), new StatefulActorContext(this));
+    }
+
     /**
      * Specialized ActorContext for StatefulActor that retrieves sender from
      * the asyncSenderContext ThreadLocal instead of the parent Actor's senderContext.

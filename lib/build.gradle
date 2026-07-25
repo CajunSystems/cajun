@@ -18,6 +18,12 @@ repositories {
     mavenCentral()
 }
 
+// NOTE: --enable-preview is still required here because the transitive dependency
+// com.cajunsystems:roux is published as a preview-compiled artifact, so its class files can
+// only be loaded (at compile time and runtime) with preview enabled. Cajun's own sources no
+// longer use any preview feature (string templates were removed from IdStrategy), so once roux
+// is republished without preview this flag — and the runtime --enable-preview requirement it
+// imposes on consumers — can be dropped.
 tasks.withType(JavaCompile).each {
     it.options.compilerArgs.add('--enable-preview')
 }
@@ -121,6 +127,13 @@ tasks.withType(JavaExec).configureEach {
 tasks.named('test') {
     // Use JUnit Platform for unit tests.
     jvmArgs(['--enable-preview'])
+    // Run the forked test JVM in a UTF-8 locale so that sun.jnu.encoding is UTF-8.
+    // Without this, on hosts whose OS locale is POSIX/C the file-path encoding defaults to
+    // ASCII, and persisting an actor whose id contains non-ASCII/emoji characters throws
+    // java.nio.file.InvalidPathException ("unmappable characters") when building the journal
+    // path. Forcing a UTF-8 locale makes tests deterministic across environments.
+    environment 'LC_ALL', 'C.utf8'
+    environment 'LANG', 'C.utf8'
     useJUnitPlatform {
         // By default, exclude performance tests
         excludeTags 'performance'

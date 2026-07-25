@@ -13,6 +13,51 @@ public final class Supervisor {
     }
 
     /**
+     * Re-registers a restarted child with its actor system.
+     * <p>
+     * When a child is handled via ESCALATE, {@link Actor#stop()} runs, which removes the actor
+     * from the system registry (via {@code ActorSystem.shutdown(actorId)}). When the parent then
+     * revives the child with a raw {@code start()}, the actor's mailbox thread runs again but the
+     * system can no longer route messages to it, so every subsequent message is silently dropped.
+     * Re-registering restores routing. The operation is idempotent for children that were never
+     * unregistered (e.g. the RESUME path where the child was still running).
+     *
+     * @param child The child actor that was (re)started by a supervisor
+     */
+    private static void reregisterChild(Actor<?> child) {
+        ActorSystem system = child.getSystem();
+        if (system != null) {
+            system.registerActor(child);
+        }
+    }
+
+    /**
+     * Notifies the parent that a child failed, guarding against exceptions thrown by the
+     * observation callback so supervision itself is never derailed by observer code.
+     */
+    private static void notifyChildFailed(Actor<?> parent, Actor<?> child, Throwable cause) {
+        try {
+            parent.onChildFailed(child, cause);
+        } catch (Throwable t) {
+            logger.warn("Parent {} onChildFailed observer threw for child {}",
+                    parent.getActorId(), child.getActorId(), t);
+        }
+    }
+
+    /**
+     * Notifies the parent that a child was restarted/resumed, guarding against observer
+     * exceptions as with {@link #notifyChildFailed}.
+     */
+    private static void notifyChildRestarted(Actor<?> parent, Actor<?> child) {
+        try {
+            parent.onChildRestarted(child);
+        } catch (Throwable t) {
+            logger.warn("Parent {} onChildRestarted observer threw for child {}",
+                    parent.getActorId(), child.getActorId(), t);
+        }
+    }
+
+    /**
      * Handles an exception thrown during message processing of an actor.
      * Delegates to the actor's supervision strategy (RESUME, RESTART, STOP, ESCALATE).
      *
@@ -67,13 +112,17 @@ public final class Supervisor {
     public static void handleChildError(Actor<?> parent, Actor<?> child, Throwable exception) {
         logger.info("Actor {} handling error from child {}", parent.getActorId(), child.getActorId());
         parent.removeChild(child.getActorId());
+        // Let the parent observe the failure (metrics/alerting/circuit-breaking) before acting.
+        notifyChildFailed(parent, child, exception);
         switch (parent.getSupervisionStrategy()) {
             case RESUME -> {
                 logger.debug("Actor {} allowing child {} to resume after error", parent.getActorId(), child.getActorId());
                 if (!child.isRunning()) {
                     child.start();
                 }
+                reregisterChild(child);
                 parent.addChild(child);
+                notifyChildRestarted(parent, child);
             }
             case RESTART -> {
                 logger.info("Actor {} restarting child {} after error", parent.getActorId(), child.getActorId());
@@ -81,7 +130,9 @@ public final class Supervisor {
                     child.stop();
                 }
                 child.start();
+                reregisterChild(child);
                 parent.addChild(child);
+                notifyChildRestarted(parent, child);
             }
             case STOP -> {
                 logger.info("Actor {} confirming stop of child {} due to error", parent.getActorId(), child.getActorId());

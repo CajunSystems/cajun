@@ -92,4 +92,14 @@ public class HandlerActor<Message> extends Actor<Message> {
         // Delegate to handler to get shouldReprocess flag
         return handler.onError(message, exception, context);
     }
+
+    @Override
+    protected void onChildFailed(Actor<?> child, Throwable cause) {
+        handler.onChildFailed(child.self(), cause, context);
+    }
+
+    @Override
+    protected void onChildRestarted(Actor<?> child) {
+        handler.onChildRestarted(child.self(), context);
+    }
 }

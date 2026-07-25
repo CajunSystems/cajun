@@ -80,10 +80,16 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     // Metrics for this actor
     private final ActorMetrics metrics;
     
-    // Dedicated thread pool for persistence operations
-    private final ExecutorService persistenceExecutor;
-    
-    // Shutdown hook thread (registered once in constructor via createPersistenceExecutor)
+    // Dedicated thread pool for persistence operations.
+    // Not final: a full stop() (e.g. via STOP/ESCALATE supervision) shuts this executor
+    // down, and a subsequent restart must be able to re-create it. See
+    // ensurePersistenceExecutorRunning().
+    private volatile ExecutorService persistenceExecutor;
+
+    // The pool size used to (re-)create the persistence executor.
+    private volatile int persistenceThreadPoolSize = DEFAULT_PERSISTENCE_THREAD_POOL_SIZE;
+
+    // Shutdown hook thread (registered via createPersistenceExecutor)
     private Thread shutdownHook;
 
     // Adaptive snapshot configuration
@@ -382,6 +388,8 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
         if (poolSize <= 0) {
             poolSize = DEFAULT_PERSISTENCE_THREAD_POOL_SIZE;
         }
+        // Remember the effective size so the executor can be re-created on restart.
+        this.persistenceThreadPoolSize = poolSize;
         logger.debug("Creating persistence thread pool with size {} for actor {}", poolSize, actorId);
         ExecutorService executor = Executors.newFixedThreadPool(poolSize, r -> {
             Thread t = new Thread(r, "persistence-" + actorId + "-" + System.nanoTime());
@@ -405,10 +413,36 @@ public abstract class StatefulActor<State, Message> extends Actor<Message> {
     // CompletableFuture that completes when state initialization is done
     private final CompletableFuture<Void> stateInitializationFuture = new CompletableFuture<>();
     
+    /**
+     * Ensures the persistence executor is usable before the actor starts processing messages.
+     * <p>
+     * A full {@link #stop()} (which happens on the STOP and ESCALATE supervision paths, and
+     * when a parent restarts a child via a raw stop()+start()) runs {@link #postStop()}, which
+     * shuts the persistence executor down. Without re-creating it, the restarted actor would
+     * keep a fresh mailbox thread but every message that tried to schedule work on the
+     * persistence executor (state initialization, retries, async truncation) would be rejected,
+     * so the actor would silently stop making progress.
+     * <p>
+     * The lightweight {@link #stopForRestart()} path used by self-RESTART does not run postStop,
+     * so its executor is still alive; in that case this method is a no-op and the existing
+     * executor is preserved (no leak).
+     */
+    private void ensurePersistenceExecutorRunning() {
+        ExecutorService current = this.persistenceExecutor;
+        if (current == null || current.isShutdown()) {
+            logger.debug("Re-creating persistence executor for actor {} on restart", getActorId());
+            this.persistenceExecutor = createPersistenceExecutor(persistenceThreadPoolSize);
+        }
+    }
+
     @Override
     protected void preStart() {
         super.preStart();
-        
+
+        // Re-create the persistence executor if a previous full stop shut it down, so a
+        // restarted actor can initialize state and process messages again.
+        ensurePersistenceExecutorRunning();
+
         // Register metrics
         metrics.register();
         MetricsRegistry.registerActorMetrics(actorId, metrics);
