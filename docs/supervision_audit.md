@@ -406,6 +406,52 @@ Check actor.getSupervisionStrategy()
 
 ---
 
+## Bug Fix: `ESCALATE` → parent-`RESTART` left a stateful child dead (0.7.2)
+
+**Issue.** A stateful child spawned with `ESCALATE`, whose parent used `RESTART`, was restarted
+but never processed another message — every `ask` timed out — while the same child with its own
+`RESTART` strategy recovered normally.
+
+**Root cause.** On the `ESCALATE` path the child is fully stopped via `Actor.stop()`, which calls
+`ActorSystem.shutdown(actorId)` and **removes the actor from the system registry**. The parent's
+`RESTART` branch then revived it with a raw `start()` that never re-registered it, so
+`ActorSystem.routeMessage(...)` could no longer find the actor and silently dropped every message.
+The self-`RESTART` path was unaffected because `stopForRestart()` never unregisters.
+
+**Fix.**
+- `Supervisor.handleChildError` now **re-registers** the child with the system on a supervised
+  `RESTART`/`RESUME`, and does so **before** (re)starting the mailbox. A message that arrives in
+  the startup window is buffered in the mailbox (which exists independently of the running flag)
+  and processed once the loop starts, instead of being dropped.
+- `StatefulActor` re-creates its persistence executor on restart if a prior full `stop()` shut it
+  down, so state initialization, retries, and async truncation keep working after an
+  `ESCALATE`/parent-driven restart. The lightweight self-`RESTART` path keeps its live executor.
+
+**Lifecycle note.** The two restart paths differ in which lifecycle hooks fire: self-`RESTART`
+(`stopForRestart`) invokes only `preStart` on the way back, while `ESCALATE`/full-stop invokes
+`postStop` then `preStart`. Put restart re-arming logic in `preStart`, which fires on every restart
+path. (Documented on `Actor.stopForRestart`.)
+
+## Feature: Supervisor observation callbacks (0.7.2)
+
+Supervisors can now **observe** child failures and restarts, not just configure a strategy.
+`Handler` and `StatefulHandler` gain two default (no-op) callbacks:
+
+```java
+default void onChildFailed(Pid child, Throwable cause, ActorContext context) {}
+default void onChildRestarted(Pid child, ActorContext context) {}
+```
+
+`onChildFailed` is invoked before the parent's strategy is applied to the failed child;
+`onChildRestarted` after a `RESTART`/`RESUME` brings it back. These are intended for metrics,
+alerting, and circuit-breaking.
+
+> **Threading:** both callbacks run on the supervising thread handling the failure — not the
+> parent actor's own message-loop thread. Keep implementations thread-safe and cheap (update a
+> counter, emit a log/metric); do not mutate unsynchronized handler state shared with `receive`.
+
+---
+
 **Audit Completed By:** Cascade AI  
 **Review Status:** APPROVED  
 **Next Review:** After adding recommended tests

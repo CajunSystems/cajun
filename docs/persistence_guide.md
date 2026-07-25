@@ -66,6 +66,15 @@ Pid actor = system.statefulActorOf(MyHandler.class, initialState)
     .spawn();
 ```
 
+> **Base directory (since 0.7.2).** The `PersistenceFactory.createFileMessageJournal(String)`,
+> `createFileSnapshotStore(String)`, and `createBatchedFileMessageJournal(String, …)` helpers
+> honor the `baseDir` argument — each call is rooted at the directory you pass, so two stores
+> created with different `baseDir` values write to different directories (previously the argument
+> was ignored and every store shared a single global `cajun_persistence/` directory keyed only by
+> actor id). Pass a unique directory per run/test for isolation. When no `baseDir` is given, the
+> `cajun.persistence.dir` system property is used if set, otherwise the registry's default
+> provider.
+
 #### Pros ✅
 - Simple to understand and debug
 - Human-readable files
