@@ -575,8 +575,26 @@ public abstract class Actor<Message> {
 
     /**
      * Stops the actor for restart, preserving pending messages in the mailbox.
-     * This is used by the supervision system during RESTART strategy.
-     * Note: This is called from within the mailbox loop after it exits, so running=false already.
+     * This is used by the supervision system during a self-RESTART (an actor restarting itself
+     * after its own handler throws).
+     * <p>
+     * Note: This is called from within the mailbox loop after it exits, so {@code running} is
+     * already {@code false}; {@link MailboxProcessor#stop(boolean)} therefore returns early and
+     * does <em>not</em> invoke {@link #postStop()}. This is deliberate — it is the "light"
+     * teardown that keeps machinery (e.g. a {@code StatefulActor}'s persistence executor) intact
+     * across a self-restart.
+     * <p>
+     * <strong>Lifecycle contract across restart paths (important):</strong>
+     * <ul>
+     *   <li><em>Self-RESTART</em> (this path): only {@link #preStart()} runs on the way back into
+     *       service; {@code postStop()} is skipped.</li>
+     *   <li><em>ESCALATE / parent-driven RESTART</em>: the child is fully stopped via
+     *       {@link #stop()} (which <em>does</em> run {@code postStop()}) and then restarted with
+     *       {@link #start()} (which runs {@code preStart()}).</li>
+     * </ul>
+     * Consequently, handler code that pairs {@code preStart}/{@code postStop} for restart
+     * bookkeeping should perform re-arming work in {@code preStart} (which fires on every restart
+     * path) rather than relying on {@code postStop} firing before a restart.
      */
     void stopForRestart() {
         logger.debug("Stopping actor {} for restart (preserving mailbox)", actorId);
@@ -722,6 +740,32 @@ public abstract class Actor<Message> {
      */
     void handleChildError(Actor<?> child, Throwable exception) {
         Supervisor.handleChildError(this, child, exception);
+    }
+
+    /**
+     * Observation hook invoked when a child of this actor fails, before this actor's supervision
+     * strategy is applied to that child. The base implementation does nothing; handler-backed
+     * actors override this to deliver the signal to the user's {@code Handler.onChildFailed}.
+     * <p>
+     * Invoked on the supervising thread (see {@code Handler.onChildFailed} for the threading
+     * contract).
+     *
+     * @param child The child actor that failed
+     * @param cause The exception the child raised
+     */
+    protected void onChildFailed(Actor<?> child, Throwable cause) {
+        // Default implementation does nothing
+    }
+
+    /**
+     * Observation hook invoked after a failed child of this actor has been restarted or resumed
+     * by this actor's supervision strategy. The base implementation does nothing; handler-backed
+     * actors override this to deliver the signal to the user's {@code Handler.onChildRestarted}.
+     *
+     * @param child The child actor that was restarted/resumed
+     */
+    protected void onChildRestarted(Actor<?> child) {
+        // Default implementation does nothing
     }
 
     /**

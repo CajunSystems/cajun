@@ -11,10 +11,13 @@ import com.cajunsystems.config.ThreadPoolFactory;
 import com.cajunsystems.handler.StatefulHandler;
 import com.cajunsystems.internal.StatefulHandlerActor;
 import com.cajunsystems.persistence.BatchedMessageJournal;
+import com.cajunsystems.persistence.RetryStrategy;
 import com.cajunsystems.persistence.SnapshotStore;
 import com.cajunsystems.persistence.PersistenceTruncationConfig;
 
+import java.time.Duration;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * Builder for creating stateful actors with a fluent API.
@@ -41,6 +44,8 @@ public class StatefulActorBuilder<State, Message> {
     private SupervisionStrategy supervisionStrategy;
     private ThreadPoolFactory threadPoolFactory;
     private MailboxProvider<Message> mailboxProvider;
+    private RetryStrategy retryStrategy;
+    private Consumer<Throwable> errorHook;
 
     /**
      * Creates a new StatefulActorBuilder with the specified system, handler, and initial state.
@@ -142,6 +147,60 @@ public class StatefulActorBuilder<State, Message> {
      */
     public StatefulActorBuilder<State, Message> withParent(Actor<?> parent) {
         this.parent = parent;
+        return this;
+    }
+
+    /**
+     * Sets the parent actor for this actor by its {@link Pid}.
+     * <p>
+     * This avoids the {@code system.getActor(pid)} round-trip at the call site: since
+     * {@code spawn()} hands callers a {@code Pid}, wiring a supervision hierarchy can now stay
+     * declarative (e.g. {@code .withParent(parentPid)}) instead of resolving the {@code Actor}
+     * reference manually.
+     *
+     * @param parentPid The PID of the parent actor
+     * @return This builder for method chaining
+     * @throws IllegalArgumentException if no actor is registered for the given PID
+     */
+    public StatefulActorBuilder<State, Message> withParent(Pid parentPid) {
+        if (parentPid == null) {
+            this.parent = null;
+            return this;
+        }
+        Actor<?> resolved = system.getActor(parentPid);
+        if (resolved == null) {
+            throw new IllegalArgumentException("No actor registered for parent PID: " + parentPid.actorId());
+        }
+        this.parent = resolved;
+        return this;
+    }
+
+    /**
+     * Sets a custom retry strategy for the actor's persistence operations.
+     * <p>
+     * Previously this could only be configured post-spawn via {@code system.getActor(pid)} and a
+     * cast, which races with asynchronous state initialization. Configuring it on the builder
+     * applies it before the actor starts.
+     *
+     * @param retryStrategy The retry strategy to use
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withRetryStrategy(RetryStrategy retryStrategy) {
+        this.retryStrategy = retryStrategy;
+        return this;
+    }
+
+    /**
+     * Sets an error hook to be notified when exceptions occur while processing messages.
+     * <p>
+     * Like {@link #withRetryStrategy(RetryStrategy)}, configuring this on the builder applies it
+     * before the actor starts, avoiding a post-spawn cast that races with state initialization.
+     *
+     * @param errorHook The error hook to invoke with exceptions
+     * @return This builder for method chaining
+     */
+    public StatefulActorBuilder<State, Message> withErrorHook(Consumer<Throwable> errorHook) {
+        this.errorHook = errorHook;
         return this;
     }
     
@@ -260,6 +319,14 @@ public class StatefulActorBuilder<State, Message> {
             actor.setTruncationConfig(truncationConfig);
         }
 
+        // Apply persistence retry/error configuration before the actor starts
+        if (retryStrategy != null) {
+            actor.withRetryStrategy(retryStrategy);
+        }
+        if (errorHook != null) {
+            actor.withErrorHook(errorHook);
+        }
+
         if (parent != null) {
             parent.addChild(actor);
             actor.setParent(parent);
@@ -273,6 +340,54 @@ public class StatefulActorBuilder<State, Message> {
         actor.start();
 
         return actor.self();
+    }
+
+    /**
+     * Creates and starts the actor, then blocks until its state has finished initializing
+     * (snapshot load + journal replay) or the timeout elapses.
+     * <p>
+     * A persistent actor's first message otherwise pays the full cold-start recovery cost, so a
+     * plain {@code ask} with an ordinary timeout can fail on the very first call. Awaiting
+     * readiness here removes that sharp edge for callers that want a ready-to-use actor.
+     *
+     * @param timeout The maximum time to wait for state initialization
+     * @return The PID of the created actor
+     * @throws IllegalStateException if the state does not initialize within the timeout
+     */
+    public Pid spawnAndAwaitReady(Duration timeout) {
+        Pid pid = spawn();
+        Actor<?> actor = system.getActor(pid);
+        if (actor instanceof StatefulHandlerActor<?, ?> statefulActor) {
+            boolean ready;
+            try {
+                ready = statefulActor.waitForStateInitialization(timeout.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                // Clean up the started actor before throwing: the caller never receives the PID,
+                // so leaving it running/registered would leak an actor it cannot reference.
+                stopQuietly(actor);
+                throw new IllegalStateException(
+                        "Interrupted while awaiting readiness of actor " + pid.actorId(), e);
+            }
+            if (!ready) {
+                stopQuietly(actor);
+                throw new IllegalStateException(
+                        "Actor " + pid.actorId() + " did not become ready within " + timeout);
+            }
+        }
+        return pid;
+    }
+
+    /**
+     * Stops an actor while swallowing any secondary failure, used to clean up after a failed
+     * {@link #spawnAndAwaitReady(Duration)} so the original cause is not masked.
+     */
+    private static void stopQuietly(Actor<?> actor) {
+        try {
+            actor.stop();
+        } catch (RuntimeException stopFailure) {
+            // Best-effort cleanup; do not mask the readiness failure being thrown by the caller.
+        }
     }
 
     /**

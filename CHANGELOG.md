@@ -5,6 +5,71 @@ All notable changes to the Cajun actor system will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-07-25
+
+### Fixed
+
+- **Supervision: `ESCALATE` → parent-`RESTART` left a stateful child dead.** A stateful
+  child spawned with `ESCALATE`, whose parent used `RESTART`, was restarted but never
+  processed another message (every `ask` timed out). Root cause: `Actor.stop()` — run on the
+  `ESCALATE` path — calls `ActorSystem.shutdown(actorId)`, which removes the actor from the
+  system registry; the parent's `RESTART` branch then revived it with a raw `start()` that
+  never re-registered it, so message routing silently dropped everything sent to the restarted
+  child. The `Supervisor` now re-registers the child with the system on a supervised
+  `RESTART`/`RESUME`, and does so **before** restarting the mailbox so no message is dropped in
+  the startup window (a message arriving then is buffered in the mailbox and processed once the
+  loop runs).
+
+- **Stateful persistence executor not re-created after a full-stop restart.** A full `stop()`
+  shuts down `StatefulActor`'s persistence executor; `preStart()` now re-creates it on restart
+  if it was shut down, so state initialization, retries, and async truncation keep working after
+  an `ESCALATE`/parent-driven restart. The lightweight self-`RESTART` path keeps its live
+  executor (no leak).
+
+- **`PersistenceFactory.create*(String baseDir)` ignored its `baseDir` argument.** Every store
+  silently shared the single global `cajun_persistence` directory keyed only by actor id,
+  breaking per-run/per-test isolation. The `baseDir` now roots a `FileSystemPersistenceProvider`
+  at that directory; a `cajun.persistence.dir` system property is consulted as a fallback when no
+  argument is given.
+
+- **`spawnAndAwaitReady` leaked an actor on failure.** When readiness timed out or the waiting
+  thread was interrupted, the method threw without stopping the started actor, whose PID the
+  caller never received. It now stops the actor before throwing.
+
+### Added
+
+- **Supervisor observability.** `Handler` and `StatefulHandler` gain default `onChildFailed(Pid,
+  Throwable, ActorContext)` and `onChildRestarted(Pid, ActorContext)` callbacks so a parent can
+  observe child failures/restarts (metrics, alerting, circuit-breaking), not just configure a
+  strategy. Invoked on the supervising thread — implementations must be thread-safe (documented
+  on the interfaces).
+
+- **`StatefulActorBuilder` ergonomics.** `withParent(Pid)`, `withRetryStrategy(RetryStrategy)`,
+  `withErrorHook(Consumer<Throwable>)`, and `spawnAndAwaitReady(Duration)` — configure persistence
+  retry/error handling and await cold-start readiness declaratively at spawn time instead of via a
+  post-spawn cast that races with async init.
+
+- **`TestActorContext`** (`com.cajunsystems.testkit`): a dependency-free `ActorContext` test double
+  that records `tell`/`tellSelf`/`reply`/`forward` and lets tests pre-seed the sender/parent, so
+  handlers can be unit-tested without an `ActorSystem`.
+
+### Changed
+
+- **Documented the `preStart`/`postStop` lifecycle contract across restart paths** on
+  `Actor.stopForRestart`: self-`RESTART` fires only `preStart`; `ESCALATE`/full-stop fires
+  `postStop` then `preStart`. Re-arming work belongs in `preStart` (which fires on every restart
+  path).
+
+- **`IdStrategy` no longer uses string templates (`STR."..."`)** — a Java 21 preview feature that
+  was later removed — replaced with plain string concatenation, so Cajun's own sources no longer
+  depend on a preview feature. (Note: `--enable-preview` is still required at build/runtime because
+  the transitive `com.cajunsystems:roux:0.2.1` dependency is itself preview-compiled.)
+
+- The `lib` test JVM now runs in a UTF-8 locale so actor ids containing non-ASCII/emoji characters
+  work with file-path-based persistence regardless of the host OS locale.
+
+---
+
 ## [0.7.0] - 2026-04-01
 
 ### Added

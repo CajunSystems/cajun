@@ -713,7 +713,7 @@ class StatefulActorBuilderIdTest {
         void shouldHandleNullParent() {
             Pid pid = system.statefulActorOf(TestStatefulHandler.class, 0)
                 .withId("child")
-                .withParent(null)
+                .withParent((Actor<?>) null)
                 .spawn();
 
             assertEquals("child", pid.actorId());

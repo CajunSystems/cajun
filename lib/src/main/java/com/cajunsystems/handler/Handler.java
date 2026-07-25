@@ -1,6 +1,7 @@
 package com.cajunsystems.handler;
 
 import com.cajunsystems.ActorContext;
+import com.cajunsystems.Pid;
 
 /**
  * Interface for handling messages in a stateless actor.
@@ -50,5 +51,37 @@ public interface Handler<Message> {
     default boolean onError(Message message, Throwable exception, ActorContext context) {
         // Default implementation doesn't reprocess
         return false;
+    }
+
+    /**
+     * Called on a parent (supervisor) handler when one of its children fails, before the
+     * parent's supervision strategy is applied to that child. This lets a supervisor observe
+     * failures for metrics, alerting, or circuit-breaking — not just configure a strategy.
+     * <p>
+     * <strong>Threading:</strong> this callback is invoked on the supervising thread that is
+     * handling the child's failure, which is <em>not</em> the parent actor's own message-loop
+     * thread. Keep implementations thread-safe and cheap (e.g. update a counter, emit a log or
+     * metric); do not mutate unsynchronized handler state shared with {@link #receive}.
+     *
+     * @param child     The PID of the child that failed
+     * @param cause     The exception the child raised
+     * @param context   The parent actor's context
+     */
+    default void onChildFailed(Pid child, Throwable cause, ActorContext context) {
+        // Default implementation does nothing
+    }
+
+    /**
+     * Called on a parent (supervisor) handler after a failed child has been restarted or resumed
+     * as a result of the parent's supervision strategy.
+     * <p>
+     * <strong>Threading:</strong> as with {@link #onChildFailed}, this runs on the supervising
+     * thread, not the parent's message-loop thread. Keep implementations thread-safe.
+     *
+     * @param child     The PID of the child that was restarted/resumed
+     * @param context   The parent actor's context
+     */
+    default void onChildRestarted(Pid child, ActorContext context) {
+        // Default implementation does nothing
     }
 }

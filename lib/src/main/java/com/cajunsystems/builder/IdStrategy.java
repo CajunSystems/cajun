@@ -78,7 +78,7 @@ public interface IdStrategy {
             
             String baseName = extractBaseName(ctx.handlerClass());
             long seq = IdTemplateProcessor.getOrCreateClassCounter(baseName).incrementAndGet();
-            return STR."\{baseName}:\{seq}";
+            return baseName + ":" + seq;
         }
     };
 
@@ -89,7 +89,7 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_UUID = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        return STR."\{baseName}:\{randomUUID()}";
+        return baseName + ":" + randomUUID();
     };
 
     /**
@@ -100,7 +100,7 @@ public interface IdStrategy {
     IdStrategy CLASS_BASED_SHORT_UUID = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
         String shortId = randomUUID().toString().substring(0, 8);
-        return STR."\{baseName}:\{shortId}";
+        return baseName + ":" + shortId;
     };
 
     /**
@@ -110,7 +110,7 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_TIMESTAMP = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        return STR."\{baseName}:\{System.currentTimeMillis()}";
+        return baseName + ":" + System.currentTimeMillis();
     };
 
     /**
@@ -120,7 +120,7 @@ public interface IdStrategy {
      */
     IdStrategy CLASS_BASED_NANO = ctx -> {
         String baseName = extractBaseName(ctx.handlerClass());
-        return STR."\{baseName}:\{System.nanoTime()}";
+        return baseName + ":" + System.nanoTime();
     };
 
     /**
