@@ -1,0 +1,30 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.3.0'
+    id 'io.spring.dependency-management' version '1.1.5'
+}
+
+group = 'com.cajunsystems.example'
+version = '0.1.0'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+compileJava.options.compilerArgs          += ['--enable-preview']
+compileTestJava.options.compilerArgs      += ['--enable-preview']
+tasks.withType(JavaExec).configureEach     { jvmArgs '--enable-preview' }
+bootRun.jvmArgs '--enable-preview'
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.spring.io/release' }
+}
+
+dependencies {
+    implementation 'com.cajunsystems:cajun'
+    implementation 'com.cajunsystems:cajun-spring'
+
+    // Spring Boot Web — brings Jackson, Tomcat, spring-context, etc.
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+}
