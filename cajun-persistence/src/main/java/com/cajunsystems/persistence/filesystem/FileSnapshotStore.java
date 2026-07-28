@@ -2,6 +2,8 @@ package com.cajunsystems.persistence.filesystem;
 
 import com.cajunsystems.persistence.SnapshotEntry;
 import com.cajunsystems.persistence.SnapshotStore;
+import com.cajunsystems.serialization.JavaSerializationProvider;
+import com.cajunsystems.serialization.SerializationProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,51 +24,81 @@ import java.util.concurrent.CompletableFuture;
  */
 public class FileSnapshotStore<S> implements SnapshotStore<S> {
     private static final Logger logger = LoggerFactory.getLogger(FileSnapshotStore.class);
-    
+
     private final Path snapshotDir;
-    
+    private final SerializationProvider provider;
+
     /**
      * Creates a new FileSnapshotStore with the specified directory.
+     * Uses {@link JavaSerializationProvider} for backward compatibility with existing snapshot files.
      *
      * @param snapshotDir The directory to store snapshot files in
      */
     public FileSnapshotStore(Path snapshotDir) {
+        this(snapshotDir, JavaSerializationProvider.INSTANCE);
+    }
+
+    /**
+     * Creates a new FileSnapshotStore with the specified directory and serialization provider.
+     *
+     * @param snapshotDir The directory to store snapshot files in
+     * @param provider    The serialization provider to use for encoding/decoding snapshots
+     */
+    public FileSnapshotStore(Path snapshotDir, SerializationProvider provider) {
         this.snapshotDir = snapshotDir;
+        this.provider = provider;
         try {
             Files.createDirectories(snapshotDir);
         } catch (IOException e) {
             throw new RuntimeException("Failed to create snapshot directory: " + snapshotDir, e);
         }
     }
-    
+
     /**
      * Creates a new FileSnapshotStore with the specified directory path.
+     * Uses {@link JavaSerializationProvider} for backward compatibility with existing snapshot files.
      *
      * @param snapshotDirPath The path to the directory to store snapshot files in
      */
     public FileSnapshotStore(String snapshotDirPath) {
         this(Paths.get(snapshotDirPath));
     }
-    
+
+    /**
+     * Creates a new FileSnapshotStore with the specified directory path and serialization provider.
+     *
+     * @param snapshotDirPath The path to the directory to store snapshot files in
+     * @param provider        The serialization provider to use for encoding/decoding snapshots
+     */
+    public FileSnapshotStore(String snapshotDirPath, SerializationProvider provider) {
+        this(Paths.get(snapshotDirPath), provider);
+    }
+
+    /**
+     * Returns the serialization provider used by this snapshot store.
+     */
+    public SerializationProvider getSerializationProvider() {
+        return provider;
+    }
+
     @Override
     public CompletableFuture<Void> saveSnapshot(String actorId, S state, long sequenceNumber) {
         return CompletableFuture.runAsync(() -> {
             try {
                 Path actorSnapshotDir = getActorSnapshotDir(actorId);
                 Files.createDirectories(actorSnapshotDir);
-                
+
                 // Create snapshot entry
                 SnapshotEntry<S> entry = new SnapshotEntry<>(actorId, state, sequenceNumber, Instant.now());
-                
-                // Write to file
-                String fileName = String.format("snapshot_%020d_%s.snap", 
+
+                // Write to file using provider
+                String fileName = String.format("snapshot_%020d_%s.snap",
                         sequenceNumber, System.currentTimeMillis());
                 Path snapshotFile = actorSnapshotDir.resolve(fileName);
-                
-                try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(snapshotFile.toFile()))) {
-                    oos.writeObject(entry);
-                }
-                
+
+                byte[] bytes = provider.serialize(entry);
+                Files.write(snapshotFile, bytes);
+
                 logger.debug("Saved snapshot for actor {} at sequence number {}", actorId, sequenceNumber);
             } catch (Exception e) {
                 logger.error("Failed to save snapshot for actor {}", actorId, e);
@@ -74,7 +106,7 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
             }
         });
     }
-    
+
     @Override
     public CompletableFuture<Optional<SnapshotEntry<S>>> getLatestSnapshot(String actorId) {
         return CompletableFuture.supplyAsync(() -> {
@@ -83,27 +115,20 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 if (!Files.exists(actorSnapshotDir)) {
                     return Optional.empty();
                 }
-                
+
                 // Find the latest snapshot file
                 Optional<Path> latestSnapshotFile = Files.list(actorSnapshotDir)
                         .filter(Files::isRegularFile)
                         .filter(p -> p.getFileName().toString().endsWith(".snap"))
                         .max(Comparator.comparing(p -> p.getFileName().toString()));
-                
+
                 if (latestSnapshotFile.isPresent()) {
-                    // Read snapshot entry
-                    try (ObjectInputStream is = new ObjectInputStream(
-                            new FileInputStream(latestSnapshotFile.get().toFile()))) {
-                        @SuppressWarnings("unchecked")
-                        SnapshotEntry<S> entry = (SnapshotEntry<S>) is.readObject();
-                        logger.debug("Loaded latest snapshot for actor {} at sequence number {}", 
-                                actorId, entry.getSequenceNumber());
-                        return Optional.of(entry);
-                    } catch (ClassNotFoundException e) {
-                        logger.error("Failed to deserialize snapshot entry from file {}", 
-                                latestSnapshotFile.get(), e);
-                        throw new RuntimeException("Failed to deserialize snapshot entry", e);
-                    }
+                    byte[] bytes = Files.readAllBytes(latestSnapshotFile.get());
+                    @SuppressWarnings("unchecked")
+                    SnapshotEntry<S> entry = (SnapshotEntry<S>) provider.deserialize(bytes, SnapshotEntry.class);
+                    logger.debug("Loaded latest snapshot for actor {} at sequence number {}",
+                            actorId, entry.getSequenceNumber());
+                    return Optional.of(entry);
                 } else {
                     logger.debug("No snapshot found for actor {}", actorId);
                     return Optional.empty();
@@ -114,7 +139,7 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
             }
         });
     }
-    
+
     @Override
     public CompletableFuture<Void> deleteSnapshots(String actorId) {
         return CompletableFuture.runAsync(() -> {
@@ -123,7 +148,7 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                 if (!Files.exists(actorSnapshotDir)) {
                     return;
                 }
-                
+
                 // Delete all snapshot files
                 Files.list(actorSnapshotDir)
                         .filter(Files::isRegularFile)
@@ -135,7 +160,7 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
                                 logger.error("Failed to delete snapshot file {}", p, e);
                             }
                         });
-                
+
                 logger.debug("Deleted all snapshots for actor {}", actorId);
             } catch (IOException e) {
                 logger.error("Failed to delete snapshots for actor {}", actorId, e);
@@ -143,13 +168,13 @@ public class FileSnapshotStore<S> implements SnapshotStore<S> {
             }
         });
     }
-    
+
     private Path getActorSnapshotDir(String actorId) {
         // Sanitize actor ID to be a valid directory name
         String sanitizedId = actorId.replaceAll("[^a-zA-Z0-9_.-]", "_");
         return snapshotDir.resolve(sanitizedId);
     }
-    
+
     @Override
     public void close() {
         // Nothing to close for file-based snapshot store

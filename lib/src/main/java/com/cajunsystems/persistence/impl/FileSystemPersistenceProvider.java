@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -48,49 +49,73 @@ public class FileSystemPersistenceProvider implements PersistenceProvider {
         this.baseDir = baseDir;
     }
     
+    /**
+     * Encodes an actor ID into a file-system-safe path segment.
+     * ASCII alphanumerics, '-', '_', '.', and '/' are kept as-is;
+     * all other characters (including non-ASCII and emoji) are percent-encoded.
+     */
+    static String sanitizeForPath(String actorId) {
+        StringBuilder sb = new StringBuilder(actorId.length() * 2);
+        for (int i = 0; i < actorId.length(); ) {
+            int cp = actorId.codePointAt(i);
+            if ((cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z')
+                    || (cp >= '0' && cp <= '9')
+                    || cp == '-' || cp == '_' || cp == '.' || cp == '/') {
+                sb.append((char) cp);
+            } else {
+                byte[] bytes = new String(Character.toChars(cp)).getBytes(StandardCharsets.UTF_8);
+                for (byte b : bytes) {
+                    sb.append(String.format("%%%02X", b & 0xFF));
+                }
+            }
+            i += Character.charCount(cp);
+        }
+        return sb.toString();
+    }
+
     @Override
     public <M> MessageJournal<M> createMessageJournal() {
         Path journalDir = Paths.get(baseDir, JOURNAL_DIR);
         return new FileMessageJournal<>(journalDir);
     }
-    
+
     @Override
     public <M> MessageJournal<M> createMessageJournal(String actorId) {
-        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, actorId);
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, sanitizeForPath(actorId));
         return new FileMessageJournal<>(journalDir);
     }
-    
+
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal() {
         Path journalDir = Paths.get(baseDir, JOURNAL_DIR);
         return new BatchedFileMessageJournal<>(journalDir);
     }
-    
+
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal(String actorId) {
-        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, actorId);
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, sanitizeForPath(actorId));
         return new BatchedFileMessageJournal<>(journalDir);
     }
-    
+
     @Override
     public <M> BatchedMessageJournal<M> createBatchedMessageJournal(
             String actorId, int maxBatchSize, long maxBatchDelayMs) {
-        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, actorId);
+        Path journalDir = Paths.get(baseDir, JOURNAL_DIR, sanitizeForPath(actorId));
         BatchedFileMessageJournal<M> journal = new BatchedFileMessageJournal<>(journalDir);
         journal.setMaxBatchSize(maxBatchSize);
         journal.setMaxBatchDelayMs(maxBatchDelayMs);
         return journal;
     }
-    
+
     @Override
     public <S> SnapshotStore<S> createSnapshotStore() {
         Path snapshotDir = Paths.get(baseDir, SNAPSHOT_DIR);
         return new FileSnapshotStore<>(snapshotDir);
     }
-    
+
     @Override
     public <S> SnapshotStore<S> createSnapshotStore(String actorId) {
-        Path snapshotDir = Paths.get(baseDir, SNAPSHOT_DIR, actorId);
+        Path snapshotDir = Paths.get(baseDir, SNAPSHOT_DIR, sanitizeForPath(actorId));
         return new FileSnapshotStore<>(snapshotDir);
     }
     

@@ -25,3 +25,7 @@ include('lib')
 // Supporting modules
 include('test-utils')
 include('benchmarks')
+
+// Examples
+include('examples:cjent')
+include('examples:callcenter')

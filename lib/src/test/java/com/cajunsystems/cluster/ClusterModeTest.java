@@ -6,9 +6,7 @@ import com.cajunsystems.Pid;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class ClusterModeTest {
 
-    private InMemoryMetadataStore metadataStore;
+    private WatchableInMemoryMetadataStore metadataStore;
     private ClusterActorSystem system1;
     private ClusterActorSystem system2;
     
@@ -31,7 +29,7 @@ public class ClusterModeTest {
     public void setUp() throws Exception {
         // Set up test
         // Create a shared metadata store
-        metadataStore = new InMemoryMetadataStore();
+        metadataStore = new WatchableInMemoryMetadataStore();
         
         // Create two actor systems with different IDs
         system1 = new ClusterActorSystem(
@@ -316,177 +314,4 @@ public class ClusterModeTest {
         }
     }
     
-    /**
-     * An in-memory implementation of the MetadataStore interface for testing.
-     */
-    private static class InMemoryMetadataStore implements MetadataStore {
-        
-        private final ConcurrentHashMap<String, String> store = new ConcurrentHashMap<>();
-        private final ConcurrentHashMap<String, Lock> locks = new ConcurrentHashMap<>();
-        private final ConcurrentHashMap<String, KeyWatcher> watchers = new ConcurrentHashMap<>();
-        
-        @Override
-        public CompletableFuture<Void> put(String key, String value) {
-            return CompletableFuture.runAsync(() -> {
-                store.put(key, value);
-
-                
-                // Notify watchers
-                for (Map.Entry<String, KeyWatcher> entry : watchers.entrySet()) {
-                    if (key.startsWith(entry.getKey())) {
-                        entry.getValue().onPut(key, value);
-                    }
-                }
-            });
-        }
-        
-        @Override
-        public CompletableFuture<java.util.Optional<String>> get(String key) {
-            return CompletableFuture.supplyAsync(() -> java.util.Optional.ofNullable(store.get(key)));
-        }
-        
-        @Override
-        public CompletableFuture<Void> delete(String key) {
-            return CompletableFuture.runAsync(() -> {
-                store.remove(key);
-
-                
-                // Notify watchers
-                for (Map.Entry<String, KeyWatcher> entry : watchers.entrySet()) {
-                    if (key.startsWith(entry.getKey())) {
-                        entry.getValue().onDelete(key);
-                    }
-                }
-            });
-        }
-        
-        @Override
-        public CompletableFuture<java.util.List<String>> listKeys(String prefix) {
-            return CompletableFuture.supplyAsync(() -> 
-                store.keySet().stream()
-                    .filter(key -> key.startsWith(prefix))
-                    .toList()
-            );
-        }
-        
-        @Override
-        public CompletableFuture<java.util.Optional<Lock>> acquireLock(String lockName, long ttlSeconds) {
-            return CompletableFuture.supplyAsync(() -> {
-                if (locks.containsKey(lockName)) {
-                    return java.util.Optional.empty();
-                }
-                
-                InMemoryLock lock = new InMemoryLock(lockName);
-                locks.put(lockName, lock);
-                return java.util.Optional.of(lock);
-            });
-        }
-        
-        @Override
-        public CompletableFuture<Long> watch(String key, KeyWatcher watcher) {
-            return CompletableFuture.supplyAsync(() -> {
-                long watchId = System.nanoTime();
-                watchers.put(key, watcher);
-
-                return watchId;
-            });
-        }
-        
-        @Override
-        public CompletableFuture<Void> unwatch(long watchId) {
-            return CompletableFuture.runAsync(() -> {
-                // This is a simplified implementation - in a real system we'd use the watchId
-                // For now, we'll just log that it was called
-
-            });
-        }
-        
-        @Override
-        public CompletableFuture<Void> connect() {
-            return CompletableFuture.completedFuture(null);
-        }
-        
-        @Override
-        public CompletableFuture<Void> close() {
-            return CompletableFuture.completedFuture(null);
-        }
-        
-        private class InMemoryLock implements Lock {
-            
-            private final String lockName;
-            
-            InMemoryLock(String lockName) {
-                this.lockName = lockName;
-            }
-            
-            @Override
-            public CompletableFuture<Void> release() {
-                return CompletableFuture.runAsync(() -> locks.remove(lockName));
-            }
-            
-            @Override
-            public CompletableFuture<Void> refresh() {
-                return CompletableFuture.completedFuture(null);
-            }
-        }
-    }
-    
-    /**
-     * An in-memory implementation of the MessagingSystem interface for testing.
-     */
-    private static class InMemoryMessagingSystem implements MessagingSystem {
-        
-        private final String systemId;
-        private final ConcurrentHashMap<String, InMemoryMessagingSystem> connectedSystems = new ConcurrentHashMap<>();
-        private MessageHandler messageHandler;
-        private boolean running = false;
-        
-        public InMemoryMessagingSystem(String systemId) {
-            this.systemId = systemId;
-        }
-        
-        public void connectTo(InMemoryMessagingSystem other) {
-            this.connectedSystems.put(other.systemId, other);
-            other.connectedSystems.put(this.systemId, this);
-        }
-        
-        @Override
-        public <Message> CompletableFuture<Void> sendMessage(String targetSystemId, String actorId, Message message) {
-            return CompletableFuture.runAsync(() -> {
-                InMemoryMessagingSystem targetSystem = connectedSystems.get(targetSystemId);
-                if (targetSystem != null && targetSystem.messageHandler != null && targetSystem.running) {
-                    targetSystem.messageHandler.onMessage(actorId, message);
-                } else {
-                    // Message cannot be delivered - uncomment for debugging
-                    /*
-                    System.out.println("Cannot deliver message to actor " + actorId + " on system " + targetSystemId + 
-                            ": targetSystem=" + (targetSystem != null) + 
-                            ", handler=" + (targetSystem != null && targetSystem.messageHandler != null) + 
-                            ", running=" + (targetSystem != null && targetSystem.running));
-                    */
-                }
-            });
-        }
-        
-        @Override
-        public CompletableFuture<Void> registerMessageHandler(MessageHandler handler) {
-            return CompletableFuture.runAsync(() -> this.messageHandler = handler);
-        }
-        
-        @Override
-        public CompletableFuture<Void> start() {
-            return CompletableFuture.runAsync(() -> {
-                this.running = true;
-
-            });
-        }
-        
-        @Override
-        public CompletableFuture<Void> stop() {
-            return CompletableFuture.runAsync(() -> {
-                this.running = false;
-
-            });
-        }
-    }
 }
